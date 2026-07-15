@@ -1,0 +1,8 @@
+{
+  "name": "self-healing-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "echo 'Frontend placeholder'"
+  }
+}

@@ -54,7 +54,7 @@ class PipelineConfig:
     smd_processed_dir: str = os.getenv("SMD_PROCESSED_DIR", "./data/smd/processed")
     model_snapshot_dir: str = os.getenv("MODEL_SNAPSHOT_DIR", "./model_snapshots")
     score_output_dir: str = os.getenv("SCORE_OUTPUT_DIR", "./outputs/scores")
-    mlflow_tracking_uri: str = os.getenv("MLFLOW_TRACKING_URI", "./mlruns")
+    mlflow_tracking_uri: str = os.getenv("MLFLOW_TRACKING_URI", "sqlite:///mlflow.db")
     log_every_n_steps: int = int(os.getenv("LOG_EVERY_N_STEPS", 500))
 
 

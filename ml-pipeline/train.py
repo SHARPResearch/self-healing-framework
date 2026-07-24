@@ -26,7 +26,7 @@ from preprocess import preprocess_entity  # noqa: E402
 import pandas as pd  # noqa: E402
 
 from src.config import HST_CFG, PIPELINE_CFG  # noqa: E402
-from src.hst_model import build_model, warm_up  # noqa: E402
+from src.hst_model import build_model, classify_severity, score_dataset, warm_up  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -69,6 +69,13 @@ def main() -> None:
     logger.info("  %s events in %.1fs (%.0f events/sec)",
                 warm_up_stats.n_events, warm_up_stats.duration_seconds,
                 warm_up_stats.throughput_events_per_sec)
+
+    logger.info("[3/5] Scoring test split (model frozen, no further learning)...")
+    test_rows = test_df.to_dict(orient="records")
+    scores = score_dataset(model, test_rows)
+    severities = [classify_severity(s) for s in scores]
+    logger.info("  scored %s rows, mean=%.4f max=%.4f",
+                len(scores), sum(scores) / len(scores), max(scores))
 
 
 if __name__ == "__main__":

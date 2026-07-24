@@ -1,7 +1,7 @@
 from river.anomaly import HalfSpaceTrees
 
 from src.config import HSTConfig
-from src.hst_model import build_model, classify_severity
+from src.hst_model import build_model, classify_severity, warm_up
 
 
 def test_build_model_applies_config():
@@ -11,6 +11,18 @@ def test_build_model_applies_config():
     assert model.n_trees == 7
     assert model.height == 5
     assert model.window_size == 100
+
+
+def test_warm_up_counts_events_and_reports_throughput():
+    cfg = HSTConfig(n_trees=3, height=4, window_size=25, seed=1)
+    model = build_model(cfg)
+    rows = [{"x": float(i % 5)} for i in range(50)]
+
+    stats = warm_up(model, rows)
+
+    assert stats.n_events == 50
+    assert stats.duration_seconds >= 0
+    assert stats.throughput_events_per_sec >= 0
 
 
 def test_classify_severity_thresholds():

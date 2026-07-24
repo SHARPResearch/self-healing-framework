@@ -19,9 +19,12 @@ from concurrent.futures import ProcessPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 
-from src.config import HST_CFG, HSTConfig, PIPELINE_CFG
-from src.evaluate import evaluate
-from src.pipeline import warm_up_and_score
+sys.path.insert(0, str(Path(__file__).parent.parent / "datasets" / "smd"))
+from preprocess import preprocess_entity  # noqa: E402
+
+from src.config import HST_CFG, HSTConfig, PIPELINE_CFG  # noqa: E402
+from src.evaluate import evaluate  # noqa: E402
+from src.pipeline import warm_up_and_score  # noqa: E402
 
 THRESHOLDS = [0.3, 0.4, 0.5, 0.6, 0.7]
 
@@ -99,6 +102,15 @@ def main() -> None:
     grid = build_grid()
     logger.info("Sweeping %s hyperparameter combinations on entity=%s in parallel",
                 len(grid), args.entity)
+
+    # Preprocess once, serially, before spawning workers. All combos share the same
+    # entity's cached parquet files; if it were not already cached, letting every
+    # worker call preprocess_entity() concurrently could race to write it, corrupting
+    # the file (this happened once when an earlier interrupted run left a partial
+    # write on disk).
+    logger.info("Pre warming preprocessed data cache for %s", args.entity)
+    preprocess_entity(args.entity, split="train")
+    preprocess_entity(args.entity, split="test")
 
     # HalfSpaceTrees memory scales with n_trees x 2^height x window_size. Running all
     # 7 combos at once (including n_trees=50 and window_size=400) exhausted 16GB of RAM

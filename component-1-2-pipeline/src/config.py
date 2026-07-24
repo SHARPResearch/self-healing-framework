@@ -1,3 +1,11 @@
+"""
+config.py — Centralised configuration for Component 1-2 pipeline.
+
+All tunable constants live here. When this module is lifted into the FastAPI
+monorepo, this class will be replaced by the project's Pydantic Settings class
+(services/ml-backend/app/config.py), which reads the same env var names.
+"""
+
 import os
 from dataclasses import dataclass
 from dotenv import load_dotenv
@@ -48,3 +56,11 @@ class PipelineConfig:
     score_output_dir: str = os.getenv("SCORE_OUTPUT_DIR", "./outputs/scores")
     mlflow_tracking_uri: str = os.getenv("MLFLOW_TRACKING_URI", "./mlruns")
     log_every_n_steps: int = int(os.getenv("LOG_EVERY_N_STEPS", 500))
+
+
+# ── Module-level singletons (safe for standalone use) ─────────────────────────
+# In the FastAPI monorepo, these are instantiated once in the lifespan()
+# context manager and stored in app.state.*
+HST_CFG = HSTConfig()
+ADWIN_CFG = ADWINConfig()
+PIPELINE_CFG = PipelineConfig()

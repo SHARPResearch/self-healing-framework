@@ -7,6 +7,20 @@ owns the model only — data ingestion/streaming is a separate teammate's module
 rollback ("Component 2: dynamic model updating") is out of scope here.
 """
 
+from river.anomaly import HalfSpaceTrees
+
+from src.config import HSTConfig
+
+
+def build_model(cfg: HSTConfig) -> HalfSpaceTrees:
+    """Construct a HalfSpaceTrees instance from the given hyperparameters."""
+    return HalfSpaceTrees(
+        n_trees=cfg.n_trees,
+        height=cfg.height,
+        window_size=cfg.window_size,
+        seed=cfg.seed,
+    )
+
 
 def classify_severity(score: float) -> str:
     """

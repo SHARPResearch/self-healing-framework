@@ -20,7 +20,8 @@ from concurrent.futures import ProcessPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 
-from src.config import HST_CFG, PIPELINE_CFG
+from src.config import HST_CFG, HSTConfig, PIPELINE_CFG
+from src.pipeline import train_and_evaluate
 
 logging.basicConfig(
     level=logging.INFO,
@@ -37,6 +38,26 @@ def discover_entities() -> list[str]:
     train_ids = {p.stem for p in (raw_dir / "train").glob("*.txt")}
     test_ids = {p.stem for p in (raw_dir / "test").glob("*.txt")}
     return sorted(train_ids & test_ids)
+
+
+def run_one_entity(entity_id: str, cfg: HSTConfig, eval_threshold: float) -> dict:
+    """
+    Train and evaluate one entity, no model pickle, no MLflow artifact, metrics only.
+
+    Module level function so it can be pickled for ProcessPoolExecutor.
+    """
+    result = train_and_evaluate(
+        entity_id, cfg, eval_threshold,
+        save_model=False, save_scores_csv=False, log_to_mlflow=True,
+    )
+    return {
+        "entity_id": entity_id,
+        "precision": result["precision"],
+        "recall": result["recall"],
+        "f1": result["f1"],
+        "n_actual_anomalies": result["n_actual_anomalies"],
+        "n_samples": result["n_samples"],
+    }
 
 
 def parse_args() -> argparse.Namespace:

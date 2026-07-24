@@ -7,6 +7,10 @@ owns the model only — data ingestion/streaming is a separate teammate's module
 rollback ("Component 2: dynamic model updating") is out of scope here.
 """
 
+import time
+from dataclasses import dataclass
+from typing import Iterable
+
 from river.anomaly import HalfSpaceTrees
 
 from src.config import HSTConfig
@@ -19,6 +23,35 @@ def build_model(cfg: HSTConfig) -> HalfSpaceTrees:
         height=cfg.height,
         window_size=cfg.window_size,
         seed=cfg.seed,
+    )
+
+
+@dataclass
+class WarmUpStats:
+    """Summary of a warm-up training pass over the training split."""
+    n_events: int
+    duration_seconds: float
+    throughput_events_per_sec: float
+
+
+def warm_up(model: HalfSpaceTrees, rows: Iterable[dict]) -> WarmUpStats:
+    """
+    Fit the model on training rows via learn_one() only (no scoring).
+
+    Training data is assumed to be mostly-normal behaviour, so warm-up establishes
+    what "normal" looks like before the model is used for detection.
+    """
+    start = time.perf_counter()
+    n_events = 0
+    for features in rows:
+        model.learn_one(features)
+        n_events += 1
+    duration = time.perf_counter() - start
+    throughput = n_events / duration if duration > 0 else 0.0
+    return WarmUpStats(
+        n_events=n_events,
+        duration_seconds=round(duration, 2),
+        throughput_events_per_sec=round(throughput, 1),
     )
 
 

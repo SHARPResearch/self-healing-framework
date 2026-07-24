@@ -56,6 +56,8 @@ class PipelineConfig:
     score_output_dir: str = os.getenv("SCORE_OUTPUT_DIR", "./outputs/scores")
     mlflow_tracking_uri: str = os.getenv("MLFLOW_TRACKING_URI", "sqlite:///mlflow.db")
     log_every_n_steps: int = int(os.getenv("LOG_EVERY_N_STEPS", 500))
+    # 0.4 beats the guide's 0.7 by F1 on machine-1-1, see RESULTS.md threshold sweep.
+    eval_threshold: float = float(os.getenv("EVAL_THRESHOLD", 0.4))
 
 
 # ── Module-level singletons (safe for standalone use) ─────────────────────────

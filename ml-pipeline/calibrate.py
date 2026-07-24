@@ -15,8 +15,13 @@ Usage:
 """
 
 import argparse
+import csv
 import logging
+import statistics
 import sys
+from pathlib import Path
+
+from train_all import discover_entities
 
 from src.config import HST_CFG, HSTConfig, PIPELINE_CFG
 from src.evaluate import evaluate, oracle_best_f1, percentile_threshold, pr_auc
@@ -74,3 +79,43 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Component 1: per entity threshold calibration")
     parser.add_argument("--entity", help="Run a single entity instead of all 28")
     return parser.parse_args()
+
+
+# Known from the prior tuning pass (ml-pipeline/RESULTS.md): mean F1 across all 28
+# entities using the single fixed global EVAL_THRESHOLD=0.4 tuned on machine-1-1 alone.
+FIXED_THRESHOLD_MEAN_F1 = 0.1195
+
+
+def main() -> None:
+    args = parse_args()
+    entities = [args.entity] if args.entity else discover_entities()
+    logger.info("Calibrating %s entities serially (memory bound, not cpu bound)", len(entities))
+
+    rows = []
+    for i, entity_id in enumerate(entities, start=1):
+        row = run_one_entity_calibration(entity_id, HST_CFG)
+        rows.append(row)
+        logger.info("  [%s/%s] %s pr_auc=%.4f oracle_f1=%.4f p97_f1=%.4f",
+                    i, len(entities), entity_id, row["pr_auc"], row["oracle_f1"], row["p97_f1"])
+
+    out_path = Path(PIPELINE_CFG.score_output_dir) / "calibration_comparison.csv"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+    logger.info("Saved per entity calibration results to %s", out_path)
+
+    logger.info("Mean F1 comparison across %s entities:", len(rows))
+    logger.info("  fixed global threshold (known from prior run) = %.4f", FIXED_THRESHOLD_MEAN_F1)
+    for p in CANDIDATE_PERCENTILES:
+        key = str(p).replace(".", "_")
+        mean_f1 = statistics.mean(r[f"p{key}_f1"] for r in rows)
+        logger.info("  percentile=%s calibrated mean f1 = %.4f", p, mean_f1)
+    oracle_mean = statistics.mean(r["oracle_f1"] for r in rows)
+    logger.info("  oracle (non deployable upper bound) mean f1 = %.4f", oracle_mean)
+    logger.info("  mean pr_auc = %.4f", statistics.mean(r["pr_auc"] for r in rows))
+
+
+if __name__ == "__main__":
+    main()

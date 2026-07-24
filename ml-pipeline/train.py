@@ -14,6 +14,7 @@ Usage:
 """
 
 import argparse
+import csv
 import logging
 import pickle
 import sys
@@ -91,6 +92,16 @@ def main() -> None:
     model_path = snapshot_dir / f"hst_model_step_{warm_up_stats.n_events}.pkl"
     model_path.write_bytes(pickle.dumps(model))
     logger.info("  saved %s (%.1f KB)", model_path, model_path.stat().st_size / 1024)
+
+    score_dir = Path(PIPELINE_CFG.score_output_dir)
+    score_dir.mkdir(parents=True, exist_ok=True)
+    scores_path = score_dir / f"{args.entity}_scores.csv"
+    with open(scores_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["step", "anomaly_score", "severity", "label"])
+        for step, (score, severity, label) in enumerate(zip(scores, severities, labels), start=1):
+            writer.writerow([step, round(score, 6), severity, label])
+    logger.info("  saved %s (%s rows)", scores_path, len(scores))
 
 
 if __name__ == "__main__":

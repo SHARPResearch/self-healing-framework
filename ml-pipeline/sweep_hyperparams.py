@@ -11,10 +11,13 @@ Usage:
 """
 
 import argparse
+import csv
 import logging
 import sys
 import time
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import replace
+from pathlib import Path
 
 from src.config import HST_CFG, HSTConfig, PIPELINE_CFG
 from src.evaluate import evaluate
@@ -86,9 +89,36 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     grid = build_grid()
-    logger.info("Sweeping %s hyperparameter combinations on entity=%s", len(grid), args.entity)
-    for cfg in grid:
-        logger.info("  n_trees=%s height=%s window_size=%s", cfg.n_trees, cfg.height, cfg.window_size)
+    logger.info("Sweeping %s hyperparameter combinations on entity=%s in parallel",
+                len(grid), args.entity)
+
+    # HalfSpaceTrees memory scales with n_trees x 2^height x window_size. Running all
+    # 7 combos at once (including n_trees=50 and window_size=400) exhausted 16GB of RAM
+    # and thrashed the machine to a crawl. Cap workers so the largest few combos can run
+    # together without running out of memory, at the cost of some wall clock time.
+    max_workers = min(3, len(grid))
+    logger.info("Using %s parallel workers (memory bound, not cpu bound)", max_workers)
+    with ProcessPoolExecutor(max_workers=max_workers) as pool:
+        futures = [pool.submit(run_combo, args.entity, cfg) for cfg in grid]
+        results = [f.result() for f in futures]
+
+    results.sort(key=lambda r: r["f1"], reverse=True)
+
+    out_path = Path(PIPELINE_CFG.score_output_dir) / "hyperparam_sweep.csv"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=list(results[0].keys()))
+        writer.writeheader()
+        writer.writerows(results)
+
+    logger.info("Results (best first), saved to %s", out_path)
+    for r in results:
+        logger.info(
+            "  n_trees=%-3s height=%-3s window_size=%-4s best_threshold=%.1f "
+            "precision=%.4f recall=%.4f f1=%.4f (%.0fs)",
+            r["n_trees"], r["height"], r["window_size"], r["best_threshold"],
+            r["precision"], r["recall"], r["f1"], r["duration_seconds"],
+        )
 
 
 if __name__ == "__main__":

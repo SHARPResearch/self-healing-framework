@@ -76,7 +76,13 @@ def main() -> None:
     logger.info("Training %s entities in parallel, n_trees=%s height=%s window_size=%s threshold=%s",
                 len(entities), cfg.n_trees, cfg.height, cfg.window_size, args.eval_threshold)
 
-    with ProcessPoolExecutor() as pool:
+    # HalfSpaceTrees memory scales with n_trees x 2^height x window_size. The
+    # hyperparameter sweep exhausted 16GB of RAM running too many combos at once, so
+    # this stays conservative too even though all 28 entities share one (smaller)
+    # baseline config.
+    max_workers = min(4, len(entities))
+    logger.info("Using %s parallel workers (memory bound, not cpu bound)", max_workers)
+    with ProcessPoolExecutor(max_workers=max_workers) as pool:
         futures = [pool.submit(run_one_entity, e, cfg, args.eval_threshold) for e in entities]
         results = []
         for i, future in enumerate(futures, start=1):

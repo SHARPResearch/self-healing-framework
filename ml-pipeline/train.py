@@ -68,64 +68,70 @@ def main() -> None:
     mlflow.set_tracking_uri(PIPELINE_CFG.mlflow_tracking_uri)
     mlflow.set_experiment(f"hst_{args.entity}")
     mlflow.start_run(run_name=f"{args.entity}_component1")
-    mlflow.log_params({
-        "n_trees": HST_CFG.n_trees,
-        "height": HST_CFG.height,
-        "window_size": HST_CFG.window_size,
-        "seed": HST_CFG.seed,
-        "entity_id": args.entity,
-        "eval_threshold": args.eval_threshold,
-    })
+    try:
+        mlflow.log_params({
+            "n_trees": HST_CFG.n_trees,
+            "height": HST_CFG.height,
+            "window_size": HST_CFG.window_size,
+            "seed": HST_CFG.seed,
+            "entity_id": args.entity,
+            "eval_threshold": args.eval_threshold,
+        })
 
-    logger.info("[2/5] Warming up HST model (n_trees=%s, height=%s, window_size=%s)...",
-                HST_CFG.n_trees, HST_CFG.height, HST_CFG.window_size)
-    model = build_model(HST_CFG)
-    train_rows = train_df.to_dict(orient="records")
-    warm_up_stats = warm_up(model, train_rows)
-    logger.info("  %s events in %.1fs (%.0f events/sec)",
-                warm_up_stats.n_events, warm_up_stats.duration_seconds,
-                warm_up_stats.throughput_events_per_sec)
+        logger.info("[2/5] Warming up HST model (n_trees=%s, height=%s, window_size=%s)...",
+                    HST_CFG.n_trees, HST_CFG.height, HST_CFG.window_size)
+        model = build_model(HST_CFG)
+        train_rows = train_df.to_dict(orient="records")
+        warm_up_stats = warm_up(model, train_rows)
+        logger.info("  %s events in %.1fs (%.0f events/sec)",
+                    warm_up_stats.n_events, warm_up_stats.duration_seconds,
+                    warm_up_stats.throughput_events_per_sec)
 
-    logger.info("[3/5] Scoring test split (model frozen, no further learning)...")
-    test_rows = test_df.to_dict(orient="records")
-    scores = score_dataset(model, test_rows)
-    severities = [classify_severity(s) for s in scores]
-    logger.info("  scored %s rows, mean=%.4f max=%.4f",
-                len(scores), sum(scores) / len(scores), max(scores))
+        logger.info("[3/5] Scoring test split (model frozen, no further learning)...")
+        test_rows = test_df.to_dict(orient="records")
+        scores = score_dataset(model, test_rows)
+        severities = [classify_severity(s) for s in scores]
+        logger.info("  scored %s rows, mean=%.4f max=%.4f",
+                    len(scores), sum(scores) / len(scores), max(scores))
 
-    logger.info("[4/5] Evaluating against SMD ground-truth labels...")
-    labels = load_labels(args.entity)
-    metrics = evaluate(scores, labels, threshold=args.eval_threshold)
-    logger.info("  precision=%.4f recall=%.4f f1=%.4f (threshold=%.2f)",
-                metrics["precision"], metrics["recall"], metrics["f1"], metrics["threshold"])
-    mlflow.log_metrics({
-        "eval_precision": metrics["precision"],
-        "eval_recall": metrics["recall"],
-        "eval_f1": metrics["f1"],
-        "warm_up_events": warm_up_stats.n_events,
-        "warm_up_throughput_eps": warm_up_stats.throughput_events_per_sec,
-        "mean_test_score": sum(scores) / len(scores),
-    })
+        logger.info("[4/5] Evaluating against SMD ground-truth labels...")
+        labels = load_labels(args.entity)
+        metrics = evaluate(scores, labels, threshold=args.eval_threshold)
+        logger.info("  precision=%.4f recall=%.4f f1=%.4f (threshold=%.2f)",
+                    metrics["precision"], metrics["recall"], metrics["f1"], metrics["threshold"])
+        mlflow.log_metrics({
+            "eval_precision": metrics["precision"],
+            "eval_recall": metrics["recall"],
+            "eval_f1": metrics["f1"],
+            "warm_up_events": warm_up_stats.n_events,
+            "warm_up_throughput_eps": warm_up_stats.throughput_events_per_sec,
+            "mean_test_score": sum(scores) / len(scores),
+        })
 
-    logger.info("[5/5] Saving trained model...")
-    snapshot_dir = Path(PIPELINE_CFG.model_snapshot_dir) / args.entity
-    snapshot_dir.mkdir(parents=True, exist_ok=True)
-    model_path = snapshot_dir / f"hst_model_step_{warm_up_stats.n_events}.pkl"
-    model_path.write_bytes(pickle.dumps(model))
-    logger.info("  saved %s (%.1f KB)", model_path, model_path.stat().st_size / 1024)
-    mlflow.log_artifact(str(model_path), artifact_path="model")
+        logger.info("[5/5] Saving trained model...")
+        snapshot_dir = Path(PIPELINE_CFG.model_snapshot_dir) / args.entity
+        snapshot_dir.mkdir(parents=True, exist_ok=True)
+        model_path = snapshot_dir / f"hst_model_step_{warm_up_stats.n_events}.pkl"
+        model_path.write_bytes(pickle.dumps(model))
+        logger.info("  saved %s (%.1f KB)", model_path, model_path.stat().st_size / 1024)
+        mlflow.log_artifact(str(model_path), artifact_path="model")
 
-    score_dir = Path(PIPELINE_CFG.score_output_dir)
-    score_dir.mkdir(parents=True, exist_ok=True)
-    scores_path = score_dir / f"{args.entity}_scores.csv"
-    with open(scores_path, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["step", "anomaly_score", "severity", "label"])
-        for step, (score, severity, label) in enumerate(zip(scores, severities, labels), start=1):
-            writer.writerow([step, round(score, 6), severity, label])
-    logger.info("  saved %s (%s rows)", scores_path, len(scores))
-
-    mlflow.end_run()
+        score_dir = Path(PIPELINE_CFG.score_output_dir)
+        score_dir.mkdir(parents=True, exist_ok=True)
+        scores_path = score_dir / f"{args.entity}_scores.csv"
+        with open(scores_path, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["step", "anomaly_score", "severity", "label"])
+            for step, (score, severity, label) in enumerate(
+                zip(scores, severities, labels), start=1
+            ):
+                writer.writerow([step, round(score, 6), severity, label])
+        logger.info("  saved %s (%s rows)", scores_path, len(scores))
+    except Exception:
+        mlflow.end_run(status="FAILED")
+        raise
+    else:
+        mlflow.end_run(status="FINISHED")
 
 
 if __name__ == "__main__":

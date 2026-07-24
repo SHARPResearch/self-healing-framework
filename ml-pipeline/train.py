@@ -98,6 +98,14 @@ def main() -> None:
     metrics = evaluate(scores, labels, threshold=args.eval_threshold)
     logger.info("  precision=%.4f recall=%.4f f1=%.4f (threshold=%.2f)",
                 metrics["precision"], metrics["recall"], metrics["f1"], metrics["threshold"])
+    mlflow.log_metrics({
+        "eval_precision": metrics["precision"],
+        "eval_recall": metrics["recall"],
+        "eval_f1": metrics["f1"],
+        "warm_up_events": warm_up_stats.n_events,
+        "warm_up_throughput_eps": warm_up_stats.throughput_events_per_sec,
+        "mean_test_score": sum(scores) / len(scores),
+    })
 
     logger.info("[5/5] Saving trained model...")
     snapshot_dir = Path(PIPELINE_CFG.model_snapshot_dir) / args.entity
@@ -105,6 +113,7 @@ def main() -> None:
     model_path = snapshot_dir / f"hst_model_step_{warm_up_stats.n_events}.pkl"
     model_path.write_bytes(pickle.dumps(model))
     logger.info("  saved %s (%.1f KB)", model_path, model_path.stat().st_size / 1024)
+    mlflow.log_artifact(str(model_path), artifact_path="model")
 
     score_dir = Path(PIPELINE_CFG.score_output_dir)
     score_dir.mkdir(parents=True, exist_ok=True)

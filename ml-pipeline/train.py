@@ -16,8 +16,14 @@ Usage:
 import argparse
 import logging
 import sys
+from pathlib import Path
 
-from src.config import PIPELINE_CFG
+# Reuse datasets/smd/preprocess.py (canonical column renaming, already verified against
+# the real SMD files) instead of duplicating a second loader here.
+sys.path.insert(0, str(Path(__file__).parent.parent / "datasets" / "smd"))
+from preprocess import preprocess_entity  # noqa: E402
+
+from src.config import PIPELINE_CFG  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -42,6 +48,11 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     logger.info("Component 1 training run -- entity=%s", args.entity)
+
+    logger.info("[1/5] Preprocessing SMD data...")
+    train_path = preprocess_entity(args.entity, split="train")
+    test_path = preprocess_entity(args.entity, split="test")
+    logger.info("  train=%s test=%s", train_path, test_path)
 
 
 if __name__ == "__main__":

@@ -8,7 +8,6 @@ __pycache__/
 *.pyo
 .venv/
 venv/
-.python-version
 *.egg-info/
 
 # Node

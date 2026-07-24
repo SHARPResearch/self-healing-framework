@@ -67,3 +67,39 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--height", type=int, default=HST_CFG.height)
     parser.add_argument("--window-size", type=int, default=HST_CFG.window_size)
     return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    cfg = replace(HST_CFG, n_trees=args.n_trees, height=args.height, window_size=args.window_size)
+    entities = discover_entities()
+    logger.info("Training %s entities in parallel, n_trees=%s height=%s window_size=%s threshold=%s",
+                len(entities), cfg.n_trees, cfg.height, cfg.window_size, args.eval_threshold)
+
+    with ProcessPoolExecutor() as pool:
+        futures = [pool.submit(run_one_entity, e, cfg, args.eval_threshold) for e in entities]
+        results = []
+        for i, future in enumerate(futures, start=1):
+            r = future.result()
+            results.append(r)
+            logger.info("  [%s/%s] %s precision=%.4f recall=%.4f f1=%.4f",
+                        i, len(entities), r["entity_id"], r["precision"], r["recall"], r["f1"])
+
+    out_path = Path(PIPELINE_CFG.score_output_dir) / "all_entities_summary.csv"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=list(results[0].keys()))
+        writer.writeheader()
+        writer.writerows(results)
+
+    f1s = [r["f1"] for r in results]
+    precisions = [r["precision"] for r in results]
+    recalls = [r["recall"] for r in results]
+    logger.info("Saved per entity results to %s", out_path)
+    logger.info("F1 across %s entities: mean=%.4f median=%.4f min=%.4f max=%.4f",
+                len(f1s), statistics.mean(f1s), statistics.median(f1s), min(f1s), max(f1s))
+    logger.info("Precision mean=%.4f, Recall mean=%.4f", statistics.mean(precisions), statistics.mean(recalls))
+
+
+if __name__ == "__main__":
+    main()

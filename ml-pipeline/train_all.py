@@ -76,11 +76,11 @@ def main() -> None:
     logger.info("Training %s entities in parallel, n_trees=%s height=%s window_size=%s threshold=%s",
                 len(entities), cfg.n_trees, cfg.height, cfg.window_size, args.eval_threshold)
 
-    # This machine only has a few GB genuinely free at any time (other applications
-    # already use most of the 16GB installed), and the hyperparameter sweep repeatedly
-    # drove free memory under 1GB even at 3 workers on a single entity. Stay at 2 here
-    # too, even though all 28 entities share one (smaller) baseline config.
-    max_workers = min(2, len(entities))
+    # This machine's other applications already use most of the 16GB installed, and
+    # the hyperparameter sweep repeatedly drove free memory under 1GB even at 2
+    # workers. Going fully serial here too trades wall clock time (28 entities at
+    # roughly 90 seconds each is under 45 minutes) for a run that reliably finishes.
+    max_workers = 1
     logger.info("Using %s parallel workers (memory bound, not cpu bound)", max_workers)
     with ProcessPoolExecutor(max_workers=max_workers) as pool:
         futures = [pool.submit(run_one_entity, e, cfg, args.eval_threshold) for e in entities]

@@ -6,10 +6,21 @@ training run.
 """
 
 from pathlib import Path
+from typing import TypedDict
 
 from sklearn.metrics import f1_score, precision_score, recall_score
 
 from src.config import PIPELINE_CFG
+
+
+class EvalMetrics(TypedDict):
+    threshold: float
+    precision: float
+    recall: float
+    f1: float
+    n_predicted_anomalies: int
+    n_actual_anomalies: int
+    n_samples: int
 
 
 def load_labels(entity_id: str) -> list[int]:
@@ -22,7 +33,7 @@ def load_labels(entity_id: str) -> list[int]:
         return [int(line.strip()) for line in f if line.strip()]
 
 
-def evaluate(scores: list[float], labels: list[int], threshold: float = 0.7) -> dict:
+def evaluate(scores: list[float], labels: list[int], threshold: float = 0.7) -> EvalMetrics:
     """
     Threshold anomaly scores and compute precision/recall/F1 against ground truth.
 

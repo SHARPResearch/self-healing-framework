@@ -8,7 +8,8 @@ training run.
 from pathlib import Path
 from typing import TypedDict
 
-from sklearn.metrics import f1_score, precision_score, recall_score
+import numpy as np
+from sklearn.metrics import average_precision_score, f1_score, precision_score, recall_score
 
 from src.config import PIPELINE_CFG
 
@@ -31,6 +32,27 @@ def load_labels(entity_id: str) -> list[int]:
 
     with open(label_path) as f:
         return [int(line.strip()) for line in f if line.strip()]
+
+
+def pr_auc(scores: list[float], labels: list[int]) -> float:
+    """
+    Precision-recall AUC (average precision), threshold-independent ranking quality.
+
+    Use this instead of ROC-AUC for anomaly detection: positives are rare (SMD is
+    roughly 5-10% anomalous), and PR-AUC is not inflated by the large number of easy
+    true negatives the way ROC-AUC can be on imbalanced data.
+    """
+    return round(float(average_precision_score(labels, scores)), 4)
+
+
+def percentile_threshold(scores: list[float], percentile: float) -> float:
+    """
+    The score at the given percentile of a (presumed mostly-normal) score distribution.
+
+    Used to calibrate a per-entity anomaly threshold from held-out normal data instead
+    of reusing one fixed absolute cutoff across entities with different score scales.
+    """
+    return float(np.percentile(scores, percentile))
 
 
 def evaluate(scores: list[float], labels: list[int], threshold: float = 0.7) -> EvalMetrics:

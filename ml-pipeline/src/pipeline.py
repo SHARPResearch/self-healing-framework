@@ -15,15 +15,46 @@ from typing import TypedDict
 
 import mlflow
 import pandas as pd
+from river.anomaly import HalfSpaceTrees
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "datasets" / "smd"))
 from preprocess import preprocess_entity  # noqa: E402
 
 from src.config import PIPELINE_CFG, HSTConfig  # noqa: E402
 from src.evaluate import evaluate, load_labels  # noqa: E402
-from src.hst_model import build_model, classify_severity, score_dataset, warm_up  # noqa: E402
+from src.hst_model import (  # noqa: E402
+    WarmUpStats, build_model, classify_severity, score_dataset, warm_up,
+)
 
 logger = logging.getLogger(__name__)
+
+
+class WarmUpAndScoreResult(TypedDict):
+    model: HalfSpaceTrees
+    scores: list[float]
+    labels: list[int]
+    warm_up_stats: WarmUpStats
+
+
+def warm_up_and_score(entity_id: str, hst_cfg: HSTConfig) -> WarmUpAndScoreResult:
+    """
+    Preprocess, warm up, and score one SMD entity. No persistence, no MLflow.
+
+    This is the fast path used by sweeps that need scores at many thresholds or many
+    hyperparameter combinations without paying for model/CSV I/O or MLflow runs each time.
+    """
+    train_path = preprocess_entity(entity_id, split="train")
+    test_path = preprocess_entity(entity_id, split="test")
+    train_df = pd.read_parquet(train_path)
+    test_df = pd.read_parquet(test_path)
+
+    model = build_model(hst_cfg)
+    warm_up_stats = warm_up(model, train_df.to_dict(orient="records"))
+    scores = score_dataset(model, test_df.to_dict(orient="records"))
+    labels = load_labels(entity_id)
+    return WarmUpAndScoreResult(
+        model=model, scores=scores, labels=labels, warm_up_stats=warm_up_stats
+    )
 
 
 class TrainResult(TypedDict):
@@ -61,11 +92,6 @@ def train_and_evaluate(
     Returns:
         TrainResult with warm up stats and evaluation metrics.
     """
-    train_path = preprocess_entity(entity_id, split="train")
-    test_path = preprocess_entity(entity_id, split="test")
-    train_df = pd.read_parquet(train_path)
-    test_df = pd.read_parquet(test_path)
-
     if log_to_mlflow:
         mlflow.set_tracking_uri(PIPELINE_CFG.mlflow_tracking_uri)
         mlflow.set_experiment(f"hst_{entity_id}")
@@ -82,14 +108,11 @@ def train_and_evaluate(
                 "eval_threshold": eval_threshold,
             })
 
-        model = build_model(hst_cfg)
-        warm_up_stats = warm_up(model, train_df.to_dict(orient="records"))
-
-        test_rows = test_df.to_dict(orient="records")
-        scores = score_dataset(model, test_rows)
+        result = warm_up_and_score(entity_id, hst_cfg)
+        model, scores, labels, warm_up_stats = (
+            result["model"], result["scores"], result["labels"], result["warm_up_stats"]
+        )
         severities = [classify_severity(s) for s in scores]
-
-        labels = load_labels(entity_id)
         metrics = evaluate(scores, labels, threshold=eval_threshold)
 
         if log_to_mlflow:

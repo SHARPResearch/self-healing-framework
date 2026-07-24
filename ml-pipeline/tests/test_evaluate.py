@@ -31,3 +31,17 @@ def test_evaluate_perfect_predictions():
 def test_evaluate_raises_on_length_mismatch():
     with pytest.raises(ValueError):
         evaluate(scores=[0.1, 0.2], labels=[0], threshold=0.5)
+
+
+def test_load_labels_reads_real_machine_1_1_data():
+    labels = load_labels("machine-1-1")
+
+    assert len(labels) == 28479
+    assert set(labels) <= {0, 1}
+    anomaly_rate = sum(labels) / len(labels)
+    assert 0.05 < anomaly_rate < 0.15  # sanity check, not an exact pin
+
+
+def test_load_labels_raises_for_unknown_entity():
+    with pytest.raises(FileNotFoundError):
+        load_labels("machine-does-not-exist")

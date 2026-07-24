@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FeatureVector",
+  "description": "Canonical feature schema shared across services/ml-backend, ml-pipeline, and datasets/smd/preprocess.py",
+  "type": "object",
+  "properties": {
+    "service_id": { "type": "string" },
+    "timestamp": { "type": "number", "description": "Unix epoch seconds" },
+    "features": {
+      "type": "object",
+      "properties": {
+        "cpu_rate": { "type": "number" },
+        "memory_used": { "type": "number" },
+        "network_rx": { "type": "number" },
+        "network_tx": { "type": "number" },
+        "disk_io_read": { "type": "number" },
+        "disk_io_write": { "type": "number" }
+      },
+      "required": ["cpu_rate", "memory_used"],
+      "additionalProperties": { "type": "number" }
+    }
+  },
+  "required": ["service_id", "timestamp", "features"]
+}

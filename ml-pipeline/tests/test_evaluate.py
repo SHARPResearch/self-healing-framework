@@ -1,6 +1,6 @@
 import pytest
 
-from src.evaluate import evaluate, load_labels
+from src.evaluate import evaluate, load_labels, percentile_threshold, pr_auc
 
 
 def test_evaluate_computes_expected_metrics_on_synthetic_data():
@@ -45,3 +45,25 @@ def test_load_labels_reads_real_machine_1_1_data():
 def test_load_labels_raises_for_unknown_entity():
     with pytest.raises(FileNotFoundError):
         load_labels("machine-does-not-exist")
+
+
+def test_pr_auc_is_high_for_perfectly_separated_scores():
+    scores = [0.1, 0.2, 0.9, 0.95]
+    labels = [0, 0, 1, 1]
+
+    assert pr_auc(scores, labels) == 1.0
+
+
+def test_pr_auc_is_low_for_inverted_scores():
+    scores = [0.9, 0.8, 0.1, 0.05]
+    labels = [0, 0, 1, 1]
+
+    assert pr_auc(scores, labels) < 0.6
+
+
+def test_percentile_threshold_on_known_range():
+    scores = list(range(1, 101))
+
+    assert percentile_threshold(scores, 50) == pytest.approx(50.5, abs=0.5)
+    assert percentile_threshold(scores, 100) == 100
+    assert percentile_threshold(scores, 0) == 1

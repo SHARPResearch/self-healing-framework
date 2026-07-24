@@ -1,0 +1,13 @@
+{
+  "recommendations": [
+    "ms-python.python",
+    "ms-python.vscode-pylance",
+    "ms-dotnettools.csdevkit",
+    "dbaeumer.vscode-eslint",
+    "esbenp.prettier-vscode",
+    "ms-toolsai.jupyter",
+    "eamodio.gitlens",
+    "rangav.vscode-thunder-client",
+    "redhat.vscode-yaml"
+  ]
+}

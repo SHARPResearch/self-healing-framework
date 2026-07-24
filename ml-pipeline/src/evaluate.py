@@ -9,7 +9,9 @@ from pathlib import Path
 from typing import TypedDict
 
 import numpy as np
-from sklearn.metrics import average_precision_score, f1_score, precision_score, recall_score
+from sklearn.metrics import (
+    average_precision_score, f1_score, precision_recall_curve, precision_score, recall_score,
+)
 
 from src.config import PIPELINE_CFG
 
@@ -22,6 +24,13 @@ class EvalMetrics(TypedDict):
     n_predicted_anomalies: int
     n_actual_anomalies: int
     n_samples: int
+
+
+class OracleResult(TypedDict):
+    threshold: float
+    precision: float
+    recall: float
+    f1: float
 
 
 def load_labels(entity_id: str) -> list[int]:
@@ -53,6 +62,33 @@ def percentile_threshold(scores: list[float], percentile: float) -> float:
     of reusing one fixed absolute cutoff across entities with different score scales.
     """
     return float(np.percentile(scores, percentile))
+
+
+def oracle_best_f1(scores: list[float], labels: list[int]) -> OracleResult:
+    """
+    Best F1 achievable on this data, diagnostic upper bound only, NOT deployable.
+
+    Uses the test labels to pick the threshold, which a real system cannot do at
+    inference time. Purpose is to show how much of the precision/recall gap is closed
+    by calibration versus how much would need a better model or features to close.
+    Efficient: uses precision_recall_curve's O(n log n) sweep instead of scoring every
+    candidate threshold with evaluate(), which would be O(n^2) for large score arrays.
+    """
+    precisions, recalls, thresholds = precision_recall_curve(labels, scores)
+    f1s = np.where(
+        (precisions + recalls) > 0,
+        2 * precisions * recalls / (precisions + recalls + 1e-12),
+        0.0,
+    )
+    # precision_recall_curve returns one more precision/recall point than thresholds
+    # (the last point is the "threshold above everything" edge case with no threshold).
+    best_idx = int(np.argmax(f1s[:-1]))
+    return OracleResult(
+        threshold=round(float(thresholds[best_idx]), 4),
+        precision=round(float(precisions[best_idx]), 4),
+        recall=round(float(recalls[best_idx]), 4),
+        f1=round(float(f1s[best_idx]), 4),
+    )
 
 
 def evaluate(scores: list[float], labels: list[int], threshold: float = 0.7) -> EvalMetrics:

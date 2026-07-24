@@ -1,6 +1,6 @@
 import pytest
 
-from src.evaluate import evaluate, load_labels, percentile_threshold, pr_auc
+from src.evaluate import evaluate, load_labels, oracle_best_f1, percentile_threshold, pr_auc
 
 
 def test_evaluate_computes_expected_metrics_on_synthetic_data():
@@ -67,3 +67,26 @@ def test_percentile_threshold_on_known_range():
     assert percentile_threshold(scores, 50) == pytest.approx(50.5, abs=0.5)
     assert percentile_threshold(scores, 100) == 100
     assert percentile_threshold(scores, 0) == 1
+
+
+def test_oracle_best_f1_finds_the_true_best_threshold():
+    scores = [0.1, 0.9, 0.2, 0.8, 0.3]
+    labels = [0, 1, 0, 0, 1]
+
+    oracle = oracle_best_f1(scores, labels)
+
+    # cross check: evaluate() at the reported threshold must reproduce the same f1
+    reproduced = evaluate(scores, labels, threshold=oracle["threshold"])
+    assert reproduced["f1"] == oracle["f1"]
+    assert reproduced["precision"] == oracle["precision"]
+    assert reproduced["recall"] == oracle["recall"]
+
+
+def test_oracle_best_f1_is_at_least_as_good_as_any_fixed_threshold():
+    scores = [0.1, 0.9, 0.2, 0.8, 0.3, 0.65, 0.55, 0.4]
+    labels = [0, 1, 0, 0, 1, 1, 0, 1]
+
+    oracle = oracle_best_f1(scores, labels)
+
+    for t in [0.2, 0.4, 0.5, 0.6, 0.7]:
+        assert oracle["f1"] >= evaluate(scores, labels, threshold=t)["f1"]

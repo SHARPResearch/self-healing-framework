@@ -1,2 +1,35 @@
+# Environment
 env*
 .env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Node
+node_modules/
+dist/
+build/
+
+# .NET
+bin/
+obj/
+
+# ML / data artifacts
+mlruns/
+mlflow-artifacts/
+*.db
+*.pkl
+*.log
+
+# IDE
+.vscode/*
+!.vscode/extensions.json
+
+# OS
+.DS_Store
+Thumbs.db

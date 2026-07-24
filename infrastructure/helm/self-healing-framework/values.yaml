@@ -1,0 +1,31 @@
+# Default values for the self-healing-framework Helm chart.
+# Per docs/Doc2_GitHub_Monorepo_Structure.md: single source of truth for image tags,
+# resource limits, replica counts, and env var injection. CI/CD substitutes image.tag
+# via `helm upgrade --set image.tag=$GIT_SHA`.
+#
+# This is a placeholder until services/* have real Dockerfiles to build against
+# (docs/Doc3_Execution_Guide.md Phase 8).
+
+mlBackend:
+  image:
+    repository: self-healing/ml-backend
+    tag: dev
+  replicas: 2
+  resources:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
+decisionEngine:
+  image:
+    repository: self-healing/decision-engine
+    tag: dev
+  replicas: 2
+  resources:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
+yarpGateway:
+  image:
+    repository: self-healing/yarp-gateway
+    tag: dev
+  replicas: 3

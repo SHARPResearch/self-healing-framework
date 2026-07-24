@@ -1,0 +1,6 @@
+apiVersion: v2
+name: self-healing-framework
+description: Helm chart for the self-healing microservice framework (ml-backend, decision-engine, yarp-gateway, redis, mlflow, monitoring)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

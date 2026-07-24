@@ -112,12 +112,11 @@ def main() -> None:
     preprocess_entity(args.entity, split="train")
     preprocess_entity(args.entity, split="test")
 
-    # HalfSpaceTrees memory scales with n_trees x 2^height x window_size. This machine
-    # only has a few GB genuinely free at any time (other applications already use most
-    # of the 16GB installed), so even 3 workers repeatedly drove free memory under 1GB.
-    # 2 workers stays comfortably within the real headroom, at the cost of some wall
-    # clock time.
-    max_workers = min(2, len(grid))
+    # This machine's other applications (editor windows, browser, antivirus) already
+    # use most of the 16GB installed, so even 2 workers repeatedly drove free memory
+    # under 1GB. Going fully serial trades wall clock time for a run that reliably
+    # finishes without needing to babysit it.
+    max_workers = 1
     logger.info("Using %s parallel workers (memory bound, not cpu bound)", max_workers)
     with ProcessPoolExecutor(max_workers=max_workers) as pool:
         futures = [pool.submit(run_combo, args.entity, cfg) for cfg in grid]

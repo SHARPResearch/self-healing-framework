@@ -55,6 +55,18 @@ def warm_up(model: HalfSpaceTrees, rows: Iterable[dict]) -> WarmUpStats:
     )
 
 
+def score_dataset(model: HalfSpaceTrees, rows: Iterable[dict]) -> list[float]:
+    """
+    Score rows against an already warmed-up model, clamped to [0, 1].
+
+    The model is frozen here — only score_one() is called, never learn_one(). Continuing
+    to learn during evaluation would blur "how well did the trained model do" with online
+    adaptation, which is Component 2's job (ADWIN drift detection + rollback), not this
+    module's.
+    """
+    return [float(min(max(model.score_one(features), 0.0), 1.0)) for features in rows]
+
+
 def classify_severity(score: float) -> str:
     """
     Map a continuous anomaly score to the 4-level severity enum.

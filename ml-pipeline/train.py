@@ -25,6 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "datasets" / "smd"))
 from preprocess import preprocess_entity  # noqa: E402
 
+import mlflow  # noqa: E402
 import pandas as pd  # noqa: E402
 
 from src.config import HST_CFG, PIPELINE_CFG  # noqa: E402
@@ -64,6 +65,18 @@ def main() -> None:
     test_df = pd.read_parquet(test_path)
     logger.info("  train=%s rows, test=%s rows", len(train_df), len(test_df))
 
+    mlflow.set_tracking_uri(PIPELINE_CFG.mlflow_tracking_uri)
+    mlflow.set_experiment(f"hst_{args.entity}")
+    mlflow.start_run(run_name=f"{args.entity}_component1")
+    mlflow.log_params({
+        "n_trees": HST_CFG.n_trees,
+        "height": HST_CFG.height,
+        "window_size": HST_CFG.window_size,
+        "seed": HST_CFG.seed,
+        "entity_id": args.entity,
+        "eval_threshold": args.eval_threshold,
+    })
+
     logger.info("[2/5] Warming up HST model (n_trees=%s, height=%s, window_size=%s)...",
                 HST_CFG.n_trees, HST_CFG.height, HST_CFG.window_size)
     model = build_model(HST_CFG)
@@ -102,6 +115,8 @@ def main() -> None:
         for step, (score, severity, label) in enumerate(zip(scores, severities, labels), start=1):
             writer.writerow([step, round(score, 6), severity, label])
     logger.info("  saved %s (%s rows)", scores_path, len(scores))
+
+    mlflow.end_run()
 
 
 if __name__ == "__main__":

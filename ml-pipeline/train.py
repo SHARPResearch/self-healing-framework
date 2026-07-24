@@ -23,7 +23,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "datasets" / "smd"))
 from preprocess import preprocess_entity  # noqa: E402
 
-from src.config import PIPELINE_CFG  # noqa: E402
+import pandas as pd  # noqa: E402
+
+from src.config import HST_CFG, PIPELINE_CFG  # noqa: E402
+from src.hst_model import build_model, warm_up  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -53,6 +56,19 @@ def main() -> None:
     train_path = preprocess_entity(args.entity, split="train")
     test_path = preprocess_entity(args.entity, split="test")
     logger.info("  train=%s test=%s", train_path, test_path)
+
+    train_df = pd.read_parquet(train_path)
+    test_df = pd.read_parquet(test_path)
+    logger.info("  train=%s rows, test=%s rows", len(train_df), len(test_df))
+
+    logger.info("[2/5] Warming up HST model (n_trees=%s, height=%s, window_size=%s)...",
+                HST_CFG.n_trees, HST_CFG.height, HST_CFG.window_size)
+    model = build_model(HST_CFG)
+    train_rows = train_df.to_dict(orient="records")
+    warm_up_stats = warm_up(model, train_rows)
+    logger.info("  %s events in %.1fs (%.0f events/sec)",
+                warm_up_stats.n_events, warm_up_stats.duration_seconds,
+                warm_up_stats.throughput_events_per_sec)
 
 
 if __name__ == "__main__":

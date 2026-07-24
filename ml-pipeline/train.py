@@ -26,6 +26,7 @@ from preprocess import preprocess_entity  # noqa: E402
 import pandas as pd  # noqa: E402
 
 from src.config import HST_CFG, PIPELINE_CFG  # noqa: E402
+from src.evaluate import evaluate, load_labels  # noqa: E402
 from src.hst_model import build_model, classify_severity, score_dataset, warm_up  # noqa: E402
 
 logging.basicConfig(
@@ -76,6 +77,12 @@ def main() -> None:
     severities = [classify_severity(s) for s in scores]
     logger.info("  scored %s rows, mean=%.4f max=%.4f",
                 len(scores), sum(scores) / len(scores), max(scores))
+
+    logger.info("[4/5] Evaluating against SMD ground-truth labels...")
+    labels = load_labels(args.entity)
+    metrics = evaluate(scores, labels, threshold=args.eval_threshold)
+    logger.info("  precision=%.4f recall=%.4f f1=%.4f (threshold=%.2f)",
+                metrics["precision"], metrics["recall"], metrics["f1"], metrics["threshold"])
 
 
 if __name__ == "__main__":

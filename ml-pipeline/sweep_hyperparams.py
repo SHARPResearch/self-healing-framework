@@ -112,11 +112,12 @@ def main() -> None:
     preprocess_entity(args.entity, split="train")
     preprocess_entity(args.entity, split="test")
 
-    # HalfSpaceTrees memory scales with n_trees x 2^height x window_size. Running all
-    # 7 combos at once (including n_trees=50 and window_size=400) exhausted 16GB of RAM
-    # and thrashed the machine to a crawl. Cap workers so the largest few combos can run
-    # together without running out of memory, at the cost of some wall clock time.
-    max_workers = min(3, len(grid))
+    # HalfSpaceTrees memory scales with n_trees x 2^height x window_size. This machine
+    # only has a few GB genuinely free at any time (other applications already use most
+    # of the 16GB installed), so even 3 workers repeatedly drove free memory under 1GB.
+    # 2 workers stays comfortably within the real headroom, at the cost of some wall
+    # clock time.
+    max_workers = min(2, len(grid))
     logger.info("Using %s parallel workers (memory bound, not cpu bound)", max_workers)
     with ProcessPoolExecutor(max_workers=max_workers) as pool:
         futures = [pool.submit(run_combo, args.entity, cfg) for cfg in grid]

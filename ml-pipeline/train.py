@@ -47,7 +47,10 @@ def parse_args() -> argparse.Namespace:
         "--entity", default=PIPELINE_CFG.smd_entity, help="SMD entity ID, e.g. machine-1-1"
     )
     parser.add_argument(
-        "--eval-threshold", type=float, default=0.7, help="Score threshold for anomaly prediction"
+        "--eval-threshold",
+        type=float,
+        default=PIPELINE_CFG.eval_threshold,
+        help="Score threshold for anomaly prediction",
     )
     return parser.parse_args()
 

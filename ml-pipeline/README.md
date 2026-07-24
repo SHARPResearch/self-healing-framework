@@ -9,8 +9,25 @@ Raw SMD data lives in `../datasets/smd/raw/` (not duplicated here) — see `.env
 
 ## Quick start
 
+**Component 1 (anomaly detection model — train + evaluate, done):**
+
 ```bash
 uv sync
-mlflow ui --backend-store-uri ./mlruns --port 5001   # separate terminal
+uv run python train.py --entity machine-1-1
+uv run pytest tests/ -v
+mlflow ui --backend-store-uri sqlite:///mlflow.db --port 5001   # view runs
+```
+
+`train.py` warms up river's HalfSpaceTrees on the training split, scores the held-out test
+split (model frozen, no further learning), evaluates against SMD ground truth, and saves the
+model to `model_snapshots/<entity>/`. Scope is deliberately narrow — no ADWIN drift detection,
+no MLflow rollback, no streaming data generator (see `CLAUDE.md` in this folder).
+
+**Component 2 (streaming pipeline + dynamic model updating — not yet built):**
+
+```bash
 uv run python main.py --entity machine-1-1
 ```
+
+`main.py` is still a placeholder for the teammate building the streaming ingestion pipeline and
+ADWIN/MLflow-rollback logic described in `docs/Component_1_2_Technical_Guide.md` Parts 3 & 5.

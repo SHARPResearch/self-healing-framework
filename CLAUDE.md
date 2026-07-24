@@ -41,7 +41,7 @@ dashboard.
 | `services/shared/` | Cross-service shared code | — |
 | `services/target-services/` | Sample microservices for chaos-injection demos | Node/Python/Go |
 | `frontend/` | Observability Dashboard | React 18, Vite, Tailwind |
-| `ml-pipeline/` | Standalone HST warm-up + drift-detection research pipeline (Component 1-2) | Python, river, MLflow |
+| `ml-pipeline/` | Standalone HST warm-up + drift-detection research pipeline (Component 1-2). Component 1 (train/evaluate) is done — see `ml-pipeline/CLAUDE.md`; Component 2 (streaming + drift) is in progress by a teammate. | Python, river, MLflow |
 | `infrastructure/` | Helm charts, Kubernetes manifests, Terraform | Helm, kubectl, Terraform |
 | `datasets/` | SMD/NAB dataset download + preprocessing scripts (not the raw data itself) | — |
 

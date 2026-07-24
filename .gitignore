@@ -25,6 +25,7 @@ mlflow-artifacts/
 *.db
 *.pkl
 *.log
+.pytest_cache/
 
 # IDE
 .vscode/*

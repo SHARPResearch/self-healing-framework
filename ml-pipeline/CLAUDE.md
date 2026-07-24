@@ -5,15 +5,23 @@ formerly `component-1-2-pipeline/` at repo root. Full spec: `docs/Component_1_2_
 
 **Tech**: Python 3.11 (uv-managed), `river`, MLflow, pandas/pyarrow, scikit-learn.
 
-**Status**: environment + config scaffold only. `src/config.py` (HST/ADWIN/pipeline dataclasses)
-exists and works; `main.py` is still the uv-init placeholder. `src/data_pipeline.py`,
-`src/hst_model.py`, `src/mlflow_lifecycle.py` from the guide's Parts 3-5 are not yet written.
+**Status**: Component 1 (anomaly detection model) is done — `src/hst_model.py` (build/warm-up/
+score/severity), `src/evaluate.py` (precision/recall/F1 against SMD labels), and `train.py` (CLI
+entry point) are implemented, tested (`tests/`), and verified against the real `machine-1-1` SMD
+data. Component 2 (streaming ingestion + ADWIN drift detection + MLflow rollback) is a teammate's
+work and intentionally not started — `main.py` is still the uv-init placeholder, and there is no
+`src/data_pipeline.py` or `src/mlflow_lifecycle.py` (those names are reserved for that work, per
+the guide's Parts 3 & 5, so there's no collision when it lands).
 
-**Known gotcha for whoever implements this next**: the guide's Part 5 assumes
-`MLFLOW_TRACKING_URI=./mlruns` (a plain filesystem store), but `mlflow>=3` rejects the filesystem
-backend by default (`MlflowException: filesystem tracking backend ... is in maintenance mode`).
-Use `sqlite:///mlflow.db` instead, or set `MLFLOW_ALLOW_FILE_STORE=true` to keep the guide's
-literal setting.
+Real results from the last verified run on `machine-1-1` (default hyperparameters: n_trees=25,
+height=15, window_size=250, threshold=0.7): precision 0.51, recall 0.28, F1 0.36. Modest but
+genuine — unsupervised HST with default hyperparameters on real SMD data, not tuned.
+
+**Fixed gotcha**: the guide's Part 5 assumes `MLFLOW_TRACKING_URI=./mlruns` (a plain filesystem
+store), but `mlflow>=3` rejects that by default (`MlflowException: filesystem tracking backend
+... is in maintenance mode`). `src/config.py`'s default is now `sqlite:///mlflow.db` instead —
+whoever builds Component 2's `mlflow_lifecycle.py` should keep using that URI, not the guide's
+literal `./mlruns`.
 
 `SMD_RAW_DIR` now points at `../datasets/smd/raw` (this repo's canonical dataset location) instead
 of a local copy — don't re-duplicate the ~466MB dataset here.

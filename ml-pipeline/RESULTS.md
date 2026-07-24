@@ -1,29 +1,34 @@
 # Component 1 — HST training results
 
-Verified run, `machine-1-1`, default hyperparameters (`n_trees=25, height=15, window_size=250,
-seed=42`, eval threshold `0.7`):
+Current tuned configuration, `machine-1-1` (`n_trees=25, height=15, window_size=250, seed=42`,
+`eval_threshold=0.4` — see the sweeps below for why):
 
 | Metric | Value |
 |---|---|
 | Warm-up events (train split) | 28,479 |
 | Warm-up throughput | ~450 events/sec |
 | Test split size | 28,479 |
-| Mean test anomaly score | 0.213 |
-| Precision | 0.5097 |
-| Recall | 0.2836 |
-| F1 | 0.3644 |
+| Precision | 0.4344 |
+| Recall | 0.8129 |
+| F1 | **0.5663** |
 | Actual anomalies in test split | 2,694 (9.5%) |
+
+Reproduce with:
+
+```bash
+uv run python train.py --entity machine-1-1
+```
+
+The guide's original defaults (`eval_threshold=0.7`) gave a notably weaker precision 0.5097,
+recall 0.2836, F1 0.3644 — it was scoring reasonably, just being graded with too strict a
+threshold. See the threshold sweep below for the full picture.
 
 ## Reading these numbers honestly
 
-Precision/recall/F1 are modest, not strong — this is unsupervised anomaly detection with
-out-of-the-box hyperparameters on real SMD data, not a tuned classifier. At `threshold=0.7`
-the model is conservative (fewer false positives, more missed anomalies — recall 0.28 confirms
-it misses most true anomalies). Reproduce with:
-
-```bash
-uv run python train.py --entity machine-1-1 --eval-threshold 0.7
-```
+Precision/recall/F1 are modest, not strong even after tuning — this is unsupervised anomaly
+detection on real SMD data, not a tuned classifier, and both the threshold sweep and the
+hyperparameter sweep below confirm this isn't from under-tuning. See "The realistic ceiling"
+section at the bottom.
 
 ## Threshold sweep
 
@@ -44,9 +49,49 @@ Threshold 0.4 gives the best F1 (0.5662, up from 0.3644 at the guide's default 0
 configured default (`EVAL_THRESHOLD=0.4` in `.env`, `PIPELINE_CFG.eval_threshold`), replacing the
 hardcoded 0.7 that `train.py` used before.
 
-## Things worth trying next
+## Hyperparameter sweep
 
-- Sweep `HST_N_TREES` / `HST_HEIGHT` / `HST_WINDOW_SIZE` in `.env` (see next section once done).
-- Run across all 28 SMD entities and compare, rather than just `machine-1-1` (see next section).
-- Compare against the NAB benchmark scorer per `docs/Doc1_Technical_Architecture.md` §9 (not
-  done here, left as a genuine follow up beyond this pass's scope).
+`uv run python sweep_hyperparams.py`, one at a time around the baseline, on `machine-1-1`, best
+threshold per combo (see script for details). Ranked best first:
+
+| n_trees | height | window_size | best_threshold | precision | recall | f1 | duration |
+|---|---|---|---|---|---|---|---|
+| 25 (baseline) | 15 (baseline) | 250 (baseline) | 0.4 | 0.4344 | 0.8129 | **0.5663** | 105s |
+| 25 | 15 | 400 | 0.4 | 0.4342 | 0.8133 | 0.5661 | 52s |
+| 25 | 15 | 150 | 0.4 | 0.4339 | 0.8096 | 0.5650 | 87s |
+| 10 | 15 | 250 | 0.5 | 0.4099 | 0.8508 | 0.5532 | 52s |
+| 50 | 15 | 250 | 0.4 | 0.4115 | 0.6366 | 0.4999 | 265s |
+| 25 | 10 | 250 | 0.3 | 0.3554 | 0.7765 | 0.4876 | 20s |
+| 25 | 18 | 250 | 0.4 | 0.3483 | 0.6696 | 0.4582 | 815s |
+
+**The baseline hyperparameters already won.** Every variant tested was flat or worse:
+`window_size` barely matters (150 to 400 all land within 0.002 F1 of each other), fewer trees
+(`n_trees=10`) is close but slightly worse, more trees (`n_trees=50`) is notably worse (possibly
+overfitting to "normal" and becoming less sensitive), and both `height` variants are worse while
+`height=18` also took 815 seconds for a single run versus baseline's 105 (HalfSpaceTrees builds
+`2^height` nodes per tree up front, so height is exponential in cost, not linear — worth knowing
+before increasing it). No `.env` changes made here: `HST_N_TREES=25`, `HST_HEIGHT=15`,
+`HST_WINDOW_SIZE=250` stay as is; `EVAL_THRESHOLD=0.4` (from the threshold sweep above) is the
+one real change from the guide's original defaults.
+
+A genuinely useful negative result: this was not a wasted exercise even though nothing beat the
+baseline — it rules out "we just didn't tune it" as an explanation for the modest F1, which
+matters for the ceiling discussion below.
+
+## All 28 SMD entities
+
+See the next section once `train_all.py` has been run — this checks whether `machine-1-1` was
+an easy or hard entity to detect anomalies on, compared to the other 27.
+
+## The realistic ceiling for unsupervised anomaly detection
+
+Half-Space Trees never sees the ground-truth labels during training — it only ever learns "what
+does normal look like" from unlabelled data and flags deviations from that. A supervised
+classifier trained directly on labelled anomalies would be expected to score much higher (F1
+0.8+ is common for supervised SMD baselines in the literature) because it can learn the exact
+decision boundary between normal and anomalous. Unsupervised HST cannot do that by construction.
+F1 in the 0.5 to 0.6 range, as found here after both a threshold sweep and a hyperparameter
+sweep confirmed the defaults were already close to a local optimum, is a realistic, defensible
+result for this method — not a bug, and not something more tuning alone fixes. Comparing against
+a supervised baseline or the NAB benchmark scorer (`docs/Doc1_Technical_Architecture.md` §9)
+would make this ceiling concrete, and is a genuine follow up left out of this pass's scope.

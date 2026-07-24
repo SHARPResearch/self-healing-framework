@@ -13,9 +13,14 @@ Usage:
 import argparse
 import logging
 import sys
+import time
 from dataclasses import replace
 
-from src.config import HST_CFG, PIPELINE_CFG
+from src.config import HST_CFG, HSTConfig, PIPELINE_CFG
+from src.evaluate import evaluate
+from src.pipeline import warm_up_and_score
+
+THRESHOLDS = [0.3, 0.4, 0.5, 0.6, 0.7]
 
 logging.basicConfig(
     level=logging.INFO,
@@ -38,6 +43,36 @@ def build_grid() -> list:
         replace(baseline, window_size=150),
         replace(baseline, window_size=400),
     ]
+
+
+def run_combo(entity_id: str, cfg: HSTConfig) -> dict:
+    """
+    Train one hyperparameter combination and find its best threshold.
+
+    Trains once, then evaluates at every threshold in THRESHOLDS against the same
+    scores (free), returning the threshold that gives the best F1 for this combo.
+    Module level function so it can be pickled for ProcessPoolExecutor.
+    """
+    start = time.perf_counter()
+    result = warm_up_and_score(entity_id, cfg)
+    scores, labels = result["scores"], result["labels"]
+
+    best = max(
+        (evaluate(scores, labels, threshold=t) for t in THRESHOLDS),
+        key=lambda m: m["f1"],
+    )
+    duration = time.perf_counter() - start
+
+    return {
+        "n_trees": cfg.n_trees,
+        "height": cfg.height,
+        "window_size": cfg.window_size,
+        "best_threshold": best["threshold"],
+        "precision": best["precision"],
+        "recall": best["recall"],
+        "f1": best["f1"],
+        "duration_seconds": round(duration, 1),
+    }
 
 
 def parse_args() -> argparse.Namespace:

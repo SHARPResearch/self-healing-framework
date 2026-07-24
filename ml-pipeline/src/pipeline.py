@@ -57,6 +57,52 @@ def warm_up_and_score(entity_id: str, hst_cfg: HSTConfig) -> WarmUpAndScoreResul
     )
 
 
+class CalibrationResult(TypedDict):
+    model: HalfSpaceTrees
+    calib_scores: list[float]
+    test_scores: list[float]
+    labels: list[int]
+    warm_up_stats: WarmUpStats
+
+
+def warm_up_calibrate_and_score(
+    entity_id: str, hst_cfg: HSTConfig, calib_fraction: float = 0.2
+) -> CalibrationResult:
+    """
+    Warm up with a held out calibration slice, for per entity threshold calibration.
+
+    Splits the train split chronologically into fit (first 1 - calib_fraction) and
+    calib (last calib_fraction). Warms up on fit only, then scores calib with that
+    fitted-but-not-yet-seen-it model -- those scores are unbiased "held out normal"
+    data suitable for picking a percentile based threshold. Then warms up on calib too,
+    so the final model still learns from all of the training data, and scores test
+    exactly like warm_up_and_score() does.
+    """
+    train_path = preprocess_entity(entity_id, split="train")
+    test_path = preprocess_entity(entity_id, split="test")
+    train_df = pd.read_parquet(train_path)
+    test_df = pd.read_parquet(test_path)
+
+    split_idx = int(len(train_df) * (1 - calib_fraction))
+    fit_df = train_df.iloc[:split_idx]
+    calib_df = train_df.iloc[split_idx:]
+
+    model = build_model(hst_cfg)
+    warm_up_stats = warm_up(model, fit_df.to_dict(orient="records"))
+    calib_scores = score_dataset(model, calib_df.to_dict(orient="records"))
+    warm_up(model, calib_df.to_dict(orient="records"))
+    test_scores = score_dataset(model, test_df.to_dict(orient="records"))
+    labels = load_labels(entity_id)
+
+    return CalibrationResult(
+        model=model,
+        calib_scores=calib_scores,
+        test_scores=test_scores,
+        labels=labels,
+        warm_up_stats=warm_up_stats,
+    )
+
+
 class TrainResult(TypedDict):
     entity_id: str
     warm_up_events: int

@@ -50,7 +50,7 @@ class ADWINConfig:
 class PipelineConfig:
     """Top-level pipeline settings."""
     smd_entity: str = os.getenv("SMD_ENTITY", "machine-1-1")
-    smd_raw_dir: str = os.getenv("SMD_RAW_DIR", "./data/smd/raw")
+    smd_raw_dir: str = os.getenv("SMD_RAW_DIR", "../datasets/smd/raw")
     smd_processed_dir: str = os.getenv("SMD_PROCESSED_DIR", "./data/smd/processed")
     model_snapshot_dir: str = os.getenv("MODEL_SNAPSHOT_DIR", "./model_snapshots")
     score_output_dir: str = os.getenv("SCORE_OUTPUT_DIR", "./outputs/scores")

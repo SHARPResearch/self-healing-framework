@@ -1,0 +1,39 @@
+# Local dev stack. Service blocks (ml-backend, decision-engine, yarp-gateway, frontend) are
+# commented out until each has a real Dockerfile -- see docs/Doc3_Execution_Guide.md Phase 8.
+# Until then, use the `local-dev-stack` Claude Code skill (.claude/skills/local-dev-stack).
+
+services:
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+
+  timescaledb:
+    image: timescale/timescaledb-ha:pg16
+    environment:
+      POSTGRES_PASSWORD: selfheal
+      POSTGRES_DB: selfheal
+    ports:
+      - "5432:5432"
+
+  # mlflow:
+  #   image: ghcr.io/mlflow/mlflow:latest
+  #   command: mlflow server --backend-store-uri sqlite:///mlflow.db --host 0.0.0.0 --port 5001
+  #   ports:
+  #     - "5001:5001"
+
+  # ml-backend:
+  #   build: ./services/ml-backend
+  #   ports: ["8000:8000"]
+
+  # decision-engine:
+  #   build: ./services/decision-engine
+
+  # yarp-gateway:
+  #   build: ./services/yarp-gateway
+  #   ports: ["5000:5000"]
+
+  # frontend:
+  #   build: ./frontend
+  #   ports: ["5173:5173"]

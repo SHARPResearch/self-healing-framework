@@ -1,0 +1,3 @@
+# Raw SMD text files (~466MB) — fetch with ./download.sh, don't commit them.
+raw/
+processed/

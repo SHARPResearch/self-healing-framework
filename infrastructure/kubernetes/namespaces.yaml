@@ -1,0 +1,17 @@
+# Namespace topology per docs/Doc1_Technical_Architecture.md §8.
+# monitoring already comes from the kube-prometheus-stack Helm install (Doc3 Phase 0)
+# and is not defined here.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: selfheal-system
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: selfheal-apps
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: selfheal-frontend

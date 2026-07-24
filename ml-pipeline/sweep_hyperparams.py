@@ -35,14 +35,22 @@ logger = logging.getLogger("sweep")
 
 
 def build_grid() -> list:
-    """One at a time sensitivity sweep: baseline, then each parameter varied alone."""
+    """
+    One at a time sensitivity sweep: baseline, then each parameter varied alone.
+
+    height=18 (not 20): HalfSpaceTrees builds 2^height nodes per tree up front, so
+    height is exponential in cost, not linear. height=20 measured at roughly 640
+    seconds of tree construction alone versus 20 seconds at the baseline height=15,
+    and running that alongside other combos is what exhausted 16GB of RAM earlier.
+    height=18 (8x the baseline node count) still shows sensitivity without that.
+    """
     baseline = HST_CFG
     return [
         replace(baseline),
         replace(baseline, n_trees=10),
         replace(baseline, n_trees=50),
         replace(baseline, height=10),
-        replace(baseline, height=20),
+        replace(baseline, height=18),
         replace(baseline, window_size=150),
         replace(baseline, window_size=400),
     ]

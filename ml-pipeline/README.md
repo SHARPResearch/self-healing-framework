@@ -13,7 +13,8 @@ Raw SMD data lives in `../datasets/smd/raw/` (not duplicated here) — see `.env
 
 ```bash
 uv sync
-uv run python train.py --entity machine-1-1
+uv run python train.py --entity machine-1-1 --calibrate   # recommended, see RESULTS.md
+uv run python train.py --entity machine-1-1               # fixed threshold, single entity only
 uv run pytest tests/ -v
 mlflow ui --backend-store-uri sqlite:///mlflow.db --port 5001   # view runs
 ```
@@ -22,6 +23,11 @@ mlflow ui --backend-store-uri sqlite:///mlflow.db --port 5001   # view runs
 split (model frozen, no further learning), evaluates against SMD ground truth, and saves the
 model to `model_snapshots/<entity>/`. Scope is deliberately narrow — no ADWIN drift detection,
 no MLflow rollback, no streaming data generator (see `CLAUDE.md` in this folder).
+
+`--calibrate` computes a per-entity threshold from held-out normal data instead of a fixed
+`--eval-threshold` — a single fixed threshold does not transfer across SMD entities (see
+`RESULTS.md`). Use `sweep_hyperparams.py` and `calibrate.py` to reproduce the tuning/calibration
+sweeps and `train_all.py` to evaluate a config across all 28 entities at once.
 
 **Component 2 (streaming pipeline + dynamic model updating — not yet built):**
 

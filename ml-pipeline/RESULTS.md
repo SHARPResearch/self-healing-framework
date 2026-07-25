@@ -23,6 +23,10 @@ The guide's original defaults (`eval_threshold=0.7`) gave a notably weaker preci
 recall 0.2836, F1 0.3644 — it was scoring reasonably, just being graded with too strict a
 threshold. See the threshold sweep below for the full picture.
 
+**If running on more than one entity, use `--calibrate` instead of a fixed threshold** — see
+"Per-entity threshold calibration" below. The fixed `EVAL_THRESHOLD=0.4` shown above is tuned on
+`machine-1-1` specifically and does not transfer to other entities.
+
 ## Reading these numbers honestly
 
 Precision/recall/F1 are modest, not strong even after tuning — this is unsupervised anomaly
@@ -110,6 +114,56 @@ known, documented weak point, not a silent one: it is tuned for `machine-1-1` sp
 demonstrably does not generalize. Re-tuning per entity (or designing an adaptive threshold) is
 the concrete next step, left out of this pass's scope.
 
+## Per-entity threshold calibration
+
+The fix the previous section called for: `uv run python calibrate.py`, baseline hyperparameters,
+per-entity threshold calibrated from that entity's own held-out normal data (chronological 80/20
+split of the train split, threshold = a percentile of the held-out 20%'s scores), serial
+execution across all 28 entities. Full per-entity table in
+`outputs/scores/calibration_comparison.csv`. Also computed per entity: PR-AUC (threshold
+independent ranking quality) and an oracle best F1 (uses the test labels to pick the threshold —
+not deployable, a diagnostic upper bound only).
+
+| Method | Mean F1 | Median F1 |
+|---|---|---|
+| Fixed global threshold (prior section) | 0.1195 | 0.0765 |
+| Percentile 90 | 0.1575 | 0.1235 |
+| Percentile 95 | 0.1700 | 0.1638 |
+| Percentile 97 (chosen default, see below) | 0.1866 | 0.1380 |
+| Percentile 99 | 0.1975 | 0.1387 |
+| Percentile 99.5 | 0.2097 | 0.1261 |
+| Oracle (non-deployable upper bound) | 0.3505 | 0.3188 |
+
+Mean PR-AUC across all 28 entities: 0.2867 (versus a random baseline around 0.05-0.10, the
+typical anomaly rate — so the model has real, if modest, ranking ability almost everywhere).
+
+**Calibration works — it nearly doubles mean F1** (0.1195 to 0.2097 at percentile 99.5, +75%
+relative) **but does not fully close the gap to the oracle ceiling** (0.3505). Percentile-based
+per-entity calibration is a genuine, validated improvement, not a complete fix.
+
+**Honest complication: mean and median disagree on which percentile is "best."** Mean F1
+increases monotonically from percentile 90 to 99.5. Median F1 peaks at percentile 95 and is
+roughly flat-to-worse beyond that. The reason is visible in the per-entity CSV: a few entities
+(`machine-2-8`: F1 0.13 to 0.76, `machine-3-10`: F1 0.16 to 0.51) improve dramatically at high
+percentiles and pull the mean up, while others (`machine-2-1`, `machine-3-6`) get *worse* at high
+percentiles. **No single global percentile is best for every entity** — this is the same
+underlying problem as the fixed-threshold section above, one level down: calibration fixes the
+*absolute score scale* differing per entity, but the *best percentile* still differs per entity
+too. A fully adaptive fix would pick the percentile per entity as well (e.g. via a second
+held-out split, or by targeting a fixed assumed anomaly rate), which is a genuine further
+follow-up left out of this pass's scope.
+
+**Chosen default: percentile 97** (`train.py --calibrate`, default `--calib-percentile 97`). It
+is not the single best mean (99.5 is) or best median (95 is) but is a reasonable middle ground
+that avoids the extremes in either direction. This is a judgment call, documented rather than
+hidden — re-run `calibrate.py` and adjust `--calib-percentile` if a different entity mix warrants
+prioritizing mean over median or vice versa.
+
+```bash
+uv run python train.py --entity machine-1-1 --calibrate
+# equivalent to: uv run python train.py --entity machine-1-1 --calibrate --calib-percentile 97
+```
+
 ## The realistic ceiling for unsupervised anomaly detection
 
 Half-Space Trees never sees the ground-truth labels during training — it only ever learns "what
@@ -121,12 +175,21 @@ F1 in the 0.5 to 0.6 range on a well-tuned single entity, as found here after bo
 sweep and a hyperparameter sweep confirmed the defaults were already close to a local optimum,
 is a realistic, defensible result for this method on its best case.
 
-The 28-entity run above adds a second ceiling on top of that: the mean F1 across all entities
-(0.1195) is far below the single-entity best (0.5663), because a single global threshold does
-not transfer across machines with different baseline behaviour. Both of these are ceilings
-this method has by construction, not bugs, and not something more tuning alone fixes -- fixing
-the second one specifically needs per-entity (or adaptive) thresholding, not a better `n_trees`
-or a better global `EVAL_THRESHOLD`. Comparing against a supervised baseline or the NAB benchmark
-scorer (`docs/Doc1_Technical_Architecture.md` §9) would make the first ceiling concrete; building
-per-entity threshold calibration would address the second. Both are genuine follow ups left out
-of this pass's scope.
+The 28-entity run added a second ceiling on top of that: the mean F1 across all entities using
+one fixed global threshold (0.1195) is far below the single-entity best (0.5663), because a
+single global threshold does not transfer across machines with different baseline behaviour.
+Per-entity percentile calibration (previous section) fixes a meaningful part of this — mean F1
+nearly doubles to 0.2097 — but reveals a third ceiling: even calibrated, the mean is still well
+below the oracle upper bound (0.3505), and no single percentile choice is best for every entity.
+Each of these three ceilings is a real, construction-level limit of this method at its current
+level of sophistication, not a bug, and not something more raw-hyperparameter tuning fixes:
+
+1. Unsupervised HST tops out around F1 0.5 to 0.6 on its best-case entity (versus F1 0.8+ typical
+   for supervised classifiers on labelled anomalies) — fixable by comparing against a supervised
+   baseline or the NAB benchmark scorer (`docs/Doc1_Technical_Architecture.md` §9) to make the
+   gap concrete, not by more tuning.
+2. A single global threshold does not transfer across entities — addressed by per-entity
+   percentile calibration (implemented, `train.py --calibrate`).
+3. Even per-entity calibration does not close the full gap to the oracle, and no single
+   percentile suits every entity — would need per-entity-adaptive percentile selection or better
+   features/model to close further, a genuine follow-up left out of this pass's scope.

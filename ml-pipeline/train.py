@@ -40,16 +40,41 @@ def parse_args() -> argparse.Namespace:
         "--eval-threshold",
         type=float,
         default=PIPELINE_CFG.eval_threshold,
-        help="Score threshold for anomaly prediction",
+        help="Score threshold for anomaly prediction (ignored if --calibrate is set)",
+    )
+    parser.add_argument(
+        "--calibrate",
+        action="store_true",
+        help="Calibrate a per entity threshold from held out normal data instead of "
+             "using --eval-threshold. See RESULTS.md: a single fixed threshold does "
+             "not transfer well across entities.",
+    )
+    parser.add_argument(
+        "--calib-percentile",
+        type=float,
+        default=97,
+        help="Percentile of held out calibration scores to use as the threshold "
+             "when --calibrate is set (default 97, the recommended middle ground "
+             "from the calibration sweep in RESULTS.md)",
     )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    logger.info("Component 1 training run entity=%s threshold=%s", args.entity, args.eval_threshold)
+    if args.calibrate:
+        logger.info("Component 1 training run entity=%s calibrate=True percentile=%s",
+                    args.entity, args.calib_percentile)
+    else:
+        logger.info("Component 1 training run entity=%s threshold=%s",
+                    args.entity, args.eval_threshold)
 
-    result = train_and_evaluate(args.entity, HST_CFG, args.eval_threshold)
+    result = train_and_evaluate(
+        args.entity, HST_CFG,
+        eval_threshold=args.eval_threshold,
+        calibrate=args.calibrate,
+        calib_percentile=args.calib_percentile,
+    )
 
     logger.info("warm up events=%s throughput=%.0f events per sec",
                 result["warm_up_events"], result["warm_up_throughput_eps"])

@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "datasets" / "smd")
 from preprocess import preprocess_entity  # noqa: E402
 
 from src.config import PIPELINE_CFG, HSTConfig  # noqa: E402
-from src.evaluate import evaluate, load_labels  # noqa: E402
+from src.evaluate import evaluate, load_labels, percentile_threshold  # noqa: E402
 from src.hst_model import (  # noqa: E402
     WarmUpStats, build_model, classify_severity, score_dataset, warm_up,
 )
@@ -57,6 +57,52 @@ def warm_up_and_score(entity_id: str, hst_cfg: HSTConfig) -> WarmUpAndScoreResul
     )
 
 
+class CalibrationResult(TypedDict):
+    model: HalfSpaceTrees
+    calib_scores: list[float]
+    test_scores: list[float]
+    labels: list[int]
+    warm_up_stats: WarmUpStats
+
+
+def warm_up_calibrate_and_score(
+    entity_id: str, hst_cfg: HSTConfig, calib_fraction: float = 0.2
+) -> CalibrationResult:
+    """
+    Warm up with a held out calibration slice, for per entity threshold calibration.
+
+    Splits the train split chronologically into fit (first 1 - calib_fraction) and
+    calib (last calib_fraction). Warms up on fit only, then scores calib with that
+    fitted-but-not-yet-seen-it model -- those scores are unbiased "held out normal"
+    data suitable for picking a percentile based threshold. Then warms up on calib too,
+    so the final model still learns from all of the training data, and scores test
+    exactly like warm_up_and_score() does.
+    """
+    train_path = preprocess_entity(entity_id, split="train")
+    test_path = preprocess_entity(entity_id, split="test")
+    train_df = pd.read_parquet(train_path)
+    test_df = pd.read_parquet(test_path)
+
+    split_idx = int(len(train_df) * (1 - calib_fraction))
+    fit_df = train_df.iloc[:split_idx]
+    calib_df = train_df.iloc[split_idx:]
+
+    model = build_model(hst_cfg)
+    warm_up_stats = warm_up(model, fit_df.to_dict(orient="records"))
+    calib_scores = score_dataset(model, calib_df.to_dict(orient="records"))
+    warm_up(model, calib_df.to_dict(orient="records"))
+    test_scores = score_dataset(model, test_df.to_dict(orient="records"))
+    labels = load_labels(entity_id)
+
+    return CalibrationResult(
+        model=model,
+        calib_scores=calib_scores,
+        test_scores=test_scores,
+        labels=labels,
+        warm_up_stats=warm_up_stats,
+    )
+
+
 class TrainResult(TypedDict):
     entity_id: str
     warm_up_events: int
@@ -71,7 +117,9 @@ class TrainResult(TypedDict):
 def train_and_evaluate(
     entity_id: str,
     hst_cfg: HSTConfig,
-    eval_threshold: float,
+    eval_threshold: float | None = None,
+    calibrate: bool = False,
+    calib_percentile: float = 97,
     save_model: bool = True,
     save_scores_csv: bool = True,
     log_to_mlflow: bool = True,
@@ -84,7 +132,16 @@ def train_and_evaluate(
     Args:
         entity_id: SMD entity id, e.g. "machine-1-1".
         hst_cfg: HalfSpaceTrees hyperparameters to use for this run.
-        eval_threshold: score threshold for anomaly prediction.
+        eval_threshold: fixed score threshold for anomaly prediction. Required unless
+            calibrate=True. ml-pipeline/RESULTS.md found a single fixed threshold does
+            not transfer well across entities -- calibrate=True is the fix.
+        calibrate: if True, ignore eval_threshold and instead calibrate a threshold
+            per entity from its own held out normal data (see
+            src.pipeline.warm_up_calibrate_and_score and src.evaluate.percentile_threshold).
+        calib_percentile: percentile of held out calibration scores to use as the
+            threshold when calibrate=True. 97 is the recommended default from the
+            calibration sweep in RESULTS.md -- a reasonable middle ground, since no
+            single percentile is best for every entity there.
         save_model: pickle the trained model to model_snapshots/.
         save_scores_csv: write per row scores to outputs/scores/.
         log_to_mlflow: log params/metrics (and the model artifact, if saved) to MLflow.
@@ -92,12 +149,28 @@ def train_and_evaluate(
     Returns:
         TrainResult with warm up stats and evaluation metrics.
     """
+    if not calibrate and eval_threshold is None:
+        raise ValueError("eval_threshold is required unless calibrate=True")
+
     if log_to_mlflow:
         mlflow.set_tracking_uri(PIPELINE_CFG.mlflow_tracking_uri)
         mlflow.set_experiment(f"hst_{entity_id}")
         mlflow.start_run(run_name=f"{entity_id}_component1")
 
     try:
+        if calibrate:
+            calib_result = warm_up_calibrate_and_score(entity_id, hst_cfg)
+            model, scores, labels, warm_up_stats = (
+                calib_result["model"], calib_result["test_scores"],
+                calib_result["labels"], calib_result["warm_up_stats"],
+            )
+            eval_threshold = percentile_threshold(calib_result["calib_scores"], calib_percentile)
+        else:
+            result = warm_up_and_score(entity_id, hst_cfg)
+            model, scores, labels, warm_up_stats = (
+                result["model"], result["scores"], result["labels"], result["warm_up_stats"]
+            )
+
         if log_to_mlflow:
             mlflow.log_params({
                 "n_trees": hst_cfg.n_trees,
@@ -106,12 +179,10 @@ def train_and_evaluate(
                 "seed": hst_cfg.seed,
                 "entity_id": entity_id,
                 "eval_threshold": eval_threshold,
+                "calibrate": calibrate,
+                "calib_percentile": calib_percentile if calibrate else None,
             })
 
-        result = warm_up_and_score(entity_id, hst_cfg)
-        model, scores, labels, warm_up_stats = (
-            result["model"], result["scores"], result["labels"], result["warm_up_stats"]
-        )
         severities = [classify_severity(s) for s in scores]
         metrics = evaluate(scores, labels, threshold=eval_threshold)
 

@@ -37,3 +37,5 @@ uv run python main.py --entity machine-1-1
 
 `main.py` is still a placeholder for the teammate building the streaming ingestion pipeline and
 ADWIN/MLflow-rollback logic described in `docs/Component_1_2_Technical_Guide.md` Parts 3 & 5.
+`src/data_pipeline.py` and `src/mlflow_lifecycle.py` exist as docstring-only reserved stubs
+marking that territory — no functions yet, just what's meant to go there and why.

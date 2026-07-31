@@ -11,8 +11,11 @@ PR-AUC, percentile threshold, oracle best F1), `src/pipeline.py` (shared `train_
 / `warm_up_and_score()` / `warm_up_calibrate_and_score()`, used by `train.py`,
 `sweep_hyperparams.py`, `train_all.py`, and `calibrate.py`) are implemented and tested (`tests/`).
 Component 2 (streaming ingestion + ADWIN drift detection + MLflow rollback) is a teammate's work
-and intentionally not started — `main.py` is still the uv-init placeholder, and there is no
-`src/data_pipeline.py` or `src/mlflow_lifecycle.py` (those names are reserved for that work).
+and intentionally not started — `main.py` is still the uv-init placeholder, and
+`src/data_pipeline.py` / `src/mlflow_lifecycle.py` exist only as reserved, docstring-only stub
+files (no functions, no classes) marking out that territory so there's no filename collision
+when the real implementation lands. See each file's docstring for what it's meant to contain and
+which guide part it maps to.
 
 **Tuning + calibration done, see `RESULTS.md` for full numbers and honest caveats**: threshold
 swept (0.7 guide default -> 0.4), hyperparameters swept one-at-a-time (baseline

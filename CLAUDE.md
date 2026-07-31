@@ -41,7 +41,8 @@ dashboard.
 | `services/shared/` | Cross-service shared code | — |
 | `services/target-services/` | Sample microservices for chaos-injection demos | Node/Python/Go |
 | `frontend/` | Observability Dashboard | React 18, Vite, Tailwind |
-| `ml-pipeline/` | Standalone HST warm-up + drift-detection research pipeline (Component 1-2). Component 1 (train/evaluate/tune/calibrate) is done — see `ml-pipeline/RESULTS.md`; Component 2 (streaming + drift) is in progress by a teammate. | Python, river, MLflow |
+| `ml-pipeline/` | Standalone HST warm-up + drift-detection research pipeline (Component 1-2). Component 1 (train/evaluate/tune/calibrate) is done — see `ml-pipeline/RESULTS.md`; Component 2 (streaming + drift) is reserved (`src/data_pipeline.py`/`src/mlflow_lifecycle.py` stubs) for a teammate. | Python, river, MLflow |
+| `adaptive-pipeline/` | Standalone RL research pipeline (Component 4 — Adaptive Learning Decision Engine). Scaffold only, no code yet, no `.venv` installed yet — see `adaptive-pipeline/CLAUDE.md` for the open state/action/reward design questions that need answering first. | Python, Stable-Baselines3, Gymnasium, MLflow |
 | `infrastructure/` | Helm charts, Kubernetes manifests, Terraform | Helm, kubectl, Terraform |
 | `datasets/` | SMD/NAB dataset download + preprocessing scripts (not the raw data itself) | — |
 

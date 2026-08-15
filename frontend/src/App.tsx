@@ -1,8 +1,31 @@
+import { Navigate, Route, Routes } from "react-router-dom";
+import { LoginStubPage } from "@/features/auth/LoginStubPage";
+import { DashboardPage } from "@/features/dashboard/DashboardPage";
+import { AppShell } from "@/shared/layout/AppShell";
+import { ComingSoonPage } from "@/shared/components/ComingSoonPage";
+
+function StubRoute({ title }: { title: string }) {
+  return (
+    <AppShell pageTitle={title}>
+      <ComingSoonPage title={title} />
+    </AppShell>
+  );
+}
+
 function App() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background text-foreground">
-      <p className="text-sm text-muted-foreground">SHARP -- routing wired in next commit</p>
-    </div>
+    <Routes>
+      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+      <Route path="/login" element={<LoginStubPage />} />
+      <Route path="/dashboard" element={<DashboardPage />} />
+      <Route path="/services" element={<StubRoute title="Services" />} />
+      <Route path="/dependency-graph" element={<StubRoute title="Dependency graph" />} />
+      <Route path="/incidents" element={<StubRoute title="Incidents" />} />
+      <Route path="/models" element={<StubRoute title="Models" />} />
+      <Route path="/copilot" element={<StubRoute title="Copilot" />} />
+      <Route path="/settings" element={<StubRoute title="Settings" />} />
+      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+    </Routes>
   );
 }
 

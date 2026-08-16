@@ -20,7 +20,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
         {!collapsed && (
           <div className="flex items-center gap-2">
             <div className="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
-              <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+              <img src="/favicon.svg" alt="SHARP" className="size-4" />
             </div>
             <span className="text-sm font-semibold tracking-tight">SHARP</span>
           </div>

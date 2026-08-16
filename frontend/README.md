@@ -12,5 +12,6 @@ pnpm dev      # http://localhost:5173
 pnpm build    # typecheck + production build
 ```
 
-Dashboard page (`/dashboard`, also the default route) is real, built with mock data. Other nav
-items are "coming soon" stubs — real content, API wiring, and auth are follow-up work.
+Dashboard (`/dashboard`, also the default route), Incidents (`/incidents`), and Copilot
+(`/copilot`) are real, built with mock data. Other nav items are "coming soon" stubs — real
+content, API wiring, and auth are follow-up work.

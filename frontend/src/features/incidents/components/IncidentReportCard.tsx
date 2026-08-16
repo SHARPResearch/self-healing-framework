@@ -21,7 +21,8 @@ export function IncidentReportCard() {
         <select
           value={range}
           onChange={(e) => setRange(e.target.value as IncidentReportRange)}
-          className="cursor-pointer rounded-md border border-input bg-background px-3 py-1.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          aria-label="Incident report time range"
+          className="cursor-pointer rounded-md border border-input bg-background px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {rangeOptions.map((option) => (
             <option key={option.value} value={option.value}>

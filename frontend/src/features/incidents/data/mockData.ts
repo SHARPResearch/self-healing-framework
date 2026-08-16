@@ -16,8 +16,26 @@ const trend7d: IncidentTrendPoint[] = [
   { label: "Aug 16", count: 8 },
 ];
 
+/**
+ * Deterministic (not Math.random) synthetic trend so the chart stays
+ * reproducible across renders/screenshots. Combines a slow sine wave with a
+ * short repeating offset to look like a plausible daily incident count.
+ */
+function buildTrend(days: number): IncidentTrendPoint[] {
+  const end = new Date("2026-08-16T00:00:00Z");
+  return Array.from({ length: days }, (_, i) => {
+    const date = new Date(end);
+    date.setUTCDate(end.getUTCDate() - (days - 1 - i));
+    const count = Math.round(16 + 9 * Math.sin(i / 4) + ((i * 3) % 7));
+    return {
+      label: date.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+      count,
+    };
+  });
+}
+
 export const incidentTrendByRange: Record<IncidentReportRange, IncidentTrendPoint[]> = {
   "7d": trend7d,
-  "30d": [],
-  "90d": [],
+  "30d": buildTrend(30),
+  "90d": buildTrend(90),
 };

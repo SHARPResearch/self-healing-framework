@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { LoginStubPage } from "@/features/auth/LoginStubPage";
 import { DashboardPage } from "@/features/dashboard/DashboardPage";
+import { CopilotPage } from "@/features/copilot/CopilotPage";
 import { AppShell } from "@/shared/layout/AppShell";
 import { ComingSoonPage } from "@/shared/components/ComingSoonPage";
 
@@ -22,7 +23,7 @@ function App() {
       <Route path="/dependency-graph" element={<StubRoute title="Dependency graph" />} />
       <Route path="/incidents" element={<StubRoute title="Incidents" />} />
       <Route path="/models" element={<StubRoute title="Models" />} />
-      <Route path="/copilot" element={<StubRoute title="Copilot" />} />
+      <Route path="/copilot" element={<CopilotPage />} />
       <Route path="/settings" element={<StubRoute title="Settings" />} />
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>

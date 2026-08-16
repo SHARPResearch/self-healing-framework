@@ -1,3 +1,4 @@
+import { Radar, Timer, TriangleAlert } from "lucide-react";
 import type { DeltaStat, IncidentReportRange, IncidentTrendPoint } from "../types";
 
 /**
@@ -56,5 +57,41 @@ export const incidentSummaryStats: DeltaStat[] = [
     deltaLabel: "4% vs last week",
     deltaDirection: "down",
     deltaTone: "positive",
+  },
+];
+
+/**
+ * Reliability metrics specific to a self-healing system, not generic incident
+ * management: MTTD/MTTR measure the ML detection + decision engine loop, and
+ * escalation rate measures how often the graduated remediation policy in
+ * root CLAUDE.md still has to hand off to a human.
+ */
+export const reliabilityMetrics: DeltaStat[] = [
+  {
+    id: "mttd",
+    label: "Mean time to detect",
+    value: "9s",
+    deltaLabel: "6% vs last week",
+    deltaDirection: "down",
+    deltaTone: "positive",
+    icon: Radar,
+  },
+  {
+    id: "mttr",
+    label: "Mean time to respond",
+    value: "48s",
+    deltaLabel: "22% vs last week",
+    deltaDirection: "down",
+    deltaTone: "positive",
+    icon: Timer,
+  },
+  {
+    id: "escalation-rate",
+    label: "Escalation rate",
+    value: "11%",
+    deltaLabel: "3% vs last week",
+    deltaDirection: "up",
+    deltaTone: "negative",
+    icon: TriangleAlert,
   },
 ];

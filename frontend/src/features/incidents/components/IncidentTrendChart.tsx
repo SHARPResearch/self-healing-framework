@@ -22,6 +22,7 @@ export function IncidentTrendChart({ data }: IncidentTrendChartProps) {
           tickLine={false}
         />
         <YAxis
+          domain={[0, "auto"]}
           tick={{ fontSize: 12, fill: "var(--muted-foreground)" }}
           axisLine={false}
           tickLine={false}

@@ -1,4 +1,4 @@
-import type { IncidentReportRange, IncidentTrendPoint } from "../types";
+import type { DeltaStat, IncidentReportRange, IncidentTrendPoint } from "../types";
 
 /**
  * Mock data only -- no backend exists yet. Trend counts represent incidents
@@ -39,3 +39,22 @@ export const incidentTrendByRange: Record<IncidentReportRange, IncidentTrendPoin
   "30d": buildTrend(30),
   "90d": buildTrend(90),
 };
+
+export const incidentSummaryStats: DeltaStat[] = [
+  {
+    id: "critical-incidents",
+    label: "Critical incidents",
+    value: "321",
+    deltaLabel: "12% vs last week",
+    deltaDirection: "up",
+    deltaTone: "negative",
+  },
+  {
+    id: "total-incidents",
+    label: "Total incidents",
+    value: "1,120",
+    deltaLabel: "4% vs last week",
+    deltaDirection: "down",
+    deltaTone: "positive",
+  },
+];

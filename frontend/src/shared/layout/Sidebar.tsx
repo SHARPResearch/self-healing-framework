@@ -1,5 +1,5 @@
 import { NavLink } from "react-router-dom";
-import { Activity, PanelLeft } from "lucide-react";
+import { PanelLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { navGroups } from "./navigation";
 
@@ -20,7 +20,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
         {!collapsed && (
           <div className="flex items-center gap-2">
             <div className="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
-              <Activity className="size-4" />
+              <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
             </div>
             <span className="text-sm font-semibold tracking-tight">SHARP</span>
           </div>

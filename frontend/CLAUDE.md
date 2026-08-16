@@ -17,9 +17,9 @@ features. Chosen deliberately: the app already has 4+ genuinely distinct page do
 components/data/types together than being split across four parallel folders. If you're
 following Doc2 literally for another part of this repo, this folder is the documented exception.
 
-**Status**: Dashboard page is real, built with mock data (no backend/WebSocket wired up yet).
-Everything else is a single-line "coming soon" stub reachable via the sidebar nav, wired into
-routing so the shell is genuinely navigable:
+**Status**: Dashboard and Copilot pages are real, built with mock data/mock responses (no
+backend/WebSocket/LLM wired up yet). Everything else is a single-line "coming soon" stub
+reachable via the sidebar nav, wired into routing so the shell is genuinely navigable:
 
 ```
 src/
@@ -31,6 +31,7 @@ src/
 │   └── store/uiStore.ts   # zustand: sidebar collapsed state
 ├── features/
 │   ├── dashboard/          # the real page -- components/, data/mockData.ts, types.ts, DashboardPage.tsx
+│   ├── copilot/             # the real page -- components/CopilotChat.tsx, CopilotPage.tsx
 │   └── auth/LoginStubPage.tsx
 ├── App.tsx                 # react-router routes
 └── main.tsx                 # BrowserRouter + root render
@@ -45,6 +46,12 @@ named Tailwind tokens (`status-watch/warn/degrade/critical/healthy`) defined in 
 matching root `CLAUDE.md`'s thresholds (`<0.5` watch, `0.5-0.7` warn, `0.7-0.85` degrade,
 `>0.85` critical) so real data can drop in later without a colour-mapping rewrite.
 
+`CopilotChat` (`features/copilot/components/CopilotChat.tsx`) is a framer-motion prompt composer
+adapted from a pasted community component: animated background blobs, a `/`-triggered command
+palette (`/rca`, `/explain`, `/remediate`, `/summarize` — RCA-engine actions, not the original's
+UI-builder commands), file attachments, and a mocked "thinking" delay in place of a real
+response. No message transcript yet and no LLM/SSE wired up — see "Build next" below.
+
 **Dark mode is the default** (`class="dark"` hard-coded on `<html>` in `index.html`) — no theme
 toggle built yet, that's a real follow-up if light mode is ever wanted.
 
@@ -57,7 +64,9 @@ one-line change, not a find-and-replace.
 2. Real API/WebSocket wiring to replace `features/dashboard/data/mockData.ts` — agree the JSON
    schema (`anomaly_score`, `action_receipt`, `drift_alert`) with `services/ml-backend`'s
    `app/api/websocket.py` first, write it down in `docs/API.md`
-3. Real content for the stub pages: Services, Dependency graph (D3.js force-directed, per Doc4
-   P-13), Incidents, Models, Copilot (SSE streaming chat, per Doc4 P-14), Settings
+3. Real content for the remaining stub pages: Services, Dependency graph (D3.js force-directed,
+   per Doc4 P-13), Incidents, Models, Settings
+3b. Wire `CopilotChat` to a real backend: SSE streaming (Doc4 P-14) to replace the mocked
+   "thinking" timeout, plus a message transcript (currently just a composer, no history)
 4. Real auth to replace `features/auth/LoginStubPage.tsx`
 5. Playwright E2E once there's a real backend to test against

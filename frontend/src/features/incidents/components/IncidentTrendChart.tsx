@@ -27,6 +27,7 @@ export function IncidentTrendChart({ data }: IncidentTrendChartProps) {
           tickLine={false}
         />
         <Tooltip
+          formatter={(value: number) => [value, "Incidents"]}
           contentStyle={{
             background: "var(--popover)",
             border: "1px solid var(--border)",

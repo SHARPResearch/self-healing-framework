@@ -19,7 +19,7 @@ export function AppShell({ pageTitle, children }: AppShellProps) {
         <Sidebar collapsed={collapsed} onToggle={toggleSidebar} />
         <div className="flex min-w-0 flex-1 flex-col">
           <Header pageTitle={pageTitle} />
-          <main className="flex-1 overflow-y-auto px-6 py-6">{children}</main>
+          <main className="scrollbar-hidden flex-1 overflow-y-auto px-6 py-6">{children}</main>
         </div>
       </div>
     </TooltipProvider>

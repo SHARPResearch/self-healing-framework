@@ -105,3 +105,15 @@
     @apply bg-background text-foreground font-sans;
   }
 }
+
+@layer utilities {
+  /* Scrollable content without a visible scrollbar track (main content area,
+     chat message lists, etc) -- scroll still works via wheel/trackpad/keys. */
+  .scrollbar-hidden {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .scrollbar-hidden::-webkit-scrollbar {
+    display: none;
+  }
+}

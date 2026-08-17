@@ -1,5 +1,7 @@
 import { Navigate, Route, Routes } from "react-router-dom";
-import { LoginStubPage } from "@/features/auth/LoginStubPage";
+import { LoginPage } from "@/features/auth/LoginPage";
+import { SignupPage } from "@/features/auth/SignupPage";
+import { ForgotPasswordPage } from "@/features/auth/ForgotPasswordPage";
 import { DashboardPage } from "@/features/dashboard/DashboardPage";
 import { CopilotPage } from "@/features/copilot/CopilotPage";
 import { IncidentsPage } from "@/features/incidents/IncidentsPage";
@@ -19,7 +21,9 @@ function App() {
   return (
     <Routes>
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
-      <Route path="/login" element={<LoginStubPage />} />
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/signup" element={<SignupPage />} />
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/dashboard" element={<DashboardPage />} />
       <Route path="/services" element={<ServicesPage />} />
       <Route path="/dependency-graph" element={<StubRoute title="Dependency graph" />} />

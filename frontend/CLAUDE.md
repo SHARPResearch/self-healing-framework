@@ -17,9 +17,10 @@ features. Chosen deliberately: the app already has 4+ genuinely distinct page do
 components/data/types together than being split across four parallel folders. If you're
 following Doc2 literally for another part of this repo, this folder is the documented exception.
 
-**Status**: Dashboard, Incidents, and Copilot pages are real, built with mock data/mock responses
-(no backend/WebSocket/LLM wired up yet). Everything else is a single-line "coming soon" stub
-reachable via the sidebar nav, wired into routing so the shell is genuinely navigable:
+**Status**: Dashboard, Services, Incidents, and Copilot pages are real, built with mock
+data/mock responses (no backend/WebSocket/LLM wired up yet). Everything else is a single-line
+"coming soon" stub reachable via the sidebar nav, wired into routing so the shell is genuinely
+navigable:
 
 ```
 src/
@@ -31,6 +32,7 @@ src/
 │   └── store/uiStore.ts   # zustand: sidebar collapsed state
 ├── features/
 │   ├── dashboard/          # the real page -- components/, data/mockData.ts, types.ts, DashboardPage.tsx
+│   ├── services/            # the real page -- components/, data/mockData.ts, types.ts, ServicesPage.tsx
 │   ├── incidents/           # the real page -- components/, data/mockData.ts, types.ts, IncidentsPage.tsx
 │   ├── copilot/             # the real page -- components/CopilotChat.tsx, CopilotPage.tsx
 │   └── auth/LoginStubPage.tsx
@@ -46,6 +48,22 @@ chart, an anomaly-score trend line chart with reference lines at 0.5/0.85 (match
 named Tailwind tokens (`status-watch/warn/degrade/critical/healthy`) defined in `src/index.css`,
 matching root `CLAUDE.md`'s thresholds (`<0.5` watch, `0.5-0.7` warn, `0.7-0.85` degrade,
 `>0.85` critical) so real data can drop in later without a colour-mapping rewrite.
+
+`ServiceManagementTable` (`features/services/components/`) is adapted from a pasted VPS/hosting
+admin-panel component. Content substitutions from the source: OS icons (Windows/Ubuntu logos)
+became `RuntimeIcon` (Node/Python/Go monograms, matching `services/target-services/`'s
+documented stack); country flag + physical server location became a k8s namespace; CPU% bars
+became `AnomalyScoreBars` colored by the same severity tokens `SeverityBadge` uses; the
+active/paused/inactive status pill became `SeverityBadge` itself (watch/warn/degrade/critical);
+billing "Due Date" became a replica count; and the generic Stop/Start/Pause/Resume/Restart VPS
+power controls became the decision engine's actual action vocabulary (Restart, Scale +1 replica,
+Shift traffic), which only append a mock activity-log entry rather than fabricating a severity
+change. Row data is a join of the dashboard feature's `ServiceHealth` (live telemetry, single
+source of truth) with local `ServiceMetadata` (registry fields a real deployment would source
+from the k8s API instead) — see `ServiceRow` in `features/services/types.ts`. The reference
+component's rows and modal close button had no keyboard/screen-reader support at all (a plain
+`<div onClick>`, no dialog role); this pass added `role="button"`/keyboard handling on rows and
+`role="dialog"`/`aria-label`s/Escape-to-close on the detail panel.
 
 `IncidentReportCard` (`features/incidents/components/`) is adapted from a pasted reaviz-based
 community component: a time-range-switchable (7/30/90 day) trend chart, critical/total incident
@@ -73,8 +91,8 @@ one-line change, not a find-and-replace.
 2. Real API/WebSocket wiring to replace `features/dashboard/data/mockData.ts` — agree the JSON
    schema (`anomaly_score`, `action_receipt`, `drift_alert`) with `services/ml-backend`'s
    `app/api/websocket.py` first, write it down in `docs/API.md`
-3. Real content for the remaining stub pages: Services, Dependency graph (D3.js force-directed,
-   per Doc4 P-13), Models, Settings
+3. Real content for the remaining stub pages: Dependency graph (D3.js force-directed, per Doc4
+   P-13), Models, Settings
 3b. Wire `CopilotChat` to a real backend: SSE streaming (Doc4 P-14) to replace the mocked
    "thinking" timeout, plus a message transcript (currently just a composer, no history)
 4. Real auth to replace `features/auth/LoginStubPage.tsx`

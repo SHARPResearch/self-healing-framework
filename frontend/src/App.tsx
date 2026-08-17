@@ -3,6 +3,7 @@ import { LoginStubPage } from "@/features/auth/LoginStubPage";
 import { DashboardPage } from "@/features/dashboard/DashboardPage";
 import { CopilotPage } from "@/features/copilot/CopilotPage";
 import { IncidentsPage } from "@/features/incidents/IncidentsPage";
+import { ServicesPage } from "@/features/services/ServicesPage";
 import { AppShell } from "@/shared/layout/AppShell";
 import { ComingSoonPage } from "@/shared/components/ComingSoonPage";
 
@@ -20,7 +21,7 @@ function App() {
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
       <Route path="/login" element={<LoginStubPage />} />
       <Route path="/dashboard" element={<DashboardPage />} />
-      <Route path="/services" element={<StubRoute title="Services" />} />
+      <Route path="/services" element={<ServicesPage />} />
       <Route path="/dependency-graph" element={<StubRoute title="Dependency graph" />} />
       <Route path="/incidents" element={<IncidentsPage />} />
       <Route path="/models" element={<StubRoute title="Models" />} />

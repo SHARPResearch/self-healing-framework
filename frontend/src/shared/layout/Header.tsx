@@ -1,5 +1,7 @@
-import { Bell, LayoutDashboard, LogOut, Settings, User } from "lucide-react";
+import { LayoutDashboard, LogOut, Settings, User } from "lucide-react";
+import { Link } from "react-router-dom";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { NotificationPanel } from "@/features/notifications/components/NotificationPanel";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -19,14 +21,7 @@ export function Header({ pageTitle }: { pageTitle: string }) {
       </div>
 
       <div className="flex items-center gap-3">
-        <button
-          type="button"
-          className="relative rounded-md p-2 text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-          aria-label="Notifications"
-        >
-          <Bell className="size-4" />
-          <span className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-status-critical" />
-        </button>
+        <NotificationPanel />
 
         <Separator orientation="vertical" className="h-6" />
 
@@ -43,18 +38,24 @@ export function Header({ pageTitle }: { pageTitle: string }) {
           <DropdownMenuContent align="end" className="w-48">
             <DropdownMenuLabel>Shalon Fernando</DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem>
-              <User className="mr-2 size-4" />
-              Profile
+            <DropdownMenuItem asChild>
+              <Link to="/profile">
+                <User className="mr-2 size-4" />
+                Profile
+              </Link>
             </DropdownMenuItem>
-            <DropdownMenuItem>
-              <Settings className="mr-2 size-4" />
-              Settings
+            <DropdownMenuItem asChild>
+              <Link to="/settings">
+                <Settings className="mr-2 size-4" />
+                Settings
+              </Link>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem>
-              <LogOut className="mr-2 size-4" />
-              Log out
+            <DropdownMenuItem asChild>
+              <Link to="/login">
+                <LogOut className="mr-2 size-4" />
+                Log out
+              </Link>
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

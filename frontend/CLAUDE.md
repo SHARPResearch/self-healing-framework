@@ -17,28 +17,41 @@ features. Chosen deliberately: the app already has 4+ genuinely distinct page do
 components/data/types together than being split across four parallel folders. If you're
 following Doc2 literally for another part of this repo, this folder is the documented exception.
 
-**Status**: Dashboard, Services, Incidents, and Copilot pages are real, built with mock
-data/mock responses (no backend/WebSocket/LLM wired up yet). Everything else is a single-line
-"coming soon" stub reachable via the sidebar nav, wired into routing so the shell is genuinely
-navigable:
+**Status**: every route is a real page now, all built on mock data (no backend, WebSocket, LLM
+or auth is wired up). `ComingSoonPage`/`StubRoute` are gone — there is nothing left to stub.
 
 ```
 src/
-├── components/ui/        # shadcn primitives (button, card, badge, avatar, separator,
-│                          # collapsible, dropdown-menu, tooltip, scroll-area)
+├── components/ui/        # 21 shadcn primitives (button, card, badge, avatar, separator,
+│                          # collapsible, dropdown-menu, tooltip, scroll-area, input, label,
+│                          # checkbox, switch, select, tabs, table, dialog, popover,
+│                          # progress, skeleton, alert)
 ├── shared/
 │   ├── layout/            # AppShell, Sidebar, Header, navigation.ts (nav groups/items)
-│   ├── components/        # Sparkline (plain SVG), SeverityBadge, ComingSoonPage
-│   └── store/uiStore.ts   # zustand: sidebar collapsed state
+│   ├── components/        # Sparkline, SeverityBadge, NotFoundPage, RouteFallback
+│   ├── hooks/             # useCountUp, useResizeObserver
+│   ├── store/             # uiStore (sidebar), notificationStore (unread state)
+│   └── types.ts           # Severity -- the cross-feature domain type
 ├── features/
-│   ├── dashboard/          # the real page -- components/, data/mockData.ts, types.ts, DashboardPage.tsx
-│   ├── services/            # the real page -- components/, data/mockData.ts, types.ts, ServicesPage.tsx
-│   ├── incidents/           # the real page -- components/, data/mockData.ts, types.ts, IncidentsPage.tsx
-│   ├── copilot/             # the real page -- components/CopilotChat.tsx, CopilotPage.tsx
-│   └── auth/LoginStubPage.tsx
-├── App.tsx                 # react-router routes
+│   ├── marketing/          # public landing page at / -- NOT inside AppShell
+│   ├── auth/                # LoginPage, SignupPage, ForgotPasswordPage + AuthLayout
+│   ├── dashboard/           # components/, data/mockData.ts, types.ts, DashboardPage.tsx
+│   ├── services/            # (same shape)
+│   ├── incidents/           # reads ?filter=<serviceId> from the dependency graph
+│   ├── dependency-graph/    # d3-force layout, lib/runLayout.ts is pure
+│   ├── models/              # MLflow run registry + detail dialog
+│   ├── notifications/       # header popover + full page, backed by notificationStore
+│   ├── settings/            # 5 tabs: thresholds, model, integrations, notifications, security
+│   ├── profile/             # account details + mock API tokens
+│   └── copilot/             # components/CopilotChat.tsx, CopilotPage.tsx
+├── App.tsx                 # react-router routes; marketing/graph/copilot are lazy loaded
 └── main.tsx                 # BrowserRouter + root render
 ```
+
+**Route-level code splitting**: `MarketingPage`, `DependencyGraphPage` and `CopilotPage` are
+`lazy()`-loaded in `App.tsx` so the hero video wiring, `d3-force`, and the heaviest framer-motion
+usage stay out of the shared bundle. The `.then(m => ({ default: m.X }))` wrapper preserves the
+named-export convention every page uses. `Suspense` falls back to `shared/components/RouteFallback`.
 
 Dashboard content maps Doc1/Doc4's actual documented dashboard pieces onto mock
 self-healing-framework data (not generic SaaS metrics): 4 stat cards, a recovery-actions bar

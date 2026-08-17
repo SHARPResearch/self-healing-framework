@@ -20,6 +20,9 @@ export function ServiceDetailPanel({ service, number, activityLog, onClose, onAc
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.2 }}
+      role="dialog"
+      aria-modal="true"
+      aria-label={`${service.displayName} details`}
       className="absolute inset-0 z-10 flex flex-col overflow-hidden rounded-2xl bg-background/60 backdrop-blur-sm"
     >
       <div className="relative flex items-center justify-between border-b border-border/30 bg-gradient-to-r from-muted/50 to-transparent p-4">
@@ -68,6 +71,7 @@ export function ServiceDetailPanel({ service, number, activityLog, onClose, onAc
 
           <motion.button
             type="button"
+            aria-label="Close service details"
             className="ml-2 flex size-8 items-center justify-center rounded-full border border-border/50 bg-background/80 hover:bg-background"
             onClick={onClose}
             whileHover={{ scale: 1.05 }}

@@ -7,6 +7,7 @@ import { CopilotPage } from "@/features/copilot/CopilotPage";
 import { IncidentsPage } from "@/features/incidents/IncidentsPage";
 import { ServicesPage } from "@/features/services/ServicesPage";
 import { NotificationsPage } from "@/features/notifications/NotificationsPage";
+import { DependencyGraphPage } from "@/features/dependency-graph/DependencyGraphPage";
 import { AppShell } from "@/shared/layout/AppShell";
 import { ComingSoonPage } from "@/shared/components/ComingSoonPage";
 import { NotFoundPage } from "@/shared/components/NotFoundPage";
@@ -29,7 +30,7 @@ function App() {
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/dashboard" element={<DashboardPage />} />
       <Route path="/services" element={<ServicesPage />} />
-      <Route path="/dependency-graph" element={<StubRoute title="Dependency graph" />} />
+      <Route path="/dependency-graph" element={<DependencyGraphPage />} />
       <Route path="/incidents" element={<IncidentsPage />} />
       <Route path="/models" element={<StubRoute title="Models" />} />
       <Route path="/copilot" element={<CopilotPage />} />

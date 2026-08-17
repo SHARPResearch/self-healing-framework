@@ -32,7 +32,15 @@ export function ServiceTableRow({ row, index, onSelect }: ServiceTableRowProps) 
         },
       }}
       className="relative cursor-pointer"
+      role="button"
+      tabIndex={0}
       onClick={() => onSelect(row)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect(row);
+        }
+      }}
     >
       <motion.div
         className="relative overflow-hidden rounded-xl border border-border/50 bg-muted/50 p-4"

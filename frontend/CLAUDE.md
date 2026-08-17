@@ -136,20 +136,26 @@ response. No message transcript yet and no LLM/SSE wired up — see "Build next"
 **Dark mode is the default** (`class="dark"` hard-coded on `<html>` in `index.html`) — no theme
 toggle built yet, that's a real follow-up if light mode is ever wanted.
 
-**No custom font yet** — `--font-sans` in `src/index.css`'s `@theme inline` block is a system
+**No custom body font yet** — `--font-sans` in `src/index.css`'s `@theme inline` block is a system
 font stack placeholder, deliberately isolated to one token so swapping in a real font later is a
-one-line change, not a find-and-replace.
+one-line change, not a find-and-replace. `--font-display` is separate and is the marketing page's
+dot-matrix headline face; don't conflate the two.
 
-**Build next** (`docs/Doc3_Execution_Guide.md` Phase 6, remaining items):
+**Build next**. The UI surface is complete; what's left is wiring it to something real.
 1. `src/hooks/useWebSocket.ts` — native WebSocket, exponential backoff reconnect (1s→2s→4s→max 30s)
-2. Real API/WebSocket wiring to replace `features/dashboard/data/mockData.ts` — agree the JSON
+2. Real API/WebSocket wiring to replace every `features/*/data/mockData.ts` — agree the JSON
    schema (`anomaly_score`, `action_receipt`, `drift_alert`) with `services/ml-backend`'s
    `app/api/websocket.py` first, write it down in `docs/API.md`
-3. Real content for the remaining stub pages: Dependency graph (D3.js force-directed, per Doc4
-   P-13), Models, Settings
-3b. Wire `CopilotChat` to a real backend: SSE streaming (Doc4 P-14) to replace the mocked
+3. Wire `CopilotChat` to a real backend: SSE streaming (Doc4 P-14) to replace the mocked
    "thinking" timeout, plus a message transcript (currently just a composer, no history)
-4. Real auth to replace `features/auth/LoginStubPage.tsx`
-5. Playwright E2E once there's a real backend to test against
-6. `Sidebar`/`AppShell` don't auto-collapse below a breakpoint yet (checked at 390px width during
-   Incidents page verification) — pre-existing across every page, not specific to one feature
+4. Real auth behind `features/auth/` — the three pages are UI only and navigate to `/dashboard`
+   on submit without validating anything. Nothing guards the authenticated routes.
+5. Settings and profile forms don't persist — every input is `defaultValue`, no submit handler.
+   Needs a store plus a real config endpoint.
+6. Models promote/rollback buttons only append a local message; hook to P-06's
+   `POST /models/{service_id}/promote|rollback`
+7. Playwright E2E once there's a real backend to test against
+8. `Sidebar`/`AppShell` don't auto-collapse below a breakpoint (checked at 390px). The marketing
+   page is responsive; the authenticated shell is not yet. `sheet` is the obvious primitive.
+9. The shared bundle is still ~940 KB. The three heaviest routes are split out already; Recharts
+   and the Radix surface in the shell are the next candidates.

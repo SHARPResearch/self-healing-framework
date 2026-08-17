@@ -10,8 +10,11 @@ export function HeroSection() {
   const reduced = useReducedMotion();
   const [videoFailed, setVideoFailed] = useState(false);
 
+  // `isolate` below is load bearing: it gives the section its own stacking
+  // context so the negative z-index video and overlays paint inside it,
+  // instead of escaping and landing behind the page root's black background.
   return (
-    <section className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-6 pt-28 pb-16">
+    <section className="relative isolate flex min-h-screen flex-col items-center justify-center overflow-hidden px-6 pt-28 pb-16">
       {/* Painted first so a dead video URL or a slow buffer degrades to this
           rather than to a black rectangle. */}
       <div aria-hidden="true" className="absolute inset-0 -z-20 bg-black">
@@ -21,7 +24,7 @@ export function HeroSection() {
 
       {!videoFailed && !reduced && (
         <video
-          className="pointer-events-none absolute inset-0 -z-10 size-full object-cover opacity-70"
+          className="pointer-events-none absolute inset-0 -z-10 size-full object-cover"
           autoPlay
           muted
           loop
@@ -34,10 +37,16 @@ export function HeroSection() {
         </video>
       )}
 
-      {/* Keeps the headline readable over whatever the video happens to show. */}
+      {/* Vignette rather than a flat wash: dark at the edges so the nav and the
+          stat row stay legible, but light enough through the middle that the
+          video is actually visible behind the headline. */}
       <div
         aria-hidden="true"
-        className="absolute inset-0 -z-10 bg-gradient-to-b from-black/70 via-black/60 to-black"
+        className="absolute inset-0 -z-10 bg-gradient-to-b from-black/75 via-black/35 to-black"
+      />
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 -z-10 bg-[radial-gradient(ellipse_at_center,transparent_25%,rgba(0,0,0,0.65)_100%)]"
       />
 
       <div className="relative mx-auto flex w-full max-w-4xl flex-col items-center text-center">

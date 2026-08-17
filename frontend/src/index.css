@@ -99,10 +99,44 @@
   /* Placeholder font -- swap this one token once a real font is provided */
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 
+  /* Retro dot-matrix display face, marketing page only. The external webfont
+     is loaded in index.html; the monospace stack is the fallback if it 404s. */
+  --font-display: "BubbledotICG-FinePos", ui-monospace, "Cascadia Mono", "Segoe UI Mono", monospace;
+
+  /* Pulsing glow for critical nodes on the dependency graph (Doc4 P-13). */
+  --animate-pulse-glow: pulse-glow 2s ease-in-out infinite;
+  /* Slow drift for the marketing hero's ambient background blobs. */
+  --animate-blob-drift: blob-drift 18s ease-in-out infinite;
+
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+}
+
+@keyframes pulse-glow {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.9;
+    transform: scale(1.12);
+  }
+}
+
+@keyframes blob-drift {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  33% {
+    transform: translate3d(3%, -4%, 0) scale(1.06);
+  }
+  66% {
+    transform: translate3d(-3%, 3%, 0) scale(0.96);
+  }
 }
 
 @layer base {

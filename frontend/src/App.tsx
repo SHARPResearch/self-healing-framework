@@ -6,6 +6,7 @@ import { DashboardPage } from "@/features/dashboard/DashboardPage";
 import { CopilotPage } from "@/features/copilot/CopilotPage";
 import { IncidentsPage } from "@/features/incidents/IncidentsPage";
 import { ServicesPage } from "@/features/services/ServicesPage";
+import { NotificationsPage } from "@/features/notifications/NotificationsPage";
 import { AppShell } from "@/shared/layout/AppShell";
 import { ComingSoonPage } from "@/shared/components/ComingSoonPage";
 
@@ -30,6 +31,7 @@ function App() {
       <Route path="/incidents" element={<IncidentsPage />} />
       <Route path="/models" element={<StubRoute title="Models" />} />
       <Route path="/copilot" element={<CopilotPage />} />
+      <Route path="/notifications" element={<NotificationsPage />} />
       <Route path="/settings" element={<StubRoute title="Settings" />} />
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>

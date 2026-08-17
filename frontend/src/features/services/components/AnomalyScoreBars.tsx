@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import type { Severity } from "@/features/dashboard/types";
+import type { Severity } from "@/shared/types";
 
 const SEVERITY_BAR_CLASS: Record<Severity, string> = {
   watch: "bg-status-watch",

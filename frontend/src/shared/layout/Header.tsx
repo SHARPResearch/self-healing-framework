@@ -26,11 +26,14 @@ export function Header({ pageTitle }: { pageTitle: string }) {
         <Separator orientation="vertical" className="h-6" />
 
         <DropdownMenu>
-          <DropdownMenuTrigger className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <DropdownMenuTrigger
+            aria-label="Open user menu"
+            className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
             <Avatar className="size-8">
               <AvatarImage
                 src="https://images.unsplash.com/photo-1633332755192-727a05c4013d?w=64&h=64&fit=crop&crop=faces"
-                alt="User avatar"
+                alt=""
               />
               <AvatarFallback>SH</AvatarFallback>
             </Avatar>

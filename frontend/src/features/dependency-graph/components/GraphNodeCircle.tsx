@@ -22,23 +22,10 @@ export function GraphNodeCircle({ node, onHover, onSelect }: GraphNodeCircleProp
   const short = node.serviceId.split("-").slice(2).join("-") || node.serviceId;
 
   return (
-    <g
-      role="button"
-      tabIndex={0}
-      aria-label={`${node.displayName}, ${node.status}, anomaly score ${node.anomalyScore.toFixed(2)}`}
-      className="cursor-pointer focus-visible:outline-none"
-      onMouseEnter={() => onHover(node)}
-      onMouseLeave={() => onHover(null)}
-      onFocus={() => onHover(node)}
-      onBlur={() => onHover(null)}
-      onClick={() => onSelect(node)}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onSelect(node);
-        }
-      }}
-    >
+    <>
+      {/* Rendered outside the interactive group on purpose: the pulse scales,
+          and inside the group it would make the button's own hit area pulse
+          with it. */}
       {isCritical && (
         <circle
           cx={node.x}
@@ -51,38 +38,56 @@ export function GraphNodeCircle({ node, onHover, onSelect }: GraphNodeCircleProp
         />
       )}
 
-      <circle
-        cx={node.x}
-        cy={node.y}
-        r={NODE_RADIUS}
-        fill={FILL[node.status]}
-        stroke="var(--color-background)"
-        strokeWidth={2}
-      />
-
-      <text
-        x={node.x}
-        y={node.y}
-        textAnchor="middle"
-        dominantBaseline="central"
-        fontSize={10}
-        fill="#fff"
-        fontWeight={600}
-        pointerEvents="none"
+      <g
+        role="button"
+        tabIndex={0}
+        aria-label={`${node.displayName}, ${node.status}, anomaly score ${node.anomalyScore.toFixed(2)}`}
+        className="cursor-pointer focus-visible:outline-none"
+        onMouseEnter={() => onHover(node)}
+        onMouseLeave={() => onHover(null)}
+        onFocus={() => onHover(node)}
+        onBlur={() => onHover(null)}
+        onClick={() => onSelect(node)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onSelect(node);
+          }
+        }}
       >
-        {short}
-      </text>
+        <circle
+          cx={node.x}
+          cy={node.y}
+          r={NODE_RADIUS}
+          fill={FILL[node.status]}
+          stroke="var(--color-background)"
+          strokeWidth={2}
+        />
 
-      <text
-        x={node.x}
-        y={node.y + NODE_RADIUS + 14}
-        textAnchor="middle"
-        fontSize={11}
-        fill="var(--color-muted-foreground)"
-        pointerEvents="none"
-      >
-        {node.displayName}
-      </text>
-    </g>
+        <text
+          x={node.x}
+          y={node.y}
+          textAnchor="middle"
+          dominantBaseline="central"
+          fontSize={10}
+          fill="#fff"
+          fontWeight={600}
+          pointerEvents="none"
+        >
+          {short}
+        </text>
+
+        <text
+          x={node.x}
+          y={node.y + NODE_RADIUS + 14}
+          textAnchor="middle"
+          fontSize={11}
+          fill="var(--color-muted-foreground)"
+          pointerEvents="none"
+        >
+          {node.displayName}
+        </text>
+      </g>
+    </>
   );
 }

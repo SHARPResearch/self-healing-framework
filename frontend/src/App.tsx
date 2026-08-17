@@ -9,18 +9,9 @@ import { ServicesPage } from "@/features/services/ServicesPage";
 import { NotificationsPage } from "@/features/notifications/NotificationsPage";
 import { DependencyGraphPage } from "@/features/dependency-graph/DependencyGraphPage";
 import { ModelsPage } from "@/features/models/ModelsPage";
-import { AppShell } from "@/shared/layout/AppShell";
-import { ComingSoonPage } from "@/shared/components/ComingSoonPage";
+import { SettingsPage } from "@/features/settings/SettingsPage";
 import { NotFoundPage } from "@/shared/components/NotFoundPage";
 import { ProfilePage } from "@/features/profile/ProfilePage";
-
-function StubRoute({ title }: { title: string }) {
-  return (
-    <AppShell pageTitle={title}>
-      <ComingSoonPage title={title} />
-    </AppShell>
-  );
-}
 
 function App() {
   return (
@@ -36,7 +27,7 @@ function App() {
       <Route path="/models" element={<ModelsPage />} />
       <Route path="/copilot" element={<CopilotPage />} />
       <Route path="/notifications" element={<NotificationsPage />} />
-      <Route path="/settings" element={<StubRoute title="Settings" />} />
+      <Route path="/settings" element={<SettingsPage />} />
       <Route path="/profile" element={<ProfilePage />} />
       <Route path="*" element={<NotFoundPage />} />
     </Routes>

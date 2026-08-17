@@ -9,6 +9,8 @@ import { ServicesPage } from "@/features/services/ServicesPage";
 import { NotificationsPage } from "@/features/notifications/NotificationsPage";
 import { AppShell } from "@/shared/layout/AppShell";
 import { ComingSoonPage } from "@/shared/components/ComingSoonPage";
+import { NotFoundPage } from "@/shared/components/NotFoundPage";
+import { ProfilePage } from "@/features/profile/ProfilePage";
 
 function StubRoute({ title }: { title: string }) {
   return (
@@ -33,7 +35,8 @@ function App() {
       <Route path="/copilot" element={<CopilotPage />} />
       <Route path="/notifications" element={<NotificationsPage />} />
       <Route path="/settings" element={<StubRoute title="Settings" />} />
-      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      <Route path="/profile" element={<ProfilePage />} />
+      <Route path="*" element={<NotFoundPage />} />
     </Routes>
   );
 }

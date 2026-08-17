@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ServiceTableRow } from "./ServiceTableRow";
 import { ServiceDetailPanel } from "./ServiceDetailPanel";
@@ -12,6 +12,15 @@ export function ServiceManagementTable() {
   const selectedIndex = serviceRows.findIndex((s) => s.serviceId === selectedId);
   const selectedService: ServiceRow | undefined = serviceRows[selectedIndex];
   const criticalCount = serviceRows.filter((s) => s.status === "critical").length;
+
+  useEffect(() => {
+    if (!selectedId) return;
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSelectedId(null);
+    };
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [selectedId]);
 
   const handleAction = (message: string) => {
     if (!selectedId) return;

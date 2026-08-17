@@ -1,5 +1,6 @@
 import {
   Activity,
+  Bell,
   Bot,
   GitBranch,
   LayoutDashboard,
@@ -32,6 +33,7 @@ export const navGroups: NavGroup[] = [
     label: "Operations",
     items: [
       { label: "Incidents", to: "/incidents", icon: Activity },
+      { label: "Notifications", to: "/notifications", icon: Bell },
       { label: "Models", to: "/models", icon: ListTree },
     ],
   },

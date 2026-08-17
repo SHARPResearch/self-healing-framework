@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import type { Severity } from "@/features/dashboard/types";
+import type { Severity } from "@/shared/types";
 
 const SEVERITY_LABEL: Record<Severity, string> = {
   watch: "Watch",

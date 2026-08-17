@@ -12,6 +12,21 @@ pnpm dev      # http://localhost:5173
 pnpm build    # typecheck + production build
 ```
 
-Dashboard (`/dashboard`, also the default route), Services (`/services`), Incidents
-(`/incidents`), and Copilot (`/copilot`) are real, built with mock data. Other nav items are
-"coming soon" stubs — real content, API wiring, and auth are follow-up work.
+## Routes
+
+| Route | What it is |
+|---|---|
+| `/` | Public marketing landing page (outside the app shell) |
+| `/login`, `/signup`, `/forgot-password` | Auth UI — mock only, submitting goes to `/dashboard` |
+| `/dashboard` | Stat cards, recovery-action and anomaly-score charts, service health, incident feed |
+| `/services` | Service table with a detail panel and mock remediation actions |
+| `/dependency-graph` | `d3-force` graph, click a node to filter incidents |
+| `/incidents` | Incident report, trend chart, reliability metrics, `?filter=` support |
+| `/models` | MLflow run registry with params, metrics and a detail dialog |
+| `/notifications` | Full notification history with filters (also a header popover) |
+| `/settings` | Thresholds, model, integrations, notifications, security |
+| `/profile` | Account details and mock API tokens |
+| `/copilot` | Chat composer with a command palette |
+
+**Everything is mock data.** No backend, WebSocket, LLM or authentication is wired up — the auth
+pages guard nothing. See `CLAUDE.md` for what's left to connect.

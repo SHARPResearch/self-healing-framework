@@ -31,7 +31,7 @@ export function ServiceTableRow({ row, index, onSelect }: ServiceTableRowProps) 
           transition: { type: "spring", stiffness: 400, damping: 28, mass: 0.6 },
         },
       }}
-      className="relative cursor-pointer"
+      className="relative cursor-pointer rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       role="button"
       tabIndex={0}
       onClick={() => onSelect(row)}

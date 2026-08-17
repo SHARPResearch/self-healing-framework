@@ -107,6 +107,26 @@ as a second charting library, and the generic "Incident Response Time"/"Escalati
 became MTTD/MTTR/escalation rate — the actual detection-loop and graduated-remediation-policy
 metrics this project's architecture cares about, not generic ops metrics.
 
+**Dependency graph** (`features/dependency-graph/`) follows Doc4 P-13 with two documented
+divergences:
+
+- **`d3-force` only**, not the full `d3` bundle — the page needs `forceSimulation`/`forceLink`/
+  `forceManyBody`/`forceCenter` and nothing else, and rendering is React-owned JSX, so
+  `d3-selection` (which fights React for DOM ownership) and `d3-drag` are not installed.
+- **The simulation runs headless.** P-13 says never to drive React state from simulation ticks.
+  Rather than mutating the SVG DOM directly — which would create a second source of truth for node
+  positions and complicate the tooltip and click handlers — `lib/runLayout.ts` stops the
+  simulation and ticks it synchronously to convergence, then returns positions once. Zero React
+  renders during ticks, one source of truth, and a deterministic layout that makes screenshots
+  reproducible. It is a pure function called from `useMemo`, so ResizeObserver-driven re-centring
+  is free.
+
+The edge list extends Doc3's demo topology by two edges (`orders → payments`, `search →
+inventory`). Doc3's four edges only cover four of the six services and omit `service-e-payments`,
+the only critical one, which would leave two orphan nodes and mean the pulsing-critical-node and
+amber-downstream-edge states never render at all. The addition is flagged in a comment in
+`data/mockData.ts`.
+
 `CopilotChat` (`features/copilot/components/CopilotChat.tsx`) is a framer-motion prompt composer
 adapted from a pasted community component: animated background blobs, a `/`-triggered command
 palette (`/rca`, `/explain`, `/remediate`, `/summarize` — RCA-engine actions, not the original's

@@ -49,26 +49,28 @@ export function ServiceManagementTable() {
         </div>
       </div>
 
-      <motion.div
-        className="space-y-2"
-        variants={{ visible: { transition: { staggerChildren: 0.08, delayChildren: 0.1 } } }}
-        initial="hidden"
-        animate="visible"
-      >
-        <div className="grid grid-cols-12 gap-4 px-4 py-2 text-xs font-medium tracking-wider text-muted-foreground uppercase">
-          <div className="col-span-1">No</div>
-          <div className="col-span-2">Service name</div>
-          <div className="col-span-2">Namespace</div>
-          <div className="col-span-2">Cluster IP</div>
-          <div className="col-span-2">Replicas</div>
-          <div className="col-span-2">Anomaly score</div>
-          <div className="col-span-1">Status</div>
-        </div>
+      <div className="overflow-x-auto">
+        <motion.div
+          className="min-w-220 space-y-2"
+          variants={{ visible: { transition: { staggerChildren: 0.08, delayChildren: 0.1 } } }}
+          initial="hidden"
+          animate="visible"
+        >
+          <div className="grid grid-cols-12 gap-4 px-4 py-2 text-xs font-medium tracking-wider text-muted-foreground uppercase">
+            <div className="col-span-1">No</div>
+            <div className="col-span-2">Service name</div>
+            <div className="col-span-2">Namespace</div>
+            <div className="col-span-2">Cluster IP</div>
+            <div className="col-span-2">Replicas</div>
+            <div className="col-span-2">Anomaly score</div>
+            <div className="col-span-1">Status</div>
+          </div>
 
-        {serviceRows.map((row, index) => (
-          <ServiceTableRow key={row.serviceId} row={row} index={index} onSelect={(s) => setSelectedId(s.serviceId)} />
-        ))}
-      </motion.div>
+          {serviceRows.map((row, index) => (
+            <ServiceTableRow key={row.serviceId} row={row} index={index} onSelect={(s) => setSelectedId(s.serviceId)} />
+          ))}
+        </motion.div>
+      </div>
 
       <AnimatePresence>
         {selectedService && (

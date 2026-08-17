@@ -8,6 +8,7 @@ import { IncidentsPage } from "@/features/incidents/IncidentsPage";
 import { ServicesPage } from "@/features/services/ServicesPage";
 import { NotificationsPage } from "@/features/notifications/NotificationsPage";
 import { DependencyGraphPage } from "@/features/dependency-graph/DependencyGraphPage";
+import { ModelsPage } from "@/features/models/ModelsPage";
 import { AppShell } from "@/shared/layout/AppShell";
 import { ComingSoonPage } from "@/shared/components/ComingSoonPage";
 import { NotFoundPage } from "@/shared/components/NotFoundPage";
@@ -32,7 +33,7 @@ function App() {
       <Route path="/services" element={<ServicesPage />} />
       <Route path="/dependency-graph" element={<DependencyGraphPage />} />
       <Route path="/incidents" element={<IncidentsPage />} />
-      <Route path="/models" element={<StubRoute title="Models" />} />
+      <Route path="/models" element={<ModelsPage />} />
       <Route path="/copilot" element={<CopilotPage />} />
       <Route path="/notifications" element={<NotificationsPage />} />
       <Route path="/settings" element={<StubRoute title="Settings" />} />

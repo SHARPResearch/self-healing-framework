@@ -9,7 +9,8 @@ export function ServiceManagementTable() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activityLog, setActivityLog] = useState(initialActivityLog);
 
-  const selectedService: ServiceRow | undefined = serviceRows.find((s) => s.serviceId === selectedId);
+  const selectedIndex = serviceRows.findIndex((s) => s.serviceId === selectedId);
+  const selectedService: ServiceRow | undefined = serviceRows[selectedIndex];
   const criticalCount = serviceRows.filter((s) => s.status === "critical").length;
 
   const handleAction = (message: string) => {
@@ -64,6 +65,7 @@ export function ServiceManagementTable() {
         {selectedService && (
           <ServiceDetailPanel
             service={selectedService}
+            number={String(selectedIndex + 1).padStart(2, "0")}
             activityLog={activityLog[selectedService.serviceId] ?? []}
             onClose={() => setSelectedId(null)}
             onAction={handleAction}

@@ -7,12 +7,13 @@ import type { ActivityLogEntry, ServiceRow } from "../types";
 
 interface ServiceDetailPanelProps {
   service: ServiceRow;
+  number: string;
   activityLog: ActivityLogEntry[];
   onClose: () => void;
   onAction: (message: string) => void;
 }
 
-export function ServiceDetailPanel({ service, activityLog, onClose, onAction }: ServiceDetailPanelProps) {
+export function ServiceDetailPanel({ service, number, activityLog, onClose, onAction }: ServiceDetailPanelProps) {
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -23,9 +24,7 @@ export function ServiceDetailPanel({ service, activityLog, onClose, onAction }: 
     >
       <div className="relative flex items-center justify-between border-b border-border/30 bg-gradient-to-r from-muted/50 to-transparent p-4">
         <div className="flex items-center gap-4">
-          <div className="text-2xl font-bold text-muted-foreground">
-            {service.serviceId.slice(-2).toUpperCase()}
-          </div>
+          <div className="text-2xl font-bold text-muted-foreground">{number}</div>
           <RuntimeIcon runtime={service.runtime} />
           <div>
             <h3 className="text-lg font-bold text-foreground">{service.displayName}</h3>

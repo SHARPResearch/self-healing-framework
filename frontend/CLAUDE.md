@@ -62,6 +62,27 @@ named Tailwind tokens (`status-watch/warn/degrade/critical/healthy`) defined in 
 matching root `CLAUDE.md`'s thresholds (`<0.5` watch, `0.5-0.7` warn, `0.7-0.85` degrade,
 `>0.85` critical) so real data can drop in later without a colour-mapping rewrite.
 
+**Marketing page** (`features/marketing/`, route `/`) is adapted from two pasted references (a
+SaaS hero template and a single-viewport video-background landing spec). Three decisions worth
+knowing:
+
+- **It is a React route, not the standalone `index.html`/`styles.css`/`main.js` the reference
+  specified** — one codebase, one build, and Sign in / Sign up route to the real auth pages. The
+  reference's *visual language* was kept, its file structure was not. It also scrolls through
+  explainer sections rather than staying in one viewport, because it has to actually explain what
+  the system does.
+- **The stat row deliberately excludes accuracy.** `ml-pipeline/RESULTS.md` measures F1 at 0.5663
+  on the single tuned entity but 0.1195 averaged across all 28, so any headline accuracy number
+  would be either cherry-picked or bad. Throughput (~450 eps), update cost (O(1)), detection SLO
+  (<60s) and benchmark coverage (28 entities) are all doc-grounded and honest. **Do not add an
+  accuracy stat here** without reading RESULTS.md's "Reading these numbers honestly" section.
+- **The hero video is a third-party CloudFront asset** (13.9 MB) hotlinked per the reference spec.
+  It is wrapped in defences: a gradient painted behind it, `onError` swapping to that gradient,
+  and it is skipped entirely under `prefers-reduced-motion`. Verified to still look correct with
+  the URL blocked. The `HeroSection` `<section>` carries `isolate` — **this is load-bearing**:
+  without its own stacking context the negative-z-index video escapes and paints behind the page
+  root's `bg-black`, rendering the hero pure black even though the video decodes fine.
+
 `ServiceManagementTable` (`features/services/components/`) is adapted from a pasted VPS/hosting
 admin-panel component. Content substitutions from the source: OS icons (Windows/Ubuntu logos)
 became `RuntimeIcon` (Node/Python/Go monograms, matching `services/target-services/`'s

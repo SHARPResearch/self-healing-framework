@@ -1,3 +1,5 @@
+import type { ServiceHealth } from "@/features/dashboard/types";
+
 export type Runtime = "node" | "python" | "go";
 
 /**
@@ -19,3 +21,6 @@ export interface ActivityLogEntry {
   message: string;
   timestamp: string;
 }
+
+/** The table row shape: live telemetry joined with registry metadata. */
+export type ServiceRow = ServiceHealth & ServiceMetadata;

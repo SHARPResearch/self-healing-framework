@@ -56,5 +56,10 @@ export function useCountUp({ to, decimals = 0, duration = 1500, delay = 0 }: Use
     };
   }, [inView, to, duration, delay]);
 
-  return { ref, display: value.toFixed(decimals) };
+  const display = value.toLocaleString("en-US", {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+
+  return { ref, display };
 }

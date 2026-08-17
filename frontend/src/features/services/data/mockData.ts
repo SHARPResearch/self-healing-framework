@@ -1,4 +1,5 @@
-import type { ActivityLogEntry, ServiceMetadata } from "../types";
+import { services } from "@/features/dashboard/data/mockData";
+import type { ActivityLogEntry, ServiceMetadata, ServiceRow } from "../types";
 
 /**
  * Mock data only -- no k8s API wired up yet. Runtimes match
@@ -73,3 +74,8 @@ export const activityLogByService: Record<string, ActivityLogEntry[]> = {
     { id: "log-f-1", message: "Health check passed", timestamp: "2026-08-16T05:50:00Z" },
   ],
 };
+
+export const serviceRows: ServiceRow[] = services.map((service) => ({
+  ...service,
+  ...serviceMetadataById[service.serviceId],
+}));

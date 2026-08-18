@@ -50,9 +50,9 @@ src/
 ```
 
 **Route-level code splitting**: `MarketingPage`, `DependencyGraphPage` and `CopilotPage` are
-`lazy()`-loaded in `App.tsx` so the hero video wiring, `d3-force`, and the heaviest framer-motion
-usage stay out of the shared bundle. The `.then(m => ({ default: m.X }))` wrapper preserves the
-named-export convention every page uses. `Suspense` falls back to `shared/components/RouteFallback`.
+`lazy()`-loaded in `App.tsx` so `d3-force` and the heaviest framer-motion usage stay out of the
+shared bundle. The `.then(m => ({ default: m.X }))` wrapper preserves the named-export convention
+every page uses. `Suspense` falls back to `shared/components/RouteFallback`.
 
 Dashboard content maps Doc1/Doc4's actual documented dashboard pieces onto mock
 self-healing-framework data (not generic SaaS metrics): 4 stat cards, a recovery-actions bar
@@ -86,12 +86,21 @@ testimonial and blog sections were explicitly not built. Decisions worth knowing
   (<60s) and benchmark coverage (28 entities) are all doc-grounded and honest. **Do not add an
   accuracy stat here** without reading RESULTS.md's "Reading these numbers honestly" section. It
   now sits as a thin strip under the hero screenshot rather than a headline claim.
-- **The hero video is a third-party CloudFront asset** (13.9 MB) hotlinked per the reference spec.
-  It is wrapped in defences: a gradient painted behind it, `onError` swapping to that gradient,
-  and it is skipped entirely under `prefers-reduced-motion`. Verified to still look correct with
-  the URL blocked. The `HeroSection` `<section>` carries `isolate` — **this is load-bearing**:
-  without its own stacking context the negative-z-index video escapes and paints behind the page
-  root's `bg-black`, rendering the hero pure black even though the video decodes fine.
+- **The hero has no background video.** An earlier pass hotlinked a 13.9 MB third-party CloudFront
+  asset per a reference spec; it was removed per feedback in favour of an ambient background built
+  from the app's own tokens — two `animate-blob-drift` blobs in `status-healthy`/`status-warn` at
+  low opacity, plus a faint CSS grid-line texture. The `HeroSection` `<section>` still carries
+  `isolate` — **this is load-bearing**: without its own stacking context the negative-z-index
+  blobs escape and paint behind the page root's `bg-black` instead of inside the hero.
+- **The primary CTA's glow shadow is `oklch(0.75 0.18 150/35%)`, a literal, not
+  `var(--color-status-healthy)`.** Tailwind's `/opacity` modifier on an arbitrary value doesn't
+  reliably apply to a `var()` reference the same way it does to a named colour utility, and
+  Tailwind arbitrary values fail *silently* (no CSS emitted, no build error) rather than erroring —
+  the same class of bug the missing `--destructive` token hit earlier. The oklch value is copied
+  from `index.css`'s `.dark` block; if that token's dark-mode value ever changes, update this too.
+- **`FeatureGrid`'s decorative corner pattern uses a seeded PRNG, not `Math.random()`** — this
+  project avoids non-determinism in anything that renders (the dependency graph layout and the
+  incident trend chart do the same) so screenshots stay reproducible.
 - **`public/marketing/*.png` are real screenshots of this app**, captured with Playwright, not
   stock images — recapture them (`/dashboard`, `/dependency-graph`) after any visual change to the
   sidebar, Logo, or dependency graph so they don't go stale.

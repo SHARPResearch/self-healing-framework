@@ -99,10 +99,6 @@
   /* Placeholder font -- swap this one token once a real font is provided */
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 
-  /* Retro dot-matrix display face, marketing page only. The external webfont
-     is loaded in index.html; the monospace stack is the fallback if it 404s. */
-  --font-display: "BubbledotICG-FinePos", ui-monospace, "Cascadia Mono", "Segoe UI Mono", monospace;
-
   /* Slow drift for the marketing hero's ambient background blobs. */
   --animate-blob-drift: blob-drift 18s ease-in-out infinite;
 

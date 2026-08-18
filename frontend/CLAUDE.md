@@ -4,8 +4,8 @@ React observability dashboard (Doc1 §2 "Observability Dashboard", §3.3 real-ti
 App name: **SHARP**.
 
 **Tech**: React 18, Vite, TypeScript, Tailwind CSS v4 (CSS-first `@theme` config), shadcn/ui
-(Radix primitives), Recharts, Zustand, React Router, react-force-graph-3d (three.js). Native
-WebSocket is not wired up yet (see Status).
+(Radix primitives), Recharts, Zustand, React Router, d3-force. Native WebSocket is not wired up
+yet (see Status).
 
 **Folder architecture: feature-based, not Doc2's flat type-based layout.** Doc2 shows
 `components/dashboard/`, `hooks/`, `stores/`, `types/` as separate top-level folders; this repo
@@ -39,7 +39,7 @@ src/
 │   ├── dashboard/           # components/, data/mockData.ts, types.ts, DashboardPage.tsx
 │   ├── services/            # (same shape)
 │   ├── incidents/           # reads ?filter=<serviceId> from the dependency graph
-│   ├── dependency-graph/    # react-force-graph-3d canvas + ServiceList, lib/severityColors.ts
+│   ├── dependency-graph/    # 2D SVG canvas, headless d3-force layout in lib/runLayout.ts
 │   ├── models/              # MLflow run registry + detail dialog
 │   ├── notifications/       # header popover + full page, backed by notificationStore
 │   ├── settings/            # 5 tabs: thresholds, model, integrations, notifications, security
@@ -50,10 +50,8 @@ src/
 ```
 
 **Route-level code splitting**: `MarketingPage`, `DependencyGraphPage` and `CopilotPage` are
-`lazy()`-loaded in `App.tsx` so the hero video wiring, three.js (via `react-force-graph-3d`), and
-the heaviest framer-motion usage stay out of the shared bundle. The `DependencyGraphPage` chunk is
-~1.4 MB alone — worth knowing before adding anything else heavy there. The
-`.then(m => ({ default: m.X }))` wrapper preserves the
+`lazy()`-loaded in `App.tsx` so the hero video wiring, `d3-force`, and the heaviest framer-motion
+usage stay out of the shared bundle. The `.then(m => ({ default: m.X }))` wrapper preserves the
 named-export convention every page uses. `Suspense` falls back to `shared/components/RouteFallback`.
 
 Dashboard content maps Doc1/Doc4's actual documented dashboard pieces onto mock
@@ -131,31 +129,31 @@ as a second charting library, and the generic "Incident Response Time"/"Escalati
 became MTTD/MTTR/escalation rate — the actual detection-loop and graduated-remediation-policy
 metrics this project's architecture cares about, not generic ops metrics.
 
-**Dependency graph** (`features/dependency-graph/`) is a 3D force graph via
-`react-force-graph-3d` (wraps `3d-force-graph`/three.js with React props), following Doc4 P-13's
-node/edge semantics with the rendering approach adapted for three dimensions:
+**Dependency graph** (`features/dependency-graph/`) is a 2D SVG canvas following Doc4 P-13, with
+one documented divergence and two interaction enhancements beyond the P-13 spec:
 
-- **`react-force-graph-3d` only, not the full `react-force-graph` umbrella** — that package also
-  ships 2D/VR/AR renderers this project doesn't use. `cytoscape.js` was ruled out (2D only) and
-  `d3-3d` is a projection helper, not a force engine. The route is `lazy()`-loaded (see below), so
-  three.js never touches the shared bundle.
-- **`lib/severityColors.ts` resolves the oklch severity tokens to concrete `rgb()` at runtime.**
-  three.js's `Color` doesn't parse `oklch()`, and — verified against Playwright's bundled
-  Chromium — `getComputedStyle` echoes `oklch(...)` back unchanged rather than normalising it, so
-  reading the CSS variable directly isn't enough. The fix: paint the token onto a 1x1 `<canvas>`
-  and read back `getImageData`, which always returns concrete 8-bit RGB regardless of input colour
-  space. Memoised per session.
-- **`DependencyGraph3D` deep-clones `graphNodes`/`graphEdges` per mount.** The library mutates
-  whatever objects it's given (adds `x/y/z/vx/vy/vz`, replaces link `source`/`target` strings with
-  node references), and those constants are shared with the dashboard's mock data.
-- **`ServiceList` restores keyboard access.** A WebGL canvas is one DOM node, so the per-node
-  `role="button"` the old 2D SVG graph had is gone. The list sitting beside the canvas is
-  focusable/Enter-activatable per row and syncs hover state with the 3D nodes — this is a
-  deliberate accessibility replacement, not a decorative addition.
-- **Screenshot stability, verified**: `cooldownTicks={100}` settles the physics quickly; two
-  screenshots taken after settle are pixel-identical except the deliberately-animated particle on
-  the critical edge. Four repeated navigate-away-and-back cycles produced no WebGL console errors
-  (context leak check).
+- **The simulation runs headless.** P-13 says never to drive React state from simulation ticks.
+  Rather than mutating the SVG DOM directly — which would create a second source of truth for node
+  positions and complicate the tooltip and click handlers — `lib/runLayout.ts` stops the
+  `d3-force` simulation and ticks it synchronously to convergence, then returns positions once.
+  Zero React renders during ticks, one source of truth, deterministic layout. Pure function called
+  from `useMemo`, so ResizeObserver-driven re-centring is free.
+- **Hover/focus highlights connected nodes and edges.** `DependencyGraphCanvas` computes the set of
+  node ids and edge keys directly connected to the hovered node and dims everything else
+  (`opacity` + `transition-opacity`), so tracing what a service depends on is a glance instead of a
+  squint. Not in P-13's spec — added because a static graph with six same-weight nodes is hard to
+  read at rest.
+- **Pan and zoom.** Drag the background `<rect>` (a sibling of the nodes, never an ancestor, so it
+  can't intercept clicks on them) to pan; scroll to zoom, centred on the cursor; or use the
+  corner +/−/reset buttons. **Wheel zoom needs a native `addEventListener('wheel', ..., {passive:
+  false})` in a `useEffect`** — React's `onWheel` prop is passive by default, so calling
+  `preventDefault()` inside it is a silent no-op and the page scrolls right along with the zoom.
+- A 3D version (`react-force-graph-3d`/three.js) was tried and reverted per feedback that it didn't
+  suit the product — worth knowing if this comes up again, since the oklch→three.js colour
+  resolution problem and the "WebGL canvas has no per-node focus" accessibility gap it required
+  working around are both solved problems if anyone revisits 3D: see git history around the
+  revert commit for the approach (canvas `getImageData` colour resolution, a focusable sibling
+  list for keyboard parity).
 
 The edge list extends Doc3's demo topology by two edges (`orders → payments`, `search →
 inventory`). Doc3's four edges only cover four of the six services and omit `service-e-payments`,

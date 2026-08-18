@@ -39,7 +39,7 @@ export function NotificationPanel() {
           )}
         </div>
 
-        <ScrollArea className="max-h-96">
+        <ScrollArea className="h-96">
           <div className="space-y-2 p-3">
             {notifications.slice(0, 5).map((n) => (
               <NotificationRow key={n.id} notification={n} onSelect={markRead} compact />

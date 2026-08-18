@@ -15,9 +15,10 @@ import { RouteFallback } from "@/shared/components/RouteFallback";
 
 /**
  * Lazy loaded so their weight stays out of the shared bundle: marketing pulls
- * a background video and display font, dependency-graph pulls d3-force, and
- * copilot is the heaviest framer-motion user. The .then wrapper preserves the
- * named-export convention every page in features/ follows.
+ * a background video and display font, dependency-graph pulls three.js via
+ * react-force-graph-3d, and copilot is the heaviest framer-motion user. The
+ * .then wrapper preserves the named-export convention every page in
+ * features/ follows.
  */
 const MarketingPage = lazy(() =>
   import("@/features/marketing/MarketingPage").then((m) => ({ default: m.MarketingPage })),

@@ -134,11 +134,70 @@ export interface StackItem {
   why: string;
 }
 
+/** The architecture layers, top (closest to the request) to bottom (runtime). */
 export const STACK: StackItem[] = [
+  { layer: "Observability UX", tech: "React, TypeScript", why: "Real time dashboards over a WebSocket stream." },
+  { layer: "Traffic control", tech: "YARP", why: "Runtime reconfigurable proxy, so traffic shifts need no redeploy." },
   { layer: "Streaming ML", tech: "Python, FastAPI, river", why: "Best in class online learning libraries." },
   { layer: "Orchestration", tech: "C#, .NET 8", why: "Strong stateful background services and typed policy code." },
-  { layer: "Traffic control", tech: "YARP", why: "Runtime reconfigurable proxy, so traffic shifts need no redeploy." },
-  { layer: "Observability UX", tech: "React, TypeScript", why: "Real time dashboards over a WebSocket stream." },
   { layer: "Model registry", tech: "MLflow", why: "Versioned runs make rollback a first class operation." },
   { layer: "Runtime", tech: "Kubernetes", why: "Every remediation is an ordinary API call against the cluster." },
+];
+
+/** "Built on" strip -- what SHARP actually runs on, not fake customer logos. */
+export const MARQUEE_ITEMS: string[] = [
+  "Kubernetes",
+  "Prometheus",
+  "Redis",
+  "MLflow",
+  "river",
+  ".NET 8",
+  "YARP",
+  "TimescaleDB",
+  "React",
+];
+
+export interface FeatureCard {
+  title: string;
+  body: string;
+}
+
+export const FEATURE_GRID: FeatureCard[] = [
+  {
+    title: "Online learning",
+    body: "Every Prometheus scrape updates the model in place. No batch retrain job, no stale window.",
+  },
+  {
+    title: "Graduated remediation",
+    body: "Four severity tiers, each with its own response, from a log line up to a full rollback.",
+  },
+  {
+    title: "Dependency aware",
+    body: "A service going critical elevates its upstreams and pre-scales its downstreams automatically.",
+  },
+  {
+    title: "Zero downtime traffic shifts",
+    body: "YARP drains a failing pod to 0% weight instead of killing it, so in-flight requests finish.",
+  },
+  {
+    title: "Versioned models",
+    body: "Every run is tracked in MLflow. Rollback to the last stable snapshot is one click, or automatic.",
+  },
+  {
+    title: "Copilot for root cause",
+    body: "Ask what happened in plain English. RAG over incident history and telemetry summaries.",
+  },
+];
+
+export interface IntegrationItem {
+  label: string;
+}
+
+export const INTEGRATION_ITEMS: IntegrationItem[] = [
+  { label: "Kubernetes API" },
+  { label: "Prometheus" },
+  { label: "Redis Streams" },
+  { label: "MLflow" },
+  { label: "TimescaleDB" },
+  { label: "YARP" },
 ];

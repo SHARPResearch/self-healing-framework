@@ -8,7 +8,7 @@ export function NotFoundPage() {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background px-6 text-center text-foreground">
       <SearchX className="size-9 text-muted-foreground" />
-      <p className="font-display text-5xl tracking-tight">404</p>
+      <p className="text-5xl font-semibold tracking-tight">404</p>
       <div className="space-y-1">
         <h1 className="text-lg font-semibold">Page not found</h1>
         <p className="max-w-sm text-sm text-muted-foreground">

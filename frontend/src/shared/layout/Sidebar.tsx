@@ -1,6 +1,8 @@
 import { NavLink } from "react-router-dom";
 import { PanelLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Logo } from "@/shared/components/Logo";
+import { ORG_NAME, REPO_NAME } from "@/shared/brand";
 import { navGroups } from "./navigation";
 
 interface SidebarProps {
@@ -16,15 +18,13 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
         collapsed ? "w-[68px]" : "w-64",
       )}
     >
-      <div className="flex items-center justify-between px-4 py-4">
-        {!collapsed && (
-          <div className="flex items-center gap-2">
-            <div className="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
-              <img src="/favicon.svg" alt="SHARP" className="size-4" />
-            </div>
-            <span className="text-sm font-semibold tracking-tight">SHARP</span>
-          </div>
+      <div
+        className={cn(
+          "flex items-center px-4 py-4",
+          collapsed ? "flex-col gap-3" : "justify-between",
         )}
+      >
+        <Logo variant={collapsed ? "mark" : "full"} size="sm" />
         <button
           type="button"
           onClick={onToggle}
@@ -70,8 +70,8 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
 
       {!collapsed && (
         <div className="border-t border-border p-3 text-xs text-muted-foreground">
-          <p>self-healing-framework</p>
-          <p className="mt-0.5">SHARPResearch</p>
+          <p>{REPO_NAME}</p>
+          <p className="mt-0.5">{ORG_NAME}</p>
         </div>
       )}
     </aside>

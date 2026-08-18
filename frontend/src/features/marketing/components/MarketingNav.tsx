@@ -7,7 +7,7 @@ import { Logo } from "@/shared/components/Logo";
 
 const LINKS = [
   { href: "#how-it-works", label: "How it works" },
-  { href: "#ladder", label: "Remediation" },
+  { href: "#remediation", label: "Remediation" },
   { href: "#product", label: "Product" },
   { href: "#research", label: "Research" },
 ];

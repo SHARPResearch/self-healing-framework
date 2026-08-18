@@ -1,11 +1,15 @@
 import { MarketingNav } from "./components/MarketingNav";
 import { HeroSection } from "./components/HeroSection";
+import { TechMarquee } from "./components/TechMarquee";
 import { HowItWorks } from "./components/HowItWorks";
-import { HospitalAnalogy } from "./components/HospitalAnalogy";
+import { IntegratedPlatform } from "./components/IntegratedPlatform";
+import { FeatureGrid } from "./components/FeatureGrid";
 import { SeverityLadder } from "./components/SeverityLadder";
+import { HospitalAnalogy } from "./components/HospitalAnalogy";
 import { ProductShowcase } from "./components/ProductShowcase";
+import { IntegrationsSection } from "./components/IntegrationsSection";
 import { ResearchComponents } from "./components/ResearchComponents";
-import { TechStack } from "./components/TechStack";
+import { CtaBand } from "./components/CtaBand";
 import { MarketingFooter } from "./components/MarketingFooter";
 
 /**
@@ -18,12 +22,16 @@ export function MarketingPage() {
       <MarketingNav />
       <main>
         <HeroSection />
+        <TechMarquee />
         <HowItWorks />
-        <HospitalAnalogy />
+        <IntegratedPlatform />
+        <FeatureGrid />
         <SeverityLadder />
+        <HospitalAnalogy />
         <ProductShowcase />
+        <IntegrationsSection />
         <ResearchComponents />
-        <TechStack />
+        <CtaBand />
       </main>
       <MarketingFooter />
     </div>

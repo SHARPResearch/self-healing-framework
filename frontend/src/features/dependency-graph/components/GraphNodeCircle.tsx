@@ -12,11 +12,12 @@ const FILL: Record<Severity, string> = {
 
 interface GraphNodeCircleProps {
   node: PositionedNode;
+  dimmed: boolean;
   onHover: (node: PositionedNode | null) => void;
   onSelect: (node: PositionedNode) => void;
 }
 
-export function GraphNodeCircle({ node, onHover, onSelect }: GraphNodeCircleProps) {
+export function GraphNodeCircle({ node, dimmed, onHover, onSelect }: GraphNodeCircleProps) {
   const isCritical = node.status === "critical";
   // "svc-a-auth" -> "auth"; keeps the label inside a 24px circle.
   const short = node.serviceId.split("-").slice(2).join("-") || node.serviceId;
@@ -42,7 +43,8 @@ export function GraphNodeCircle({ node, onHover, onSelect }: GraphNodeCircleProp
         role="button"
         tabIndex={0}
         aria-label={`${node.displayName}, ${node.status}, anomaly score ${node.anomalyScore.toFixed(2)}`}
-        className="cursor-pointer focus-visible:outline-none"
+        className="cursor-pointer transition-opacity duration-150 focus-visible:outline-none"
+        opacity={dimmed ? 0.25 : 1}
         onMouseEnter={() => onHover(node)}
         onMouseLeave={() => onHover(null)}
         onFocus={() => onHover(node)}

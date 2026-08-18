@@ -15,7 +15,8 @@ export function DependencyGraphPage() {
             <p className="text-sm text-muted-foreground">
               An arrow from A to B means A calls B. Built from the{" "}
               <span className="font-mono text-xs">selfheal.io/upstreams</span> annotation in the
-              real system. Click a node to see its incidents.
+              real system. Hover a node to trace its connections, click a node to see its
+              incidents.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -29,7 +30,7 @@ export function DependencyGraphPage() {
 
         <p className="text-xs text-muted-foreground">
           Amber dashed edges point at a service that is currently critical, so the caller is at
-          risk of cascading failure.
+          risk of cascading failure. Drag to pan, scroll or use the controls to zoom.
         </p>
       </div>
     </AppShell>

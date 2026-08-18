@@ -1,56 +1,64 @@
 import { Link } from "react-router-dom";
-import { ArrowRight } from "lucide-react";
-import { Reveal } from "./Reveal";
+import { Logo } from "@/shared/components/Logo";
+import { ORG_NAME, REPO_NAME } from "@/shared/brand";
+
+const PLATFORM_LINKS = [
+  { href: "#how-it-works", label: "How it works" },
+  { href: "#remediation", label: "Remediation" },
+  { href: "#product", label: "Product" },
+  { href: "#research", label: "Research" },
+];
+
+const ACCOUNT_LINKS = [
+  { to: "/login", label: "Sign in" },
+  { to: "/signup", label: "Sign up" },
+  { to: "/dashboard", label: "Dashboard" },
+];
 
 export function MarketingFooter() {
   return (
     <footer className="border-t border-white/10">
-      <div className="mx-auto max-w-6xl px-6 py-20">
-        <Reveal>
-          <div className="flex flex-col items-center gap-6 text-center">
-            <h2 className="max-w-2xl font-display text-3xl leading-tight tracking-tight text-white sm:text-4xl">
-              See it running
-            </h2>
-            <p className="max-w-lg text-sm leading-relaxed text-white/60">
-              The dashboard runs on mock telemetry, so you can explore every screen without a
-              cluster attached.
+      <div className="mx-auto max-w-6xl px-6 py-16">
+        <div className="grid gap-10 sm:grid-cols-[2fr_1fr_1fr]">
+          <div>
+            <Logo size="sm" />
+            <p className="mt-4 max-w-xs text-sm text-white/50">
+              A closed-loop, autonomous reliability system for Kubernetes-hosted microservices.
             </p>
-            <Link
-              to="/dashboard"
-              className="inline-flex items-center gap-2 rounded-full bg-white px-7 py-3 text-sm font-semibold text-black transition-transform hover:-translate-y-0.5 hover:scale-[1.02]"
-            >
-              Open the dashboard
-              <ArrowRight className="size-4" />
-            </Link>
-          </div>
-        </Reveal>
-
-        <div className="mt-16 flex flex-col items-center justify-between gap-4 border-t border-white/10 pt-8 sm:flex-row">
-          <div className="flex items-center gap-2">
-            <div className="flex size-7 items-center justify-center rounded-full bg-white">
-              <img src="/favicon.svg" alt="" className="size-4" />
-            </div>
-            <span className="text-sm font-semibold text-white">SHARP</span>
           </div>
 
-          <nav className="flex flex-wrap items-center justify-center gap-5 text-xs text-white/50">
-            <a href="#how-it-works" className="transition-colors hover:text-white">
-              How it works
-            </a>
-            <a href="#ladder" className="transition-colors hover:text-white">
-              Remediation
-            </a>
-            <a href="#research" className="transition-colors hover:text-white">
-              Research
-            </a>
-            <Link to="/login" className="transition-colors hover:text-white">
-              Sign in
-            </Link>
-          </nav>
+          <div>
+            <p className="text-xs font-medium tracking-widest text-white/40 uppercase">Platform</p>
+            <ul className="mt-4 space-y-2.5">
+              {PLATFORM_LINKS.map((link) => (
+                <li key={link.href}>
+                  <a href={link.href} className="text-sm text-white/60 transition-colors hover:text-white">
+                    {link.label}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
 
+          <div>
+            <p className="text-xs font-medium tracking-widest text-white/40 uppercase">Account</p>
+            <ul className="mt-4 space-y-2.5">
+              {ACCOUNT_LINKS.map((link) => (
+                <li key={link.to}>
+                  <Link to={link.to} className="text-sm text-white/60 transition-colors hover:text-white">
+                    {link.label}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+
+        <div className="mt-14 flex flex-col items-center justify-between gap-3 border-t border-white/10 pt-6 sm:flex-row">
           <p className="text-xs text-white/40">
-            self-healing-framework &bull; SHARPResearch
+            {REPO_NAME} &bull; {ORG_NAME}
           </p>
+          <p className="text-xs text-white/30">Final year research project. Not a commercial product.</p>
         </div>
       </div>
     </footer>

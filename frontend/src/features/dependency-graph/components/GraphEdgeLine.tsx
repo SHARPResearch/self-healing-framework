@@ -6,7 +6,7 @@ const NODE_RADIUS = 24;
  * Draws an A -> B edge, stopped short of the target circle so the arrowhead
  * sits on the rim rather than under the node.
  */
-export function GraphEdgeLine({ edge }: { edge: PositionedEdge }) {
+export function GraphEdgeLine({ edge, dimmed }: { edge: PositionedEdge; dimmed: boolean }) {
   const { source, target, downstreamCritical } = edge;
 
   const dx = target.x - source.x;
@@ -34,6 +34,8 @@ export function GraphEdgeLine({ edge }: { edge: PositionedEdge }) {
       strokeWidth={downstreamCritical ? 2 : 1.5}
       strokeDasharray={downstreamCritical ? "6 4" : undefined}
       markerEnd={downstreamCritical ? "url(#arrow-critical)" : "url(#arrow)"}
+      opacity={dimmed ? 0.15 : 1}
+      className="transition-opacity duration-150"
     >
       {downstreamCritical && (
         <animate attributeName="stroke-dashoffset" from="20" to="0" dur="1s" repeatCount="indefinite" />

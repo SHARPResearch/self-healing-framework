@@ -10,7 +10,7 @@ export function HospitalAnalogy() {
             <p className="text-xs font-medium tracking-widest text-white/40 uppercase">
               In plain english
             </p>
-            <h2 className="mt-3 font-display text-3xl leading-tight tracking-tight text-white sm:text-4xl">
+            <h2 className="mt-3 text-3xl font-semibold tracking-tight text-white sm:text-4xl">
               Think of it as a hospital monitor for your cluster
             </h2>
             <p className="mt-4 text-sm leading-relaxed text-white/60">

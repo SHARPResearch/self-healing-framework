@@ -1,11 +1,5 @@
+import { Activity, Bot, GitBranch, History, Route, SlidersHorizontal, type LucideIcon } from "lucide-react";
 import type { Severity } from "@/shared/types";
-
-/**
- * Third party asset, outside this repo's control. The hero renders a gradient
- * behind it so a dead URL degrades instead of showing black.
- */
-export const HERO_VIDEO_URL =
-  "https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260809_012548_ef22562c-c0ae-4816-ad9d-f8922af4e6a7.mp4";
 
 export interface HeroStat {
   symbol: string;
@@ -159,32 +153,46 @@ export const MARQUEE_ITEMS: string[] = [
 
 export interface FeatureCard {
   title: string;
+  icon: LucideIcon;
   body: string;
 }
 
+/**
+ * Icons are reused from the app's own nav/action iconography where the
+ * concept overlaps (GitBranch is the dependency graph nav icon, Route is the
+ * shift-traffic action icon on the services detail panel, Bot is the copilot
+ * nav icon) rather than picked arbitrarily, so the marketing page's visual
+ * language matches the real product's.
+ */
 export const FEATURE_GRID: FeatureCard[] = [
   {
     title: "Online learning",
+    icon: Activity,
     body: "Every Prometheus scrape updates the model in place. No batch retrain job, no stale window.",
   },
   {
     title: "Graduated remediation",
+    icon: SlidersHorizontal,
     body: "Four severity tiers, each with its own response, from a log line up to a full rollback.",
   },
   {
     title: "Dependency aware",
+    icon: GitBranch,
     body: "A service going critical elevates its upstreams and pre-scales its downstreams automatically.",
   },
   {
     title: "Zero downtime traffic shifts",
+    icon: Route,
     body: "YARP drains a failing pod to 0% weight instead of killing it, so in-flight requests finish.",
   },
   {
     title: "Versioned models",
+    icon: History,
     body: "Every run is tracked in MLflow. Rollback to the last stable snapshot is one click, or automatic.",
   },
   {
     title: "Copilot for root cause",
+    icon: Bot,
     body: "Ask what happened in plain English. RAG over incident history and telemetry summaries.",
   },
 ];

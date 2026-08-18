@@ -16,7 +16,7 @@ export function ResearchComponents() {
           <p className="text-xs font-medium tracking-widest text-white/40 uppercase">
             Research components
           </p>
-          <h2 className="mt-3 max-w-2xl font-display text-3xl leading-tight tracking-tight text-white sm:text-4xl">
+          <h2 className="mt-3 max-w-2xl text-3xl font-semibold tracking-tight text-white sm:text-4xl">
             Five parts, built and evaluated separately
           </h2>
           <p className="mt-4 max-w-2xl text-sm leading-relaxed text-white/60">

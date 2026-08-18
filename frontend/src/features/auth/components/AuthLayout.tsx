@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
+import { Logo } from "@/shared/components/Logo";
+import { ORG_NAME, PRODUCT_NAME, REPO_NAME } from "@/shared/brand";
 
 interface AuthLayoutProps {
   title: string;
@@ -26,37 +28,32 @@ export function AuthLayout({ title, subtitle, children, footer }: AuthLayoutProp
           className="animate-blob-drift pointer-events-none absolute -right-24 -bottom-32 size-96 rounded-full bg-status-warn/10 blur-[120px]"
         />
 
-        <Link to="/" className="relative flex items-center gap-2">
-          <div className="flex size-8 items-center justify-center rounded-md bg-primary">
-            <img src="/favicon.svg" alt="" className="size-5" />
-          </div>
-          <span className="text-base font-semibold tracking-tight">SHARP</span>
+        <Link to="/" className="relative">
+          <Logo />
         </Link>
 
         <div className="relative space-y-4">
-          <p className="font-display text-2xl leading-snug tracking-tight">
+          <p className="text-2xl leading-snug font-semibold tracking-tight">
             Predict the failure.
             <br />
             Fix it before anyone notices.
           </p>
           <p className="max-w-md text-sm text-muted-foreground">
-            SHARP watches every Kubernetes service, scores anomalies as telemetry streams in, and
-            runs graduated remediation automatically. No batch retraining, no restart scripts.
+            {PRODUCT_NAME} watches every Kubernetes service, scores anomalies as telemetry streams
+            in, and runs graduated remediation automatically. No batch retraining, no restart
+            scripts.
           </p>
         </div>
 
         <p className="relative text-xs text-muted-foreground">
-          self-healing-framework &bull; SHARPResearch
+          {REPO_NAME} &bull; {ORG_NAME}
         </p>
       </aside>
 
       <main className="flex w-full flex-col justify-center px-6 py-12 lg:w-1/2 lg:px-16">
         <div className="mx-auto w-full max-w-sm">
-          <Link to="/" className="mb-8 flex items-center gap-2 lg:hidden">
-            <div className="flex size-8 items-center justify-center rounded-md bg-primary">
-              <img src="/favicon.svg" alt="" className="size-5" />
-            </div>
-            <span className="text-base font-semibold tracking-tight">SHARP</span>
+          <Link to="/" className="mb-8 block lg:hidden">
+            <Logo />
           </Link>
 
           <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>

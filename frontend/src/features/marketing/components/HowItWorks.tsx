@@ -7,7 +7,7 @@ export function HowItWorks() {
     <section id="how-it-works" className="mx-auto max-w-6xl px-6 py-24">
       <Reveal>
         <p className="text-xs font-medium tracking-widest text-white/40 uppercase">How it works</p>
-        <h2 className="mt-3 max-w-2xl font-display text-3xl leading-tight tracking-tight text-white sm:text-4xl">
+        <h2 className="mt-3 max-w-2xl text-3xl font-semibold tracking-tight text-white sm:text-4xl">
           A closed loop, not a dashboard you stare at
         </h2>
         <p className="mt-4 max-w-2xl text-sm leading-relaxed text-white/60">

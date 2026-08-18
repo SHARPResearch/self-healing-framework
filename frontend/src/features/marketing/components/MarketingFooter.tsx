@@ -1,5 +1,7 @@
 import { Link } from "react-router-dom";
 import { ArrowRight } from "lucide-react";
+import { Logo } from "@/shared/components/Logo";
+import { ORG_NAME, REPO_NAME } from "@/shared/brand";
 import { Reveal } from "./Reveal";
 
 export function MarketingFooter() {
@@ -26,12 +28,7 @@ export function MarketingFooter() {
         </Reveal>
 
         <div className="mt-16 flex flex-col items-center justify-between gap-4 border-t border-white/10 pt-8 sm:flex-row">
-          <div className="flex items-center gap-2">
-            <div className="flex size-7 items-center justify-center rounded-full bg-white">
-              <img src="/favicon.svg" alt="" className="size-4" />
-            </div>
-            <span className="text-sm font-semibold text-white">SHARP</span>
-          </div>
+          <Logo size="sm" />
 
           <nav className="flex flex-wrap items-center justify-center gap-5 text-xs text-white/50">
             <a href="#how-it-works" className="transition-colors hover:text-white">
@@ -49,7 +46,7 @@ export function MarketingFooter() {
           </nav>
 
           <p className="text-xs text-white/40">
-            self-healing-framework &bull; SHARPResearch
+            {REPO_NAME} &bull; {ORG_NAME}
           </p>
         </div>
       </div>

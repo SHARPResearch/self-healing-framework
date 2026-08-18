@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { Menu, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { Logo } from "@/shared/components/Logo";
 
 const LINKS = [
   { href: "#how-it-works", label: "How it works" },
@@ -30,11 +31,8 @@ export function MarketingNav() {
       )}
     >
       <nav className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-        <Link to="/" className="flex items-center gap-2">
-          <div className="flex size-8 items-center justify-center rounded-full bg-white">
-            <img src="/favicon.svg" alt="" className="size-5" />
-          </div>
-          <span className="text-base font-semibold tracking-tight text-white">SHARP</span>
+        <Link to="/">
+          <Logo />
         </Link>
 
         <div className="absolute left-1/2 hidden -translate-x-1/2 items-center gap-8 md:flex">

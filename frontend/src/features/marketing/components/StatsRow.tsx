@@ -11,7 +11,7 @@ function Stat({ stat, index }: { stat: HeroStat; index: number }) {
 
   return (
     <div className="flex flex-col items-center gap-1 text-center">
-      <span aria-hidden="true" className="font-display text-2xl text-white/80">
+      <span aria-hidden="true" className="font-mono text-lg text-white/40">
         {stat.symbol}
       </span>
       <span className="font-mono text-xl font-semibold tracking-tight text-white tabular-nums sm:text-2xl">
@@ -24,9 +24,10 @@ function Stat({ stat, index }: { stat: HeroStat; index: number }) {
   );
 }
 
+/** A thin, honest stats strip -- kept small so it reads as a footnote to the hero screenshot, not a headline claim. */
 export function StatsRow() {
   return (
-    <div className="mt-16 grid w-full max-w-3xl grid-cols-2 gap-8 sm:grid-cols-4">
+    <div className="mx-auto grid w-full max-w-3xl grid-cols-2 gap-8 sm:grid-cols-4">
       {HERO_STATS.map((stat, i) => (
         <Stat key={stat.label} stat={stat} index={i} />
       ))}

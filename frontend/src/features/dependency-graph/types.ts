@@ -17,16 +17,3 @@ export interface GraphNodeInput {
   anomalyScore: number;
   lastAction: string | null;
 }
-
-/** A node after the force layout has assigned it a position. */
-export interface PositionedNode extends GraphNodeInput {
-  x: number;
-  y: number;
-}
-
-export interface PositionedEdge {
-  source: PositionedNode;
-  target: PositionedNode;
-  /** True when the callee is critical, which is what turns the edge amber. */
-  downstreamCritical: boolean;
-}

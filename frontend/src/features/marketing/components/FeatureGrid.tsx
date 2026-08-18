@@ -1,32 +1,93 @@
-import { FEATURE_GRID } from "../data/marketingContent";
+import { useId } from "react";
+import { FEATURE_GRID, type FeatureCard as FeatureCardData } from "../data/marketingContent";
 import { Reveal } from "./Reveal";
+
+/**
+ * Deterministic replacement for the reference component's Math.random-based
+ * pattern -- this project avoids non-deterministic layout everywhere else
+ * (the dependency graph, the incident trend chart) so screenshots and
+ * renders stay reproducible, and a decorative grid highlight is no
+ * exception.
+ */
+function seededSquares(seed: number, count = 5): [number, number][] {
+  let state = seed + 1;
+  const next = () => {
+    state = (state * 48271) % 2147483647;
+    return state / 2147483647;
+  };
+  return Array.from({ length: count }, () => [
+    Math.floor(next() * 4) + 7,
+    Math.floor(next() * 6) + 1,
+  ]);
+}
+
+function GridPattern({ seed }: { seed: number }) {
+  const patternId = useId();
+  const squares = seededSquares(seed);
+  const cell = 20;
+
+  return (
+    <svg aria-hidden="true" className="absolute inset-0 size-full">
+      <defs>
+        <pattern id={patternId} width={cell} height={cell} patternUnits="userSpaceOnUse" x="-12" y="4">
+          <path d={`M.5 ${cell}V.5H${cell}`} fill="none" stroke="white" strokeOpacity={0.06} />
+        </pattern>
+      </defs>
+      <rect width="100%" height="100%" fill={`url(#${patternId})`} />
+      <svg x="-12" y="4" className="overflow-visible">
+        {squares.map(([sx, sy], index) => (
+          <rect
+            key={index}
+            width={cell + 1}
+            height={cell + 1}
+            x={sx * cell}
+            y={sy * cell}
+            fill="var(--color-status-healthy)"
+            fillOpacity={0.06}
+          />
+        ))}
+      </svg>
+    </svg>
+  );
+}
+
+function FeatureTile({ feature, index }: { feature: FeatureCardData; index: number }) {
+  const Icon = feature.icon;
+
+  return (
+    <div className="group relative overflow-hidden p-6">
+      <div className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-300 group-hover:opacity-100 mask-[radial-gradient(farthest-side_at_top_left,white,transparent)]">
+        <GridPattern seed={index} />
+      </div>
+      <Icon className="relative size-6 text-status-healthy/80" strokeWidth={1.5} aria-hidden="true" />
+      <h3 className="relative mt-8 text-sm font-semibold text-white md:text-base">{feature.title}</h3>
+      <p className="relative mt-2 text-xs leading-relaxed text-white/50 md:text-sm">{feature.body}</p>
+    </div>
+  );
+}
 
 export function FeatureGrid() {
   return (
     <section className="border-y border-white/10 bg-white/[0.02]">
       <div className="mx-auto max-w-6xl px-6 py-24">
         <Reveal>
-          <h2 className="max-w-2xl text-3xl font-semibold tracking-tight text-white sm:text-4xl">
-            Built to help operators ship reliability with less toil
-          </h2>
+          <div className="mx-auto max-w-2xl text-center">
+            <h2 className="text-3xl font-semibold tracking-tight text-white sm:text-4xl">
+              Everything the loop needs, built in
+            </h2>
+            <p className="mt-4 text-sm leading-relaxed text-white/60">
+              Six capabilities that turn telemetry into a fix, without a human in the loop.
+            </p>
+          </div>
         </Reveal>
 
-        <div className="mt-14 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {FEATURE_GRID.map((feature, i) => (
-            <Reveal key={feature.title} delay={i * 0.05}>
-              <div className="h-full rounded-2xl border border-white/10 bg-white/[0.03] p-5">
-                <div
-                  aria-hidden="true"
-                  className="mb-4 flex size-9 items-center justify-center rounded-lg bg-white/[0.06] font-mono text-xs text-white/50"
-                >
-                  {String(i + 1).padStart(2, "0")}
-                </div>
-                <h3 className="text-sm font-semibold text-white">{feature.title}</h3>
-                <p className="mt-2 text-sm leading-relaxed text-white/60">{feature.body}</p>
-              </div>
-            </Reveal>
-          ))}
-        </div>
+        <Reveal delay={0.15}>
+          <div className="mt-14 grid grid-cols-1 divide-x divide-y divide-dashed divide-white/10 border border-dashed border-white/10 sm:grid-cols-2 md:grid-cols-3">
+            {FEATURE_GRID.map((feature, i) => (
+              <FeatureTile key={feature.title} feature={feature} index={i} />
+            ))}
+          </div>
+        </Reveal>
       </div>
     </section>
   );

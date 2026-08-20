@@ -110,6 +110,19 @@ testimonial and blog sections were explicitly not built. Decisions worth knowing
   authenticated page loads is unaffected. `isolate` was dropped from the `HeroSection` `<section>`
   back when the blobs were removed and hasn't been reintroduced — Beams doesn't need it since it's
   a normal (non-negative) z-index layer, not a negative-z-index background trick.
+- **`TechMarquee`'s "Built on" strip has real brand logos, monochrome.** `MARQUEE_ITEMS` in
+  `marketingContent.ts` is now `{ label, icon? }[]` instead of `string[]`, with `icon` pulled from
+  the `simple-icons` package (tree-shakable named ESM exports like `siKubernetes` — confirmed via a
+  real `pnpm run build` that only the ~7 icons actually imported end up in the bundle, not the
+  whole 3,471-icon package: the `MarketingPage` chunk grew by only ~13 KB raw). Rendered through
+  `ToolIcon.tsx`, a two-line wrapper that forces `fill="currentColor"` so every logo inherits the
+  surrounding `text-foreground/50` instead of showing each tool's own brand color — kept monochrome
+  on purpose, consistent with the sparse-color rule elsewhere on this page. **`river` and `YARP`
+  stay text-only** — neither has a real brand mark anywhere (river is a niche Python library, YARP
+  is an internal Microsoft project) — confirmed by checking simple-icons' own icon list rather than
+  guessing, and deliberately not given a fake/generic icon just to make every item visually match.
+  This same treatment was *not* applied to `IntegrationsSection`'s chips — user chose to scope this
+  to the marquee only for now.
 - **The primary CTA is a flat `bg-brand-primary` fill, no glow.** It used to carry a
   `shadow-[...oklch(0.75_0.18_150/35%)...]` glow — an arbitrary-value opacity modifier on a literal
   oklch, kept as a literal rather than `var()` because Tailwind's `/opacity` modifier doesn't
@@ -160,7 +173,12 @@ source:
 
 `Logo` (`shared/components/Logo.tsx`) is the single source of truth for the brand mark, replacing
 five separate `<img src="/favicon.svg">` call sites that each duplicated the wrapper and had
-inconsistent backgrounds (white circle on marketing vs `bg-primary` in the app shell). The
+inconsistent backgrounds (white circle on marketing vs `bg-primary` in the app shell, later
+unified to a light `bg-primary` badge everywhere). The badge is now `bg-brand-badge`, a dark navy
+(`#0f172a`) matching `public/favicon.svg`'s hardcoded `rect fill` exactly, so the browser tab icon
+and every in-app instance of the mark read as the same badge — the favicon file itself can't read
+a CSS custom property (it's a static SVG, not processed by Tailwind), so `--brand-badge` in
+`index.css` is a plain hex kept in manual sync with that file rather than the usual `oklch()`. The
 wordmark is **hand-authored as SVG line segments, not rendered from a font** — `--font-sans` was a
 system stack when this was decided, so a font-rendered wordmark would have differed across OSes;
 kept hand-authored even now that Inter is loaded, since a brand mark shouldn't move if the body

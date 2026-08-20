@@ -212,13 +212,19 @@ unified to a light `bg-primary` badge everywhere). The badge is now `bg-brand-ba
 and every in-app instance of the mark read as the same badge — the favicon file itself can't read
 a CSS custom property (it's a static SVG, not processed by Tailwind), so `--brand-badge` in
 `index.css` is a plain hex kept in manual sync with that file rather than the usual `oklch()`. The
-wordmark is **hand-authored as SVG line segments, not rendered from a font** — `--font-sans` was a
-system stack when this was decided, so a font-rendered wordmark would have differed across OSes;
-kept hand-authored even now that Inter is loaded, since a brand mark shouldn't move if the body
-font ever changes again. Letterforms are original; only the proportions (wide, geometric, tight
-tracking) took a cue from
-an Oracle-style reference the user provided. `variant="mark"` (icon only) is used in the collapsed
-sidebar so the brand isn't hidden entirely, which is what happened before.
+wordmark **used to be hand-authored SVG line segments, not rendered from a font** —
+`--font-sans` was a system stack when this was decided, so a font-rendered wordmark would have
+differed across OSes; the letterforms were original, wide and geometric with an Oracle-style
+proportion cue. Once Inter loaded globally that reasoning stopped applying, and the hand-drawn
+strokes read as technical/wireframe line art rather than a clean brand mark. `Wordmark` is now a
+plain `<span>SHARP</span>` in `font-sans font-semibold tracking-tight` — Supabase's logotype was
+the reference point for "looks like real typography, not a schematic" — which renders consistently
+because Inter itself is loaded everywhere, the same guarantee the SVG used to provide a different
+way. The oversized footer instance (`MarketingFooter`'s brand row) overrides the tracking to
+`tracking-hero` for a tighter look at that scale; `cn()`'s `twMerge` resolves the conflict with the
+base `tracking-tight`, last one in the merged class list wins. `variant="mark"` (icon only, the
+triangle `LogoMark` — unchanged by this pass) is used in the collapsed sidebar so the brand isn't
+hidden entirely, which is what happened before.
 
 `ServiceManagementTable` (`features/services/components/`) is adapted from a pasted VPS/hosting
 admin-panel component. Content substitutions from the source: OS icons (Windows/Ubuntu logos)

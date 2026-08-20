@@ -44,7 +44,7 @@ const ITEMS: SecurityItem[] = [
 
 export function SecurityTab() {
   return (
-    <div className="max-w-3xl space-y-6">
+    <div className="mx-auto max-w-3xl space-y-6">
       <div>
         <h3 className="flex items-center gap-2 text-base font-semibold">
           <ShieldCheck className="size-4" />

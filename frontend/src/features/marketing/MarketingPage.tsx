@@ -18,7 +18,7 @@ import { MarketingFooter } from "./components/MarketingFooter";
  */
 export function MarketingPage() {
   return (
-    <div className="min-h-screen scroll-smooth bg-black text-white">
+    <div className="min-h-screen scroll-smooth bg-background text-foreground">
       <MarketingNav />
       <main>
         <HeroSection />

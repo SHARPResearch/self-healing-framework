@@ -86,18 +86,50 @@ testimonial and blog sections were explicitly not built. Decisions worth knowing
   (<60s) and benchmark coverage (28 entities) are all doc-grounded and honest. **Do not add an
   accuracy stat here** without reading RESULTS.md's "Reading these numbers honestly" section. It
   now sits as a thin strip under the hero screenshot rather than a headline claim.
-- **The hero has no background video.** An earlier pass hotlinked a 13.9 MB third-party CloudFront
-  asset per a reference spec; it was removed per feedback in favour of an ambient background built
-  from the app's own tokens — two `animate-blob-drift` blobs in `status-healthy`/`status-warn` at
-  low opacity, plus a faint CSS grid-line texture. The `HeroSection` `<section>` still carries
-  `isolate` — **this is load-bearing**: without its own stacking context the negative-z-index
-  blobs escape and paint behind the page root's `bg-black` instead of inside the hero.
-- **The primary CTA's glow shadow is `oklch(0.75 0.18 150/35%)`, a literal, not
-  `var(--color-status-healthy)`.** Tailwind's `/opacity` modifier on an arbitrary value doesn't
-  reliably apply to a `var()` reference the same way it does to a named colour utility, and
-  Tailwind arbitrary values fail *silently* (no CSS emitted, no build error) rather than erroring —
-  the same class of bug the missing `--destructive` token hit earlier. The oklch value is copied
-  from `index.css`'s `.dark` block; if that token's dark-mode value ever changes, update this too.
+- **The hero had no background video, then no ambient blobs either, and now has a WebGL beams
+  effect instead.** An earlier pass hotlinked a 13.9 MB third-party CloudFront video asset, then
+  replaced it with two `animate-blob-drift` blobs plus a grid-line texture; both were removed in
+  the SHARP design system pass (DESIGN.md's source discipline is "no atmospheric gradients"). The
+  hero later read as too flat, so `features/marketing/components/Beams.tsx` was added — a
+  react-bits "Beams" component (vertical light-beam strips warped by Perlin noise, WebGL via
+  `three`/`@react-three/fiber`/`@react-three/drei`), ported from JS to TS with the shader-patching
+  internals (`extendMaterial`) left loosely typed on purpose since ShaderLib's header-injection
+  pattern doesn't map onto a precise TS shape. This is treated as *directional light*, not an
+  atmospheric color wash, so it doesn't reopen the no-gradients rule the way the old blobs did.
+  Rendered in an `absolute inset-x-0 top-0 h-[700px]` layer behind the hero text only (not the
+  screenshot/stats below), with a `mask-image` fade so it doesn't cut off abruptly, and skipped
+  entirely when `useReducedMotion()` is true. Two adaptations from the vendored source: a
+  `backgroundColor` prop (default `#0a0a0a`) was added so the canvas's clear color matches
+  `--background`'s actual rendered value (`oklch(0.145 0 0)` ≈ `#0a0a0a`, not pure `#000000` —
+  without this there'd be a faint seam where the canvas meets the rest of the page), and
+  `lightColor="#50C878"` was kept as a literal hex (not `var(--brand-primary)`) because Three.js
+  material colors are JS-side numeric values, not CSS, so a live CSS custom property can't feed
+  them directly. **This is the heaviest dependency in the app**: the `MarketingPage` lazy chunk
+  grew from a few KB to ~905 KB (~245 KB gzip) because of `three`; confirmed via `pnpm run build`
+  that this cost is fully contained in that chunk and the shared `index-*.js` bundle every
+  authenticated page loads is unaffected. `isolate` was dropped from the `HeroSection` `<section>`
+  back when the blobs were removed and hasn't been reintroduced — Beams doesn't need it since it's
+  a normal (non-negative) z-index layer, not a negative-z-index background trick.
+- **`TechMarquee`'s "Built on" strip has real brand logos, monochrome.** `MARQUEE_ITEMS` in
+  `marketingContent.ts` is now `{ label, icon? }[]` instead of `string[]`, with `icon` pulled from
+  the `simple-icons` package (tree-shakable named ESM exports like `siKubernetes` — confirmed via a
+  real `pnpm run build` that only the ~7 icons actually imported end up in the bundle, not the
+  whole 3,471-icon package: the `MarketingPage` chunk grew by only ~13 KB raw). Rendered through
+  `ToolIcon.tsx`, a two-line wrapper that forces `fill="currentColor"` so every logo inherits the
+  surrounding `text-foreground/50` instead of showing each tool's own brand color — kept monochrome
+  on purpose, consistent with the sparse-color rule elsewhere on this page. **`river` and `YARP`
+  stay text-only** — neither has a real brand mark anywhere (river is a niche Python library, YARP
+  is an internal Microsoft project) — confirmed by checking simple-icons' own icon list rather than
+  guessing, and deliberately not given a fake/generic icon just to make every item visually match.
+  This same treatment was *not* applied to `IntegrationsSection`'s chips — user chose to scope this
+  to the marquee only for now.
+- **The primary CTA is a flat `bg-brand-primary` fill, no glow.** It used to carry a
+  `shadow-[...oklch(0.75_0.18_150/35%)...]` glow — an arbitrary-value opacity modifier on a literal
+  oklch, kept as a literal rather than `var()` because Tailwind's `/opacity` modifier doesn't
+  reliably apply to a `var()` reference (same silent-failure class as the missing `--destructive`
+  token: no CSS emitted, no build error). Removed entirely in the design-system pass, not fixed —
+  DESIGN.md's own components have no glow/shadow on buttons, so the whole pattern is gone rather
+  than made to work correctly.
 - **`FeatureGrid`'s decorative corner pattern uses a seeded PRNG, not `Math.random()`** — this
   project avoids non-determinism in anything that renders (the dependency graph layout and the
   incident trend chart do the same) so screenshots stay reproducible.
@@ -105,12 +137,53 @@ testimonial and blog sections were explicitly not built. Decisions worth knowing
   stock images — recapture them (`/dashboard`, `/dependency-graph`) after any visual change to the
   sidebar, Logo, or dependency graph so they don't go stale.
 
+**SHARP design system (marketing-first, `DESIGN.md` at repo root).** The marketing page was
+rebuilt against a design-system analysis of Supabase's marketing site (`DESIGN.md`, adapted onto
+SHARP's own tokens rather than copied literally), with three deliberate departures from the
+source:
+
+- **Canvas stays dark, not white.** DESIGN.md documents a light system; SHARP inverts its polarity
+  (near-black canvas, near-white ink, reusing the existing `.dark` `--background`/`--foreground`)
+  while keeping its rigor — one green accent, no gradients, screenshots as decoration, square-ish
+  radii, tracked type. Every other already-built page (dashboard, services, incidents, …) stays on
+  the existing dark tokens; only `features/marketing/` has been migrated so far. If it reads well,
+  the same system is expected to extend to the rest of the app next — check before assuming a
+  non-marketing page follows these conventions.
+- **Green is sparse, by rule, with two named exemptions.** Reserved for the primary CTA fill, the
+  Logo mark, and small accent dots/pills — "one filled green button per viewport" is enforced by
+  hand (e.g. `MarketingNav`'s Sign Up button is deliberately the shared `Button`'s neutral
+  `default` variant, not green, because the nav is `fixed` and co-visible with whichever section's
+  own green CTA is in view). `SeverityLadder`'s four severity colours and
+  `ResearchComponents`' "Complete" status badge are **exempt** — they're a different semantic
+  system (service health / progress state, `status-*` tokens), not brand colour, and were never in
+  scope for the sparse-green rule. Don't conflate the two systems even though `brand-primary`
+  currently aliases the same hue as `status-healthy`.
+- **New tokens are additive, not replacements.** `index.css`'s `.dark` block gained
+  `--brand-primary` (aliased *by reference* to `var(--status-healthy)`, not a duplicated oklch
+  literal — same visual value, kept as a separate name since "brand action colour" and "service
+  health colour" are different semantic intents that only happen to share a hue today),
+  `--brand-primary-deep` (hover/pressed), and `--brand-on-primary` (near-black text on the green
+  fill — deliberate, survives the canvas inversion unchanged since only the canvas polarity
+  flipped, not the button's dark-on-green pairing). A parallel `--radius-brand-xs/sm/md/lg/xl`
+  scale (4/6/8/12/16px) was added rather than touching the global `--radius` that shadcn
+  `Button`/`Card` depend on everywhere else — marketing components use `rounded-brand-*`, nothing
+  else changed radius. Buttons use `rounded-brand-sm` (square-ish, 6px); pills/tags/badges keep
+  `rounded-full` — DESIGN.md draws this exact distinction and it was applied file-by-file (see
+  `IntegrationsSection.tsx`, which has one of each in the same file).
+
 `Logo` (`shared/components/Logo.tsx`) is the single source of truth for the brand mark, replacing
 five separate `<img src="/favicon.svg">` call sites that each duplicated the wrapper and had
-inconsistent backgrounds (white circle on marketing vs `bg-primary` in the app shell). The
-wordmark is **hand-authored as SVG line segments, not rendered from a font** — `--font-sans` is a
-system stack, so a font-rendered wordmark would differ across OSes, unacceptable for a logo.
-Letterforms are original; only the proportions (wide, geometric, tight tracking) took a cue from
+inconsistent backgrounds (white circle on marketing vs `bg-primary` in the app shell, later
+unified to a light `bg-primary` badge everywhere). The badge is now `bg-brand-badge`, a dark navy
+(`#0f172a`) matching `public/favicon.svg`'s hardcoded `rect fill` exactly, so the browser tab icon
+and every in-app instance of the mark read as the same badge — the favicon file itself can't read
+a CSS custom property (it's a static SVG, not processed by Tailwind), so `--brand-badge` in
+`index.css` is a plain hex kept in manual sync with that file rather than the usual `oklch()`. The
+wordmark is **hand-authored as SVG line segments, not rendered from a font** — `--font-sans` was a
+system stack when this was decided, so a font-rendered wordmark would have differed across OSes;
+kept hand-authored even now that Inter is loaded, since a brand mark shouldn't move if the body
+font ever changes again. Letterforms are original; only the proportions (wide, geometric, tight
+tracking) took a cue from
 an Oracle-style reference the user provided. `variant="mark"` (icon only) is used in the collapsed
 sidebar so the brand isn't hidden entirely, which is what happened before.
 
@@ -179,12 +252,15 @@ response. No message transcript yet and no LLM/SSE wired up — see "Build next"
 **Dark mode is the default** (`class="dark"` hard-coded on `<html>` in `index.html`) — no theme
 toggle built yet, that's a real follow-up if light mode is ever wanted.
 
-**No custom font yet** — `--font-sans` in `src/index.css`'s `@theme inline` block is a system font
-stack placeholder, deliberately isolated to one token so swapping in a real font later is a
-one-line change, not a find-and-replace. The marketing page used to have a separate
-`--font-display` dot-matrix headline face (third-party OnlineWebFonts CDN) but that token, the
-`<link>` tags in `index.html`, and every `font-display` class site were removed — the whole app
-uses one font family now.
+**Font is Inter**, loaded via Google Fonts `<link>` tags in `index.html` (weights `400;500;600` —
+deliberately wide so nothing synthetic-bolds `font-semibold` UI elements) and set as
+`--font-sans` in `src/index.css`'s `@theme inline` block, one token, applies everywhere. True
+section headings (`<h1>`/`<h2>`) additionally take `font-medium` (500) + `tracking-hero`/
+`tracking-display` (-0.03em/-0.02em) per the SHARP design system above — currently applied across
+`features/marketing/` only; buttons, badges, and stat numbers (`StatsRow`) intentionally stay
+`font-semibold`. The marketing page used to have a separate `--font-display` dot-matrix headline
+face (third-party OnlineWebFonts CDN) but that token, the old `<link>` tags, and every
+`font-display` class site were removed before Inter was adopted.
 
 **Build next**. The UI surface is complete; what's left is wiring it to something real.
 1. `src/hooks/useWebSocket.ts` — native WebSocket, exponential backoff reconnect (1s→2s→4s→max 30s)
@@ -203,4 +279,7 @@ uses one font family now.
 8. `Sidebar`/`AppShell` don't auto-collapse below a breakpoint (checked at 390px). The marketing
    page is responsive; the authenticated shell is not yet. `sheet` is the obvious primitive.
 9. The shared bundle is still ~940 KB. The three heaviest routes are split out already; Recharts
-   and the Radix surface in the shell are the next candidates.
+   and the Radix surface in the shell are the next candidates. Separately, the `MarketingPage`
+   lazy chunk is now its own ~905 KB (~245 KB gzip) outlier because of `three`/Beams (see
+   "Marketing page" above) — it doesn't add to the shared bundle, but if the hero background is
+   ever revisited for perf, that's the chunk to look at.

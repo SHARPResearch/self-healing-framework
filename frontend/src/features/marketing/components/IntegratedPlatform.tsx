@@ -12,7 +12,7 @@ export function IntegratedPlatform() {
     <section className="mx-auto max-w-6xl px-6 py-24">
       <Reveal>
         <div className="mx-auto mb-14 flex justify-center">
-          <span className="rounded-full border border-white/15 bg-white/[0.04] px-4 py-1.5 text-xs text-white/60">
+          <span className="rounded-full border border-foreground/15 bg-foreground/[0.04] px-4 py-1.5 text-xs text-foreground/60">
             One platform, six layers
           </span>
         </div>
@@ -20,10 +20,10 @@ export function IntegratedPlatform() {
 
       <div className="grid gap-16 lg:grid-cols-2 lg:items-center">
         <Reveal>
-          <h2 className="text-3xl font-semibold tracking-tight text-white sm:text-4xl">
+          <h2 className="text-3xl font-medium tracking-display text-foreground sm:text-4xl">
             A single integrated platform
           </h2>
-          <p className="mt-4 max-w-md text-sm leading-relaxed text-white/60">
+          <p className="mt-4 max-w-md text-sm leading-relaxed text-foreground/60">
             Each layer uses the ecosystem with the strongest libraries for that job, wired together
             end to end rather than bolted on afterward.
           </p>
@@ -34,16 +34,17 @@ export function IntegratedPlatform() {
                 {i < STACK.length - 1 && (
                   <span
                     aria-hidden="true"
-                    className="absolute top-2 left-[3px] h-full w-px bg-white/10"
+                    className="absolute top-2 left-[3px] h-full w-px bg-foreground/10"
                   />
                 )}
+                {/* Small accent dot -- exempt from the sparse green rule. */}
                 <span
                   aria-hidden="true"
-                  className="absolute top-1.5 left-0 size-[7px] rounded-full bg-status-healthy"
+                  className="absolute top-1.5 left-0 size-[7px] rounded-full bg-brand-primary"
                 />
-                <p className="text-sm font-medium text-white">{item.layer}</p>
-                <p className="mt-0.5 font-mono text-xs text-white/50">{item.tech}</p>
-                <p className="mt-1 text-xs text-white/40">{item.why}</p>
+                <p className="text-sm font-medium text-foreground">{item.layer}</p>
+                <p className="mt-0.5 font-mono text-xs text-foreground/50">{item.tech}</p>
+                <p className="mt-1 text-xs text-foreground/40">{item.why}</p>
               </li>
             ))}
           </ol>
@@ -55,13 +56,13 @@ export function IntegratedPlatform() {
               {STACK.map((item, i) => (
                 <div
                   key={item.layer}
-                  className="relative -mt-3 flex h-16 items-center justify-center rounded-lg border border-white/10 bg-gradient-to-br from-white/[0.06] to-white/[0.01] px-8 text-center shadow-lg backdrop-blur-sm first:mt-0"
+                  className="relative -mt-3 flex h-16 items-center justify-center rounded-brand-md border border-foreground/10 bg-gradient-to-br from-foreground/[0.06] to-foreground/[0.01] px-8 text-center shadow-lg backdrop-blur-sm first:mt-0"
                   style={{
                     width: `${280 - i * 18}px`,
                     transform: `translateX(${i % 2 === 0 ? -1 : 1}px)`,
                   }}
                 >
-                  <span className="text-xs font-medium text-white/70">{item.layer}</span>
+                  <span className="text-xs font-medium text-foreground/70">{item.layer}</span>
                 </div>
               ))}
             </div>

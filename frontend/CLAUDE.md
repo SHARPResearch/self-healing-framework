@@ -86,12 +86,30 @@ testimonial and blog sections were explicitly not built. Decisions worth knowing
   (<60s) and benchmark coverage (28 entities) are all doc-grounded and honest. **Do not add an
   accuracy stat here** without reading RESULTS.md's "Reading these numbers honestly" section. It
   now sits as a thin strip under the hero screenshot rather than a headline claim.
-- **The hero has no background video, and no longer has ambient blobs either.** An earlier pass
-  hotlinked a 13.9 MB third-party CloudFront video asset, then replaced it with two
-  `animate-blob-drift` blobs plus a grid-line texture. Both were removed in the SHARP design
-  system pass below — DESIGN.md's source discipline is "no atmospheric gradients," and the dark
-  canvas reads calmer flat. `isolate` was dropped from the `HeroSection` `<section>` along with the
-  blobs since nothing negative-z-index remains that needs its own stacking context.
+- **The hero had no background video, then no ambient blobs either, and now has a WebGL beams
+  effect instead.** An earlier pass hotlinked a 13.9 MB third-party CloudFront video asset, then
+  replaced it with two `animate-blob-drift` blobs plus a grid-line texture; both were removed in
+  the SHARP design system pass (DESIGN.md's source discipline is "no atmospheric gradients"). The
+  hero later read as too flat, so `features/marketing/components/Beams.tsx` was added — a
+  react-bits "Beams" component (vertical light-beam strips warped by Perlin noise, WebGL via
+  `three`/`@react-three/fiber`/`@react-three/drei`), ported from JS to TS with the shader-patching
+  internals (`extendMaterial`) left loosely typed on purpose since ShaderLib's header-injection
+  pattern doesn't map onto a precise TS shape. This is treated as *directional light*, not an
+  atmospheric color wash, so it doesn't reopen the no-gradients rule the way the old blobs did.
+  Rendered in an `absolute inset-x-0 top-0 h-[700px]` layer behind the hero text only (not the
+  screenshot/stats below), with a `mask-image` fade so it doesn't cut off abruptly, and skipped
+  entirely when `useReducedMotion()` is true. Two adaptations from the vendored source: a
+  `backgroundColor` prop (default `#0a0a0a`) was added so the canvas's clear color matches
+  `--background`'s actual rendered value (`oklch(0.145 0 0)` ≈ `#0a0a0a`, not pure `#000000` —
+  without this there'd be a faint seam where the canvas meets the rest of the page), and
+  `lightColor="#50C878"` was kept as a literal hex (not `var(--brand-primary)`) because Three.js
+  material colors are JS-side numeric values, not CSS, so a live CSS custom property can't feed
+  them directly. **This is the heaviest dependency in the app**: the `MarketingPage` lazy chunk
+  grew from a few KB to ~905 KB (~245 KB gzip) because of `three`; confirmed via `pnpm run build`
+  that this cost is fully contained in that chunk and the shared `index-*.js` bundle every
+  authenticated page loads is unaffected. `isolate` was dropped from the `HeroSection` `<section>`
+  back when the blobs were removed and hasn't been reintroduced — Beams doesn't need it since it's
+  a normal (non-negative) z-index layer, not a negative-z-index background trick.
 - **The primary CTA is a flat `bg-brand-primary` fill, no glow.** It used to carry a
   `shadow-[...oklch(0.75_0.18_150/35%)...]` glow — an arbitrary-value opacity modifier on a literal
   oklch, kept as a literal rather than `var()` because Tailwind's `/opacity` modifier doesn't
@@ -243,4 +261,7 @@ face (third-party OnlineWebFonts CDN) but that token, the old `<link>` tags, and
 8. `Sidebar`/`AppShell` don't auto-collapse below a breakpoint (checked at 390px). The marketing
    page is responsive; the authenticated shell is not yet. `sheet` is the obvious primitive.
 9. The shared bundle is still ~940 KB. The three heaviest routes are split out already; Recharts
-   and the Radix surface in the shell are the next candidates.
+   and the Radix surface in the shell are the next candidates. Separately, the `MarketingPage`
+   lazy chunk is now its own ~905 KB (~245 KB gzip) outlier because of `three`/Beams (see
+   "Marketing page" above) — it doesn't add to the shared bundle, but if the hero background is
+   ever revisited for perf, that's the chunk to look at.

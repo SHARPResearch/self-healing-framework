@@ -100,7 +100,7 @@ export function MarketingFooter() {
             <span className="mr-4 flex size-14 shrink-0 items-center justify-center rounded-2xl bg-brand-badge p-3 sm:mr-6 sm:size-20 lg:size-28">
               <LogoMark className="size-full" />
             </span>
-            <Wordmark className="h-14 w-auto sm:h-24 lg:h-36" />
+            <Wordmark className="text-6xl tracking-hero sm:text-8xl lg:text-[9rem]" />
           </Link>
         </div>
 

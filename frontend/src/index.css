@@ -67,6 +67,21 @@
   --status-degrade: oklch(0.78 0.17 70);
   --status-critical: oklch(0.65 0.23 25);
   --status-healthy: oklch(0.75 0.18 150);
+
+  /* SHARP brand system (adapted from DESIGN.md's Supabase analysis, canvas
+     polarity inverted: near-black instead of white, same rigor otherwise).
+     brand-primary intentionally aliases status-healthy by reference rather
+     than duplicating its oklch value -- same green, but named separately
+     since brand action color and service-health color are different
+     semantic intents that happen to share a hue. If they ever need to
+     diverge (e.g. accessibility tuning of the CTA fill), split the value
+     out then, not preemptively now. */
+  --brand-primary: var(--status-healthy);
+  --brand-primary-deep: oklch(0.65 0.19 150);
+  /* Near-black, not white -- DESIGN.md's own rule is dark text on the green
+     fill, and that pairing survives the canvas inversion unchanged; only
+     the canvas polarity flipped, not the accent or its text pairing. */
+  --brand-on-primary: oklch(0.16 0 0);
 }
 
 @theme inline {
@@ -96,8 +111,11 @@
   --color-status-critical: var(--status-critical);
   --color-status-healthy: var(--status-healthy);
 
-  /* Placeholder font -- swap this one token once a real font is provided */
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --color-brand-primary: var(--brand-primary);
+  --color-brand-primary-deep: var(--brand-primary-deep);
+  --color-brand-on-primary: var(--brand-on-primary);
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 
   /* Slow drift for the marketing hero's ambient background blobs. */
   --animate-blob-drift: blob-drift 18s ease-in-out infinite;
@@ -108,6 +126,20 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+
+  /* SHARP brand radius scale (DESIGN.md's 4/6/8/12/16px), additive and
+     namespaced separately from --radius-* above: that scale drives shadcn's
+     Button/Card/Dialog on every already-built page, so it stays untouched.
+     Marketing components adopt rounded-brand-* instead. */
+  --radius-brand-xs: 0.25rem;
+  --radius-brand-sm: 0.375rem;
+  --radius-brand-md: 0.5rem;
+  --radius-brand-lg: 0.75rem;
+  --radius-brand-xl: 1rem;
+
+  /* Tight negative tracking for the display tier, per DESIGN.md's discipline. */
+  --tracking-hero: -0.03em;
+  --tracking-display: -0.02em;
 }
 
 @keyframes pulse-glow {

@@ -83,9 +83,9 @@ interface LogoProps {
 /**
  * The single source of truth for the brand mark, replacing five separate
  * <img src="/favicon.svg"> call sites that each re-implemented the badge
- * wrapper with inconsistent backgrounds. Badge is bg-primary everywhere
- * (near-white in the dark theme), so marketing's white-circle treatment and
- * the app shell's rounded-md treatment collapse into one look instead of two.
+ * wrapper with inconsistent backgrounds. Badge is bg-brand-badge everywhere
+ * (the same dark navy as favicon.svg's hardcoded fill), so the browser tab
+ * icon and every in-app instance of the mark read as the same badge.
  */
 export function Logo({ variant = "full", size = "md", className }: LogoProps) {
   const badgeOnly = variant === "mark";
@@ -94,7 +94,7 @@ export function Logo({ variant = "full", size = "md", className }: LogoProps) {
     <span className={cn("inline-flex items-center gap-2", className)}>
       <span
         className={cn(
-          "flex shrink-0 items-center justify-center rounded-md bg-primary p-1.5",
+          "flex shrink-0 items-center justify-center rounded-md bg-brand-badge p-1.5",
           BADGE_SIZE[size],
         )}
       >

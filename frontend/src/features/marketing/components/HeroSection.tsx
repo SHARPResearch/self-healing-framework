@@ -2,13 +2,32 @@ import { Link } from "react-router-dom";
 import { ArrowRight } from "lucide-react";
 import { motion, useReducedMotion } from "framer-motion";
 import { StatsRow } from "./StatsRow";
+import Beams from "./Beams";
 
 export function HeroSection() {
   const reduced = useReducedMotion();
 
   return (
     <section className="relative flex flex-col items-center overflow-hidden bg-background px-6 pt-36 pb-20">
-      <div className="relative mx-auto flex w-full max-w-3xl flex-col items-center text-center">
+      {!reduced && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-0 top-0 z-0 h-[700px] [mask-image:linear-gradient(to_bottom,black,black_55%,transparent)] [-webkit-mask-image:linear-gradient(to_bottom,black,black_55%,transparent)]"
+        >
+          <Beams
+            beamWidth={3}
+            beamHeight={30}
+            beamNumber={20}
+            lightColor="#50C878"
+            speed={2}
+            noiseIntensity={1.75}
+            scale={0.2}
+            rotation={30}
+          />
+        </div>
+      )}
+
+      <div className="relative z-10 mx-auto flex w-full max-w-3xl flex-col items-center text-center">
         {/* <motion.div
           initial={reduced ? false : { opacity: 0, y: 10 }}
           animate={reduced ? undefined : { opacity: 1, y: 0 }}
@@ -66,7 +85,7 @@ export function HeroSection() {
         initial={reduced ? false : { opacity: 0, y: 40 }}
         animate={reduced ? undefined : { opacity: 1, y: 0 }}
         transition={{ duration: 0.8, delay: 0.45, ease: [0.22, 1, 0.36, 1] }}
-        className="relative mx-auto mt-16 w-full max-w-5xl"
+        className="relative z-10 mx-auto mt-16 w-full max-w-5xl"
       >
         <div className="overflow-hidden rounded-brand-lg border border-foreground/10 bg-foreground/[0.02] shadow-2xl">
           <img
@@ -81,7 +100,7 @@ export function HeroSection() {
         </div>
       </motion.div>
 
-      <div className="relative mt-16">
+      <div className="relative z-10 mt-16">
         <StatsRow />
       </div>
     </section>

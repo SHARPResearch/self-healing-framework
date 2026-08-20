@@ -59,7 +59,7 @@ function LogoMark({ className, hidden }: { className?: string; hidden?: boolean 
       aria-hidden={hidden || undefined}
       aria-label={hidden ? undefined : "SHARP"}
       fill="none"
-      stroke="var(--color-status-healthy)"
+      stroke="var(--color-brand-primary)"
       strokeWidth={3}
       strokeLinecap="square"
       strokeLinejoin="miter"

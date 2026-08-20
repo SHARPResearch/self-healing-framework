@@ -66,10 +66,43 @@ matching root `CLAUDE.md`'s thresholds (`<0.5` watch, `0.5-0.7` warn, `0.7-0.85`
 **Marketing page** (`features/marketing/`, route `/`) is adapted from three pasted references (a
 SaaS hero template, a single-viewport video-background landing spec, and later a full "Oracle
 red, Nucleus-style" SaaS design screenshot the section structure now follows). Section order:
-`MarketingNav` → `HeroSection` → `TechMarquee` → `HowItWorks` → `IntegratedPlatform` →
-`FeatureGrid` → `SeverityLadder` → `HospitalAnalogy` → `ProductShowcase` →
+`MarketingNav` → `HeroSection` → `TechMarquee` → `HowItWorks` → `RolloutPath` →
+`IntegratedPlatform` → `FeatureGrid` → `SeverityLadder` → `HospitalAnalogy` → `ProductShowcase` →
 `IntegrationsSection` → `ResearchComponents` → `CtaBand` → `MarketingFooter`. The reference's
 testimonial and blog sections were explicitly not built. Decisions worth knowing:
+
+- **`RolloutPath`** is adapted from a pasted "PrecisionSection" reference spec (light-theme,
+  rainbow-gradient, absolutely-positioned vw-based staircase of pillars, plus an external font/
+  background-image/logo-icon none of which belong in this app). Kept the structural idea — desktop
+  staircase via absolute positioning, mobile alternating left/right flow, switched by breakpoint —
+  discarded everything else: dark tokens instead of the light palette, a single `brand-primary`
+  gradient line instead of the 6-color rainbow, lucide icons instead of a repeated external PNG,
+  and real content instead of aerospace-facility placeholder copy. **The content is deliberately
+  not the same as `HowItWorks`'s Ingest/Predict/Decide/Act loop** — that section is what SHARP does
+  at runtime; `RolloutPath` (`ROLLOUT_PILLARS` in `marketingContent.ts`) is how a team actually
+  adopts it (Scope → Integrate → Certify → Activate), a genuinely different piece of information.
+  Desktop pillar positions are **percentages of the section's own box, not viewport units** — the
+  source spec's `vw` values were calibrated against the raw browser width, which would have made
+  the staircase misaligned with this page's consistent `max-w-6xl` column; converted to `leftPct`/
+  `bottomPct` in the data so it stays scoped to the same container every other section uses.
+- **`MarketingFooter`** is adapted from a pasted "Site Footer" reference spec (black-canvas
+  aerospace-company footer: animated dotted top strip, big tagline, oversized wordmark brand row).
+  Structure kept, content and color replaced: `bg-background`/`text-foreground` tokens instead of
+  literal `#000`/`#fff`, the real `Wordmark`/`LogoMark` (now exported from `Logo.tsx` specifically
+  for this oversized use) instead of a font-rendered brand name, and the three nav columns point at
+  real things — `PLATFORM_LINKS` and `ACCOUNT_LINKS` are the same links the footer already had;
+  the third column (was "Company"/social links: Our Team, News, Careers, LinkedIn, X) is now
+  **`PROJECT_LINKS`, a single real link to this repo's actual GitHub remote** — SHARP is a research
+  project, not a company with a social-media presence, so nothing was invented in place of "social
+  links". The legal line's `#privacy`/`#terms` were dropped for the same reason: this project has
+  no such pages, and dead anchors would contradict the honesty this page tries to keep elsewhere
+  (see `ResearchComponents`'s honest status badges, the stat row's excluded accuracy figure). The
+  dotted top strip is `.footer-dots-line` in `index.css` (three layered `radial-gradient`s + a
+  `footer-dots-move` keyframe, `--animate-footer-dots`) — kept as plain CSS rather than Tailwind
+  utilities since a multi-layer gradient background doesn't have a clean utility-class form, and
+  scoped to exactly one element. Rendered in neutral `--color-foreground` at low opacity, **not**
+  brand green — this is background texture, not a "small accent," so it stays outside the sparse-
+  green allowance the rest of the page follows.
 
 - **It is a React route, not the standalone `index.html`/`styles.css`/`main.js` the first
   reference specified** — one codebase, one build, and Sign in / Sign up route to the real auth

@@ -1,4 +1,16 @@
-import { Activity, Bot, GitBranch, History, Route, SlidersHorizontal, type LucideIcon } from "lucide-react";
+import {
+  Activity,
+  Bot,
+  GitBranch,
+  History,
+  Plug,
+  Rocket,
+  Route,
+  Search,
+  ShieldCheck,
+  SlidersHorizontal,
+  type LucideIcon,
+} from "lucide-react";
 import {
   siDotnet,
   siKubernetes,
@@ -214,6 +226,47 @@ export const FEATURE_GRID: FeatureCard[] = [
     title: "Copilot for root cause",
     icon: Bot,
     body: "Ask what happened in plain English. RAG over incident history and telemetry summaries.",
+  },
+];
+
+export interface RolloutPillar {
+  label: string;
+  icon: LucideIcon;
+  items: string[];
+  /** Absolute position within the desktop staircase, as a percentage of the
+   *  container's own box -- not viewport units, so it stays scoped to this
+   *  page's max-w-6xl column instead of the raw browser width. */
+  leftPct: number;
+  bottomPct: number;
+}
+
+/**
+ * The adoption path, not the runtime loop -- LOOP_STEPS (Ingest/Predict/
+ * Decide/Act) already covers what SHARP does once it's running; this is
+ * about how a team actually gets it there.
+ */
+export const ROLLOUT_PILLARS: RolloutPillar[] = [
+  { label: "Scope", icon: Search, items: ["services", "thresholds", "SLOs", "timeline"], leftPct: 3, bottomPct: 20 },
+  {
+    label: "Integrate",
+    icon: Plug,
+    items: ["Prometheus", "Redis", "MLflow", "Kubernetes API"],
+    leftPct: 27,
+    bottomPct: 27,
+  },
+  {
+    label: "Certify",
+    icon: ShieldCheck,
+    items: ["dry-run mode", "chaos test", "policy check", "sign-off"],
+    leftPct: 51,
+    bottomPct: 34,
+  },
+  {
+    label: "Activate",
+    icon: Rocket,
+    items: ["runbooks", "on-call handoff", "SLA tracking", "go-live"],
+    leftPct: 75,
+    bottomPct: 41,
   },
 ];
 

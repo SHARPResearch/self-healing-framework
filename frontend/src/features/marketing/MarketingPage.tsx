@@ -2,6 +2,7 @@ import { MarketingNav } from "./components/MarketingNav";
 import { HeroSection } from "./components/HeroSection";
 import { TechMarquee } from "./components/TechMarquee";
 import { HowItWorks } from "./components/HowItWorks";
+import { RolloutPath } from "./components/RolloutPath";
 import { IntegratedPlatform } from "./components/IntegratedPlatform";
 import { FeatureGrid } from "./components/FeatureGrid";
 import { SeverityLadder } from "./components/SeverityLadder";
@@ -24,6 +25,7 @@ export function MarketingPage() {
         <HeroSection />
         <TechMarquee />
         <HowItWorks />
+        <RolloutPath />
         <IntegratedPlatform />
         <FeatureGrid />
         <SeverityLadder />

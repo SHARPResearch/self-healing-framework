@@ -1,4 +1,5 @@
 import { MARQUEE_ITEMS } from "../data/marketingContent";
+import { ToolIcon } from "./ToolIcon";
 
 /**
  * Replaces the reference design's customer logo cloud -- this is a research
@@ -12,8 +13,12 @@ export function TechMarquee() {
         <p className="mb-5 text-center text-xs text-foreground/40">Built on</p>
         <div className="flex flex-wrap items-center justify-center gap-x-10 gap-y-3">
           {MARQUEE_ITEMS.map((item) => (
-            <span key={item} className="font-mono text-sm text-foreground/50">
-              {item}
+            <span
+              key={item.label}
+              className="flex items-center gap-2 font-mono text-sm text-foreground/50"
+            >
+              {item.icon && <ToolIcon icon={item.icon} className="size-4" />}
+              {item.label}
             </span>
           ))}
         </div>

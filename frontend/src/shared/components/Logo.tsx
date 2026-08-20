@@ -24,7 +24,10 @@ const LETTERS: Record<string, Letter> = {
 
 const WORD = ["S", "H", "A", "R", "P"];
 
-function Wordmark({ className }: { className?: string }) {
+/** Exported for the marketing footer's oversized brand row, the one place
+ *  outside `Logo` that needs the wordmark scaled far past BADGE_SIZE's
+ *  sm/md presets. */
+export function Wordmark({ className }: { className?: string }) {
   const totalWidth = WORD.length * CELL + (WORD.length - 1) * GAP;
 
   return (
@@ -50,7 +53,10 @@ function Wordmark({ className }: { className?: string }) {
   );
 }
 
-function LogoMark({ className, hidden }: { className?: string; hidden?: boolean }) {
+/** Exported alongside `Wordmark` for the marketing footer's oversized brand
+ *  row, which composes its own badge wrapper at a size bigger than
+ *  BADGE_SIZE's sm/md presets support. */
+export function LogoMark({ className, hidden }: { className?: string; hidden?: boolean }) {
   return (
     <svg
       viewBox="0 0 32 32"

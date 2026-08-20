@@ -1,4 +1,14 @@
 import { Activity, Bot, GitBranch, History, Route, SlidersHorizontal, type LucideIcon } from "lucide-react";
+import {
+  siDotnet,
+  siKubernetes,
+  siMlflow,
+  siPrometheus,
+  siReact,
+  siRedis,
+  siTimescale,
+  type SimpleIcon,
+} from "simple-icons";
 import type { Severity } from "@/shared/types";
 
 export interface HeroStat {
@@ -138,17 +148,27 @@ export const STACK: StackItem[] = [
   { layer: "Runtime", tech: "Kubernetes", why: "Every remediation is an ordinary API call against the cluster." },
 ];
 
-/** "Built on" strip -- what SHARP actually runs on, not fake customer logos. */
-export const MARQUEE_ITEMS: string[] = [
-  "Kubernetes",
-  "Prometheus",
-  "Redis",
-  "MLflow",
-  "river",
-  ".NET 8",
-  "YARP",
-  "TimescaleDB",
-  "React",
+export interface MarqueeItem {
+  label: string;
+  icon?: SimpleIcon;
+}
+
+/**
+ * "Built on" strip -- what SHARP actually runs on, not fake customer logos.
+ * Logos come from simple-icons. river and YARP are left text-only rather
+ * than given a fake/generic icon -- river is a niche Python library and YARP
+ * is an internal Microsoft project, neither has a real brand mark anywhere.
+ */
+export const MARQUEE_ITEMS: MarqueeItem[] = [
+  { label: "Kubernetes", icon: siKubernetes },
+  { label: "Prometheus", icon: siPrometheus },
+  { label: "Redis", icon: siRedis },
+  { label: "MLflow", icon: siMlflow },
+  { label: "river" },
+  { label: ".NET 8", icon: siDotnet },
+  { label: "YARP" },
+  { label: "TimescaleDB", icon: siTimescale },
+  { label: "React", icon: siReact },
 ];
 
 export interface FeatureCard {

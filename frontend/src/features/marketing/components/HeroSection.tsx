@@ -9,7 +9,7 @@ export function HeroSection() {
   return (
     <section className="relative flex flex-col items-center overflow-hidden bg-background px-6 pt-36 pb-20">
       <div className="relative mx-auto flex w-full max-w-3xl flex-col items-center text-center">
-        <motion.div
+        {/* <motion.div
           initial={reduced ? false : { opacity: 0, y: 10 }}
           animate={reduced ? undefined : { opacity: 1, y: 0 }}
           transition={{ duration: 0.6 }}
@@ -17,7 +17,7 @@ export function HeroSection() {
         >
           <span className="size-1.5 rounded-full bg-brand-primary" />
           Component 1 complete &bull; benchmarked on SMD and NAB
-        </motion.div>
+        </motion.div> */}
 
         <motion.h1
           initial={reduced ? false : { opacity: 0, y: 14 }}

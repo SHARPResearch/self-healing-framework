@@ -15,7 +15,7 @@ const BANDS: { severity: Severity; range: string; action: string }[] = [
 
 export function ThresholdsTab() {
   return (
-    <div className="max-w-3xl space-y-6">
+    <div className="mx-auto max-w-3xl space-y-6">
       <div>
         <h3 className="text-base font-semibold">Severity thresholds</h3>
         <p className="text-sm text-muted-foreground">

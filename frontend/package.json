@@ -29,6 +29,7 @@
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.26.2",
     "recharts": "^2.12.7",
+    "simple-icons": "^16.28.0",
     "tailwind-merge": "^2.5.2",
     "three": "^0.185.1",
     "zustand": "^4.5.5"

@@ -73,7 +73,7 @@ export function ModelRegistryTable({ runs, updatingIds, onSelect, onUpdate }: Mo
                 </TableCell>
                 <TableCell className="text-right font-mono">v{run.version}</TableCell>
                 <TableCell className="text-right">
-                  <ScoreBar value={run.metrics.rollingMeanScore} tone="score" />
+                  <ScoreBar value={run.metrics.rollingMeanScore} decimals={2} />
                 </TableCell>
                 <TableCell className="text-right font-mono">
                   <span className={isDriftAlerted ? "text-status-warn font-medium" : undefined}>
@@ -84,7 +84,7 @@ export function ModelRegistryTable({ runs, updatingIds, onSelect, onUpdate }: Mo
                   {run.stage === "WARM_UP" ? (
                     <span className="font-mono text-xs text-muted-foreground">--</span>
                   ) : (
-                    <ScoreBar value={run.metrics.evalF1} tone="f1" />
+                    <ScoreBar value={run.metrics.evalF1} decimals={4} />
                   )}
                 </TableCell>
                 <TableCell className="font-mono text-xs text-muted-foreground">

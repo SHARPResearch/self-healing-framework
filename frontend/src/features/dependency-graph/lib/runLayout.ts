@@ -69,7 +69,9 @@ export function runLayout(
     const source = byId.get(e.source);
     const target = byId.get(e.target);
     if (!source || !target) return [];
-    return [{ source, target, downstreamCritical: target.status === "critical" }];
+    return [
+      { source, target, downstreamCritical: target.status === "critical", latencyMs: e.latencyMs },
+    ];
   });
 
   return { nodes: positioned, edges: positionedEdges };

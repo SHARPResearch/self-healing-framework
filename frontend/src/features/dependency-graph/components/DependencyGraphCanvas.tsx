@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { Minus, Plus, RotateCcw } from "lucide-react";
+import { Info, Minus, Plus, RotateCcw, X } from "lucide-react";
 import { useResizeObserver } from "@/shared/hooks/useResizeObserver";
 import { SeverityBadge } from "@/shared/components/SeverityBadge";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { graphEdges, graphNodes } from "../data/mockData";
 import { runLayout } from "../lib/runLayout";
+import { identifyRootCause } from "../lib/identifyRootCause";
 import { GraphEdgeLine } from "./GraphEdgeLine";
 import { GraphNodeCircle } from "./GraphNodeCircle";
+import { GraphDetailPanel } from "./GraphDetailPanel";
 import type { PositionedNode } from "../types";
 
 const MIN_SCALE = 0.5;
@@ -21,10 +23,10 @@ interface Transform {
 const IDENTITY_TRANSFORM: Transform = { x: 0, y: 0, k: 1 };
 
 export function DependencyGraphCanvas() {
-  const navigate = useNavigate();
   const { ref, size } = useResizeObserver<HTMLDivElement>({ width: 900, height: 520 });
   const svgRef = useRef<SVGSVGElement>(null);
   const [hovered, setHovered] = useState<PositionedNode | null>(null);
+  const [selected, setSelected] = useState<PositionedNode | null>(null);
   const [transform, setTransform] = useState<Transform>(IDENTITY_TRANSFORM);
   const panRef = useRef<{ pointerId: number; startX: number; startY: number; origX: number; origY: number } | null>(
     null,
@@ -35,20 +37,30 @@ export function DependencyGraphCanvas() {
     [size.width, size.height],
   );
 
-  // Which nodes/edges to highlight vs dim while a node is hovered or focused.
+  const focused = selected ?? hovered;
+
+  // Which nodes/edges to highlight vs dim while a node is selected, hovered, or focused.
   const connected = useMemo(() => {
-    if (!hovered) return null;
-    const nodeIds = new Set([hovered.serviceId]);
+    if (!focused) return null;
+    const nodeIds = new Set([focused.serviceId]);
     const edgeKeys = new Set<string>();
     for (const edge of layout.edges) {
-      if (edge.source.serviceId === hovered.serviceId || edge.target.serviceId === hovered.serviceId) {
+      if (edge.source.serviceId === focused.serviceId || edge.target.serviceId === focused.serviceId) {
         nodeIds.add(edge.source.serviceId);
         nodeIds.add(edge.target.serviceId);
         edgeKeys.add(`${edge.source.serviceId}-${edge.target.serviceId}`);
       }
     }
     return { nodeIds, edgeKeys };
-  }, [hovered, layout.edges]);
+  }, [focused, layout.edges]);
+
+  // Root-cause finding for the toast, recomputed whenever the selection changes.
+  const rootCause = useMemo(() => {
+    if (!selected || selected.status === "watch") return null;
+    const result = identifyRootCause(selected.serviceId, graphNodes, graphEdges);
+    const rootCauseNode = graphNodes.find((n) => n.serviceId === result.rootCauseId)!;
+    return { ...result, rootCauseNode };
+  }, [selected]);
 
   // React's onWheel is passive by default, so preventDefault() inside it is a
   // no-op and the page scrolls along with the zoom. A native listener is the

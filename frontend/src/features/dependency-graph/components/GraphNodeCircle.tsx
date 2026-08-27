@@ -3,22 +3,33 @@ import type { PositionedNode } from "../types";
 
 const NODE_RADIUS = 24;
 
-const FILL: Record<Severity, string> = {
+const STROKE: Record<Severity, string> = {
   watch: "var(--color-status-watch)",
   warn: "var(--color-status-warn)",
   degrade: "var(--color-status-degrade)",
   critical: "var(--color-status-critical)",
 };
 
+// Dark, translucent fill tinted by status -- reads as "dark surface with a
+// colored outline" rather than a solid status-colored disc.
+const FILL: Record<Severity, string> = {
+  watch: "color-mix(in oklch, var(--color-status-watch) 15%, var(--color-background))",
+  warn: "color-mix(in oklch, var(--color-status-warn) 15%, var(--color-background))",
+  degrade: "color-mix(in oklch, var(--color-status-degrade) 18%, var(--color-background))",
+  critical: "color-mix(in oklch, var(--color-status-critical) 20%, var(--color-background))",
+};
+
 interface GraphNodeCircleProps {
   node: PositionedNode;
   dimmed: boolean;
+  selected: boolean;
   onHover: (node: PositionedNode | null) => void;
   onSelect: (node: PositionedNode) => void;
 }
 
-export function GraphNodeCircle({ node, dimmed, onHover, onSelect }: GraphNodeCircleProps) {
+export function GraphNodeCircle({ node, dimmed, selected, onHover, onSelect }: GraphNodeCircleProps) {
   const isCritical = node.status === "critical";
+  const isGlowing = node.status === "critical" || node.status === "degrade" || node.status === "warn";
   // "svc-a-auth" -> "auth"; keeps the label inside a 24px circle.
   const short = node.serviceId.split("-").slice(2).join("-") || node.serviceId;
 
@@ -27,14 +38,15 @@ export function GraphNodeCircle({ node, dimmed, onHover, onSelect }: GraphNodeCi
       {/* Rendered outside the interactive group on purpose: the pulse scales,
           and inside the group it would make the button's own hit area pulse
           with it. */}
-      {isCritical && (
+      {isGlowing && (
         <circle
           cx={node.x}
           cy={node.y}
-          r={NODE_RADIUS + 8}
-          fill={FILL.critical}
+          r={isCritical ? NODE_RADIUS + 8 : NODE_RADIUS + 5}
+          fill={STROKE[node.status]}
           filter="url(#node-glow)"
-          className="animate-pulse-glow"
+          opacity={isCritical ? undefined : 0.35}
+          className={isCritical ? "animate-pulse-glow" : undefined}
           pointerEvents="none"
         />
       )}
@@ -57,13 +69,26 @@ export function GraphNodeCircle({ node, dimmed, onHover, onSelect }: GraphNodeCi
           }
         }}
       >
+        {selected && (
+          <circle
+            cx={node.x}
+            cy={node.y}
+            r={NODE_RADIUS + 6}
+            fill="none"
+            stroke={STROKE[node.status]}
+            strokeWidth={1}
+            strokeDasharray="3 3"
+            opacity={0.7}
+          />
+        )}
+
         <circle
           cx={node.x}
           cy={node.y}
           r={NODE_RADIUS}
           fill={FILL[node.status]}
-          stroke="var(--color-background)"
-          strokeWidth={2}
+          stroke={STROKE[node.status]}
+          strokeWidth={selected ? 2.5 : 1.5}
         />
 
         <text
@@ -72,12 +97,23 @@ export function GraphNodeCircle({ node, dimmed, onHover, onSelect }: GraphNodeCi
           textAnchor="middle"
           dominantBaseline="central"
           fontSize={10}
-          fill="#fff"
+          fill={STROKE[node.status]}
           fontWeight={600}
           pointerEvents="none"
         >
           {short}
         </text>
+
+        {/* Status dot badge, corner of the node -- matches the reference design. */}
+        <circle
+          cx={node.x + NODE_RADIUS * 0.62}
+          cy={node.y - NODE_RADIUS * 0.62}
+          r={5}
+          fill={STROKE[node.status]}
+          stroke="var(--color-background)"
+          strokeWidth={1.5}
+          pointerEvents="none"
+        />
 
         <text
           x={node.x}

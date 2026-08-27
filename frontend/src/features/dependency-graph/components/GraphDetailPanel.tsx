@@ -1,7 +1,6 @@
 import type { ReactNode } from "react";
 import { ArrowRight } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { SeverityBadge } from "@/shared/components/SeverityBadge";
 import type { Severity } from "@/shared/types";
 import { identifyRootCause } from "../lib/identifyRootCause";
 import { graphEdges, graphNodes } from "../data/mockData";

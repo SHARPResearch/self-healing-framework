@@ -1,5 +1,6 @@
 import { Zap } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -24,10 +25,14 @@ export function SimulateAnomalyTrigger() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="sm" disabled={!!evaluation}>
+        <button
+          type="button"
+          disabled={!!evaluation}
+          className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+        >
           <Zap className="mr-1.5 size-3.5" />
           Simulate anomaly
-        </Button>
+        </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
         <DropdownMenuLabel className="text-xs text-muted-foreground">

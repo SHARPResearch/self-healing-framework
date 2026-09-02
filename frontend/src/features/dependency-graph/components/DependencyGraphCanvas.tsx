@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { Minus, Plus, RotateCcw } from "lucide-react";
+import { Info, Minus, Plus, RotateCcw, X } from "lucide-react";
 import { useResizeObserver } from "@/shared/hooks/useResizeObserver";
 import { SeverityBadge } from "@/shared/components/SeverityBadge";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { graphEdges, graphNodes } from "../data/mockData";
 import { runLayout } from "../lib/runLayout";
+import { identifyRootCause } from "../lib/identifyRootCause";
 import { GraphEdgeLine } from "./GraphEdgeLine";
 import { GraphNodeCircle } from "./GraphNodeCircle";
+import { GraphDetailPanel } from "./GraphDetailPanel";
 import type { PositionedNode } from "../types";
 
 const MIN_SCALE = 0.5;
@@ -21,10 +23,10 @@ interface Transform {
 const IDENTITY_TRANSFORM: Transform = { x: 0, y: 0, k: 1 };
 
 export function DependencyGraphCanvas() {
-  const navigate = useNavigate();
   const { ref, size } = useResizeObserver<HTMLDivElement>({ width: 900, height: 520 });
   const svgRef = useRef<SVGSVGElement>(null);
   const [hovered, setHovered] = useState<PositionedNode | null>(null);
+  const [selected, setSelected] = useState<PositionedNode | null>(null);
   const [transform, setTransform] = useState<Transform>(IDENTITY_TRANSFORM);
   const panRef = useRef<{ pointerId: number; startX: number; startY: number; origX: number; origY: number } | null>(
     null,
@@ -35,20 +37,30 @@ export function DependencyGraphCanvas() {
     [size.width, size.height],
   );
 
-  // Which nodes/edges to highlight vs dim while a node is hovered or focused.
+  const focused = selected ?? hovered;
+
+  // Which nodes/edges to highlight vs dim while a node is selected, hovered, or focused.
   const connected = useMemo(() => {
-    if (!hovered) return null;
-    const nodeIds = new Set([hovered.serviceId]);
+    if (!focused) return null;
+    const nodeIds = new Set([focused.serviceId]);
     const edgeKeys = new Set<string>();
     for (const edge of layout.edges) {
-      if (edge.source.serviceId === hovered.serviceId || edge.target.serviceId === hovered.serviceId) {
+      if (edge.source.serviceId === focused.serviceId || edge.target.serviceId === focused.serviceId) {
         nodeIds.add(edge.source.serviceId);
         nodeIds.add(edge.target.serviceId);
         edgeKeys.add(`${edge.source.serviceId}-${edge.target.serviceId}`);
       }
     }
     return { nodeIds, edgeKeys };
-  }, [hovered, layout.edges]);
+  }, [focused, layout.edges]);
+
+  // Root-cause finding for the toast, recomputed whenever the selection changes.
+  const rootCause = useMemo(() => {
+    if (!selected || selected.status === "watch") return null;
+    const result = identifyRootCause(selected.serviceId, graphNodes, graphEdges);
+    const rootCauseNode = graphNodes.find((n) => n.serviceId === result.rootCauseId)!;
+    return { ...result, rootCauseNode };
+  }, [selected]);
 
   // React's onWheel is passive by default, so preventDefault() inside it is a
   // no-op and the page scrolls along with the zoom. A native listener is the
@@ -116,118 +128,155 @@ export function DependencyGraphCanvas() {
   const resetView = () => setTransform(IDENTITY_TRANSFORM);
 
   return (
-    <div
-      ref={ref}
-      className="relative h-[520px] w-full overflow-hidden rounded-xl border border-border/60"
-    >
-      <svg
-        ref={svgRef}
-        width={size.width}
-        height={size.height}
-        role="img"
-        aria-label="Service dependency graph, drag to pan and scroll to zoom"
-        className="touch-none"
-      >
-        <defs>
-          <filter id="node-glow" x="-50%" y="-50%" width="200%" height="200%">
-            <feGaussianBlur stdDeviation="6" />
-          </filter>
-          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--color-border)" />
-          </marker>
-          <marker id="arrow-critical" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--color-status-degrade)" />
-          </marker>
-        </defs>
-
-        {/* Invisible full-size hit target for panning; a sibling of the nodes
-            rather than an ancestor, so it never intercepts clicks on them. */}
-        <rect
-          x={0}
-          y={0}
-          width={size.width}
-          height={size.height}
-          fill="transparent"
-          className="cursor-grab active:cursor-grabbing"
-          onPointerDown={handleBackgroundPointerDown}
-          onPointerMove={handleBackgroundPointerMove}
-          onPointerUp={endPan}
-          onPointerCancel={endPan}
-        />
-
-        <g transform={`translate(${transform.x}, ${transform.y}) scale(${transform.k})`}>
-          {layout.edges.map((edge) => {
-            const key = `${edge.source.serviceId}-${edge.target.serviceId}`;
-            return (
-              <GraphEdgeLine
-                key={key}
-                edge={edge}
-                dimmed={connected ? !connected.edgeKeys.has(key) : false}
-              />
-            );
-          })}
-
-          {layout.nodes.map((node) => (
-            <GraphNodeCircle
-              key={node.serviceId}
-              node={node}
-              dimmed={connected ? !connected.nodeIds.has(node.serviceId) : false}
-              onHover={setHovered}
-              onSelect={(n) => navigate(`/incidents?filter=${n.serviceId}`)}
-            />
-          ))}
-        </g>
-      </svg>
-
-      <div className="absolute right-3 bottom-3 flex flex-col gap-1 rounded-lg border border-border/60 bg-popover/90 p-1 backdrop-blur-sm">
-        <button
-          type="button"
-          onClick={() => zoomBy(1.3)}
-          aria-label="Zoom in"
-          className="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-        >
-          <Plus className="size-4" />
-        </button>
-        <button
-          type="button"
-          onClick={() => zoomBy(1 / 1.3)}
-          aria-label="Zoom out"
-          className="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-        >
-          <Minus className="size-4" />
-        </button>
-        <button
-          type="button"
-          onClick={resetView}
-          aria-label="Reset view"
-          className="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-        >
-          <RotateCcw className="size-3.5" />
-        </button>
-      </div>
-
-      {hovered && (
-        <div
-          role="tooltip"
-          className="pointer-events-none absolute z-10 w-56 rounded-lg border border-border bg-popover p-3 shadow-lg"
-          style={{
-            left: Math.min(hovered.x * transform.k + transform.x + 32, size.width - 240),
-            top: Math.max(hovered.y * transform.k + transform.y - 40, 8),
-          }}
-        >
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-sm font-medium">{hovered.displayName}</p>
-            <SeverityBadge severity={hovered.status} />
-          </div>
-          <p className="mt-1 font-mono text-xs text-muted-foreground">{hovered.serviceId}</p>
-          <p className="mt-2 text-xs">
-            Anomaly score <span className="font-mono font-medium">{hovered.anomalyScore.toFixed(2)}</span>
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {hovered.lastAction ? `Last action: ${hovered.lastAction}` : "No actions taken"}
-          </p>
-        </div>
+    <div className="flex flex-col gap-3">
+      {rootCause && (
+        <Alert>
+          <Info className="size-4" />
+          <AlertTitle>Root cause analysis</AlertTitle>
+          <AlertDescription className="flex w-full items-start justify-between gap-3">
+            <span>
+              {rootCause.isRootCause ? (
+                <>
+                  <span className="font-medium">{selected!.displayName}</span> has no unhealthy
+                  downstream dependency — it is the likely root cause.
+                </>
+              ) : (
+                <>
+                  Likely root cause: <span className="font-medium">{rootCause.rootCauseNode.displayName}</span>.{" "}
+                  {selected!.displayName}'s score ({selected!.anomalyScore.toFixed(2)}) is a cascading symptom.
+                </>
+              )}
+            </span>
+            <button
+              type="button"
+              onClick={() => setSelected(null)}
+              aria-label="Dismiss"
+              className="text-muted-foreground hover:text-foreground"
+            >
+              <X className="size-3.5" />
+            </button>
+          </AlertDescription>
+        </Alert>
       )}
+
+      <div className="flex h-140 overflow-hidden rounded-xl border border-border/60">
+        <div ref={ref} className="relative min-w-0 flex-1 overflow-hidden">
+          <svg
+            ref={svgRef}
+            width={size.width}
+            height={size.height}
+            role="img"
+            aria-label="Service dependency graph, drag to pan and scroll to zoom"
+            className="touch-none"
+          >
+            <defs>
+              <filter id="node-glow" x="-50%" y="-50%" width="200%" height="200%">
+                <feGaussianBlur stdDeviation="6" />
+              </filter>
+              <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--color-border)" />
+              </marker>
+              <marker id="arrow-critical" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--color-status-degrade)" />
+              </marker>
+            </defs>
+
+            {/* Invisible full-size hit target for panning; a sibling of the nodes
+                rather than an ancestor, so it never intercepts clicks on them. */}
+            <rect
+              x={0}
+              y={0}
+              width={size.width}
+              height={size.height}
+              fill="transparent"
+              className="cursor-grab active:cursor-grabbing"
+              onPointerDown={handleBackgroundPointerDown}
+              onPointerMove={handleBackgroundPointerMove}
+              onPointerUp={endPan}
+              onPointerCancel={endPan}
+              onClick={() => setSelected(null)}
+            />
+
+            <g transform={`translate(${transform.x}, ${transform.y}) scale(${transform.k})`}>
+              {layout.edges.map((edge) => {
+                const key = `${edge.source.serviceId}-${edge.target.serviceId}`;
+                return (
+                  <GraphEdgeLine
+                    key={key}
+                    edge={edge}
+                    dimmed={connected ? !connected.edgeKeys.has(key) : false}
+                  />
+                );
+              })}
+
+              {layout.nodes.map((node) => (
+                <GraphNodeCircle
+                  key={node.serviceId}
+                  node={node}
+                  dimmed={connected ? !connected.nodeIds.has(node.serviceId) : false}
+                  selected={selected?.serviceId === node.serviceId}
+                  onHover={setHovered}
+                  onSelect={(n) =>
+                    setSelected((prev) => (prev?.serviceId === n.serviceId ? null : n))
+                  }
+                />
+              ))}
+            </g>
+          </svg>
+
+          <div className="absolute right-3 bottom-3 flex flex-col gap-1 rounded-lg border border-border/60 bg-popover/90 p-1 backdrop-blur-sm">
+            <button
+              type="button"
+              onClick={() => zoomBy(1.3)}
+              aria-label="Zoom in"
+              className="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+            >
+              <Plus className="size-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => zoomBy(1 / 1.3)}
+              aria-label="Zoom out"
+              className="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+            >
+              <Minus className="size-4" />
+            </button>
+            <button
+              type="button"
+              onClick={resetView}
+              aria-label="Reset view"
+              className="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+            >
+              <RotateCcw className="size-3.5" />
+            </button>
+          </div>
+
+          {hovered && hovered.serviceId !== selected?.serviceId && (
+            <div
+              role="tooltip"
+              className="pointer-events-none absolute z-10 w-56 rounded-lg border border-border bg-popover p-3 shadow-lg"
+              style={{
+                left: Math.min(hovered.x * transform.k + transform.x + 32, size.width - 240),
+                top: Math.max(hovered.y * transform.k + transform.y - 40, 8),
+              }}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-medium">{hovered.displayName}</p>
+                <SeverityBadge severity={hovered.status} />
+              </div>
+              <p className="mt-1 font-mono text-xs text-muted-foreground">{hovered.serviceId}</p>
+              <p className="mt-2 text-xs">
+                Anomaly score <span className="font-mono font-medium">{hovered.anomalyScore.toFixed(2)}</span>
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {hovered.lastAction ? `Last action: ${hovered.lastAction}` : "No actions taken"}
+              </p>
+            </div>
+          )}
+        </div>
+
+        <GraphDetailPanel selected={selected} />
+      </div>
     </div>
   );
 }

@@ -10,12 +10,14 @@ import {
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { StageBadge } from "./StageBadge";
+import { applyModelRollback } from "../lib/modelActions";
 import type { ModelRun } from "../types";
 
 interface ModelDetailDialogProps {
   run: ModelRun | null;
   onClose: () => void;
   onAction: (message: string) => void;
+  onRunUpdated: (updated: ModelRun) => void;
 }
 
 function Row({ label, value }: { label: string; value: string }) {
@@ -39,7 +41,7 @@ function MetricBar({ label, value }: { label: string; value: number }) {
   );
 }
 
-export function ModelDetailDialog({ run, onClose, onAction }: ModelDetailDialogProps) {
+export function ModelDetailDialog({ run, onClose, onAction, onRunUpdated }: ModelDetailDialogProps) {
   if (!run) return null;
 
   return (
@@ -98,11 +100,29 @@ export function ModelDetailDialog({ run, onClose, onAction }: ModelDetailDialogP
         </section>
 
         <DialogFooter>
-          <Button variant="outline" size="sm" onClick={() => onAction(`Rolled back ${run.entityId}`)}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              const reverted = applyModelRollback(run);
+              onRunUpdated(reverted);
+              onAction(`Rolled back ${run.entityId} to v${reverted.version}`);
+            }}
+          >
             <RotateCcw className="mr-1.5 size-3.5" />
             Rollback
           </Button>
-          <Button size="sm" onClick={() => onAction(`Promoted ${run.entityId} to production`)}>
+          <Button
+            size="sm"
+            onClick={() => {
+              if (run.stage === "WARM_UP") {
+                onRunUpdated({ ...run, stage: "STREAMING" });
+                onAction(`Promoted ${run.entityId} to streaming production`);
+              } else {
+                onAction(`${run.entityId} is already streaming in production`);
+              }
+            }}
+          >
             <TrendingUp className="mr-1.5 size-3.5" />
             Promote
           </Button>

@@ -1,9 +1,14 @@
 import { AppShell } from "@/shared/layout/AppShell";
-import { SeverityBadge } from "@/shared/components/SeverityBadge";
 import { DependencyGraphCanvas } from "./components/DependencyGraphCanvas";
+import { graphEdges, graphNodes } from "./data/mockData";
 import type { Severity } from "@/shared/types";
 
-const LEGEND: Severity[] = ["watch", "warn", "degrade", "critical"];
+const LEGEND: { severity: Severity; label: string }[] = [
+  { severity: "watch", label: "Healthy" },
+  { severity: "degrade", label: "Degraded" },
+  { severity: "warn", label: "Warning" },
+  { severity: "critical", label: "Critical" },
+];
 
 export function DependencyGraphPage() {
   return (
@@ -13,15 +18,21 @@ export function DependencyGraphPage() {
           <div>
             <h2 className="text-base font-semibold">Service dependency graph</h2>
             <p className="text-sm text-muted-foreground">
-              An arrow from A to B means A calls B. Built from the{" "}
+              {graphNodes.length} services · {graphEdges.length} dependencies. An arrow from A to
+              B means A calls B, built from the{" "}
               <span className="font-mono text-xs">selfheal.io/upstreams</span> annotation in the
-              real system. Hover a node to trace its connections, click a node to see its
-              incidents.
+              real system. Click a node to inspect it and run a root-cause analysis.
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {LEGEND.map((s) => (
-              <SeverityBadge key={s} severity={s} />
+          <div className="flex flex-wrap items-center gap-3">
+            {LEGEND.map(({ severity, label }) => (
+              <div key={severity} className="flex items-center gap-1.5">
+                <span
+                  className="size-2 rounded-full"
+                  style={{ background: `var(--color-status-${severity})` }}
+                />
+                <span className="text-xs text-muted-foreground">{label}</span>
+              </div>
             ))}
           </div>
         </div>

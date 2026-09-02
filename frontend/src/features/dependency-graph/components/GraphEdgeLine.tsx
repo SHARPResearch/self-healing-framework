@@ -32,7 +32,7 @@ export function GraphEdgeLine({ edge, dimmed }: { edge: PositionedEdge; dimmed: 
       y2={y2}
       stroke={stroke}
       strokeWidth={downstreamCritical ? 2 : 1.5}
-      strokeDasharray={downstreamCritical ? "6 4" : undefined}
+      strokeDasharray={downstreamCritical ? "6 4" : "5 4"}
       markerEnd={downstreamCritical ? "url(#arrow-critical)" : "url(#arrow)"}
       opacity={dimmed ? 0.15 : 1}
       className="transition-opacity duration-150"

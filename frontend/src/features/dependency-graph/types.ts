@@ -8,6 +8,8 @@ import type { Severity } from "@/shared/types";
 export interface GraphEdge {
   source: string;
   target: string;
+  /** Hand-authored, plausible latency for the detail panel -- see data/mockData.ts. */
+  latencyMs: number;
 }
 
 export interface GraphNodeInput {
@@ -29,4 +31,5 @@ export interface PositionedEdge {
   target: PositionedNode;
   /** True when the callee is critical, which is what turns the edge amber. */
   downstreamCritical: boolean;
+  latencyMs: number;
 }

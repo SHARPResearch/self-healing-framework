@@ -4,7 +4,6 @@ import {
   useEffect,
   useRef,
   useState,
-  useTransition,
   type KeyboardEvent,
   type ReactNode,
   type TextareaHTMLAttributes,
@@ -22,6 +21,8 @@ import {
   XIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { getMockResponse } from "../data/mockResponses";
+import { MessageContent } from "./MessageContent";
 
 interface UseAutoResizeTextareaProps {
   minHeight: number;
@@ -160,11 +161,18 @@ function TypingDots() {
   );
 }
 
+interface ChatMessage {
+  id: number;
+  role: "user" | "assistant";
+  content: string[];
+  streaming: boolean;
+}
+
 export function CopilotChat() {
   const [value, setValue] = useState("");
   const [attachments, setAttachments] = useState<string[]>([]);
-  const [isTyping, setIsTyping] = useState(false);
-  const [, startTransition] = useTransition();
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const nextMessageId = useRef(0);
   const [activeSuggestion, setActiveSuggestion] = useState(-1);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
@@ -219,17 +227,43 @@ export function CopilotChat() {
     setShowCommandPalette(false);
   };
 
-  const handleSendMessage = () => {
-    if (value.trim()) {
-      startTransition(() => {
-        setIsTyping(true);
-        setTimeout(() => {
-          setIsTyping(false);
-          setValue("");
-          adjustHeight(true);
-        }, 3000);
-      });
-    }
+  const isStreaming = messages.some((m) => m.streaming);
+
+  const streamAssistantResponse = (chunks: string[]) => {
+    const id = nextMessageId.current++;
+    setMessages((prev) => [...prev, { id, role: "assistant", content: [], streaming: true }]);
+
+    let revealed = 0;
+    const interval = setInterval(() => {
+      revealed += 1;
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === id ? { ...m, content: chunks.slice(0, revealed), streaming: revealed < chunks.length } : m,
+        ),
+      );
+      if (revealed >= chunks.length) clearInterval(interval);
+    }, 450);
+  };
+
+  const sendText = (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed || isStreaming) return;
+
+    setMessages((prev) => [
+      ...prev,
+      { id: nextMessageId.current++, role: "user", content: [trimmed], streaming: false },
+    ]);
+    setValue("");
+    adjustHeight(true);
+
+    setTimeout(() => streamAssistantResponse(getMockResponse(trimmed)), 350);
+  };
+
+  const handleSendMessage = () => sendText(value);
+
+  const sendCommand = (index: number) => {
+    setShowCommandPalette(false);
+    sendText(commandSuggestions[index].label);
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -266,22 +300,57 @@ export function CopilotChat() {
     setAttachments((prev) => prev.filter((_, i) => i !== index));
   };
 
+  const hasMessages = messages.length > 0;
+
   return (
-    <div className="relative flex min-h-[calc(100vh-10rem)] w-full flex-col items-center justify-center overflow-hidden rounded-2xl bg-transparent p-6 text-white">
+    <div className="relative flex h-[calc(100vh-10rem)] w-full flex-col overflow-hidden rounded-2xl bg-transparent text-white">
       <div className="absolute inset-0 h-full w-full overflow-hidden">
         <div className="absolute top-0 left-1/4 h-96 w-96 animate-pulse rounded-full bg-status-healthy/10 blur-[128px]" />
         <div className="absolute right-1/4 bottom-0 h-96 w-96 animate-pulse rounded-full bg-status-healthy/8 blur-[128px] delay-700" />
         <div className="absolute top-1/4 right-1/3 h-64 w-64 animate-pulse rounded-full bg-status-healthy/6 blur-[96px] delay-1000" />
       </div>
 
-      <div className="relative mx-auto w-full max-w-2xl">
-        <motion.div
-          className="relative z-10 space-y-12"
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, ease: "easeOut" }}
-        >
-          <div className="space-y-3 text-center">
+      {hasMessages ? (
+        <div className="scrollbar-hidden relative z-10 min-h-0 flex-1 overflow-y-auto">
+          <div className="mx-auto flex w-full max-w-2xl flex-col gap-4 p-6">
+            {messages.map((m) =>
+              m.role === "user" ? (
+                <div key={m.id} className="flex justify-end">
+                  <div className="max-w-[80%] rounded-2xl bg-white px-4 py-2.5 text-sm text-[#0A0A0B]">
+                    {m.content[0]}
+                  </div>
+                </div>
+              ) : (
+                <div key={m.id} className="flex items-start gap-3">
+                  <div className="flex h-7 w-8 shrink-0 items-center justify-center rounded-full bg-white/[0.05] text-center">
+                    <span className="mb-0.5 text-xs font-medium text-white/90">AI</span>
+                  </div>
+                  <div className="min-w-0 flex-1 rounded-2xl border border-white/[0.05] bg-white/[0.02] px-4 py-3">
+                    {m.content.length === 0 ? (
+                      <div className="flex items-center gap-2 text-sm text-white/50">
+                        <span>Thinking</span>
+                        <TypingDots />
+                      </div>
+                    ) : (
+                      <>
+                        <MessageContent chunks={m.content} />
+                        {m.streaming && <TypingDots />}
+                      </>
+                    )}
+                  </div>
+                </div>
+              ),
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="relative z-10 flex flex-1 items-center justify-center p-6">
+          <motion.div
+            className="mx-auto w-full max-w-2xl space-y-3 text-center"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, ease: "easeOut" }}
+          >
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
@@ -306,14 +375,17 @@ export function CopilotChat() {
             >
               Ask about incidents, anomalies, or remediation actions
             </motion.p>
-          </div>
+          </motion.div>
+        </div>
+      )}
 
-          <motion.div
-            className="relative rounded-2xl border border-white/[0.05] bg-white/[0.02] shadow-2xl backdrop-blur-2xl"
-            initial={{ scale: 0.98 }}
-            animate={{ scale: 1 }}
-            transition={{ delay: 0.1 }}
-          >
+      <div className="relative z-10 mx-auto w-full max-w-2xl shrink-0 space-y-4 p-6 pt-2">
+        <motion.div
+          className="relative rounded-2xl border border-white/[0.05] bg-white/[0.02] shadow-2xl backdrop-blur-2xl"
+          initial={{ scale: 0.98 }}
+          animate={{ scale: 1 }}
+          transition={{ delay: 0.1 }}
+        >
             <AnimatePresence>
               {showCommandPalette && (
                 <motion.div
@@ -449,14 +521,14 @@ export function CopilotChat() {
                 onClick={handleSendMessage}
                 whileHover={{ scale: 1.01 }}
                 whileTap={{ scale: 0.98 }}
-                disabled={isTyping || !value.trim()}
+                disabled={isStreaming || !value.trim()}
                 className={cn(
                   "rounded-lg px-4 py-2 text-sm font-medium transition-all",
                   "flex items-center gap-2",
                   value.trim() ? "bg-white text-[#0A0A0B] shadow-lg shadow-white/10" : "bg-white/[0.05] text-white/40",
                 )}
               >
-                {isTyping ? (
+                {isStreaming ? (
                   <LoaderIcon className="h-4 w-4 animate-[spin_2s_linear_infinite]" />
                 ) : (
                   <SendIcon className="h-4 w-4" />
@@ -471,8 +543,9 @@ export function CopilotChat() {
               <motion.button
                 key={suggestion.prefix}
                 type="button"
-                onClick={() => selectCommandSuggestion(index)}
-                className="group relative flex items-center gap-2 rounded-lg bg-white/[0.02] px-3 py-2 text-sm text-white/60 transition-all hover:bg-white/[0.05] hover:text-white/90"
+                onClick={() => sendCommand(index)}
+                disabled={isStreaming}
+                className="group relative flex items-center gap-2 rounded-lg bg-white/[0.02] px-3 py-2 text-sm text-white/60 transition-all hover:bg-white/[0.05] hover:text-white/90 disabled:pointer-events-none disabled:opacity-40"
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: index * 0.1 }}
@@ -488,29 +561,7 @@ export function CopilotChat() {
               </motion.button>
             ))}
           </div>
-        </motion.div>
       </div>
-
-      <AnimatePresence>
-        {isTyping && (
-          <motion.div
-            className="fixed bottom-8 mx-auto -translate-x-1/2 transform rounded-full border border-white/[0.05] bg-white/[0.02] px-4 py-2 shadow-lg backdrop-blur-2xl"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 20 }}
-          >
-            <div className="flex items-center gap-3">
-              <div className="flex h-7 w-8 items-center justify-center rounded-full bg-white/[0.05] text-center">
-                <span className="mb-0.5 text-xs font-medium text-white/90">AI</span>
-              </div>
-              <div className="flex items-center gap-2 text-sm text-white/70">
-                <span>Thinking</span>
-                <TypingDots />
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       {inputFocused && (
         <motion.div

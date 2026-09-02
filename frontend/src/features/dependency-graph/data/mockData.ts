@@ -26,10 +26,10 @@ export const graphNodes: GraphNodeInput[] = services.map((s) => ({
  * payments, search reads inventory) rather than doc-sourced.
  */
 export const graphEdges: GraphEdge[] = [
-  { source: "service-b-orders", target: "service-a-auth" },
-  { source: "service-b-orders", target: "service-c-inventory" },
-  { source: "service-c-inventory", target: "service-a-auth" },
-  { source: "service-d-notification", target: "service-b-orders" },
-  { source: "service-b-orders", target: "service-e-payments" },
-  { source: "service-f-search", target: "service-c-inventory" },
+  { source: "service-b-orders", target: "service-a-auth", latencyMs: 14 },
+  { source: "service-b-orders", target: "service-c-inventory", latencyMs: 22 },
+  { source: "service-c-inventory", target: "service-a-auth", latencyMs: 9 },
+  { source: "service-d-notification", target: "service-b-orders", latencyMs: 31 },
+  { source: "service-b-orders", target: "service-e-payments", latencyMs: 18 },
+  { source: "service-f-search", target: "service-c-inventory", latencyMs: 12 },
 ];

@@ -1,8 +1,10 @@
 """
-train.py — Component 1: train and evaluate the HST anomaly detection model.
+train.py — Component 1: train and evaluate the HST anomaly detection model (single entity CLI).
 
 Scope: warm up river's HalfSpaceTrees on one SMD entity's training split, score the
-held-out test split, evaluate against ground truth, and save the trained model.
+held-out test split, evaluate against ground truth, and save the trained model. The
+actual work happens in src/pipeline.py's train_and_evaluate(), shared with
+sweep_hyperparams.py and train_all.py.
 
 Explicitly NOT in scope here (a teammate's work, see docs/Component_1_2_Technical_Guide.md):
   - the live streaming data generator ("Component 2" territory)
@@ -10,27 +12,15 @@ Explicitly NOT in scope here (a teammate's work, see docs/Component_1_2_Technica
 
 Usage:
     uv run python train.py --entity machine-1-1
-    uv run python train.py --entity machine-1-1 --eval-threshold 0.65
+    uv run python train.py --entity machine-1-1 --eval-threshold 0.5
 """
 
 import argparse
-import csv
 import logging
-import pickle
 import sys
-from pathlib import Path
 
-# Reuse datasets/smd/preprocess.py (canonical column renaming, already verified against
-# the real SMD files) instead of duplicating a second loader here.
-sys.path.insert(0, str(Path(__file__).parent.parent / "datasets" / "smd"))
-from preprocess import preprocess_entity  # noqa: E402
-
-import mlflow  # noqa: E402
-import pandas as pd  # noqa: E402
-
-from src.config import HST_CFG, PIPELINE_CFG  # noqa: E402
-from src.evaluate import evaluate, load_labels  # noqa: E402
-from src.hst_model import build_model, classify_severity, score_dataset, warm_up  # noqa: E402
+from src.config import HST_CFG, PIPELINE_CFG
+from src.pipeline import train_and_evaluate
 
 logging.basicConfig(
     level=logging.INFO,
@@ -47,91 +37,52 @@ def parse_args() -> argparse.Namespace:
         "--entity", default=PIPELINE_CFG.smd_entity, help="SMD entity ID, e.g. machine-1-1"
     )
     parser.add_argument(
-        "--eval-threshold", type=float, default=0.7, help="Score threshold for anomaly prediction"
+        "--eval-threshold",
+        type=float,
+        default=PIPELINE_CFG.eval_threshold,
+        help="Score threshold for anomaly prediction (ignored if --calibrate is set)",
+    )
+    parser.add_argument(
+        "--calibrate",
+        action="store_true",
+        help="Calibrate a per entity threshold from held out normal data instead of "
+             "using --eval-threshold. See RESULTS.md: a single fixed threshold does "
+             "not transfer well across entities.",
+    )
+    parser.add_argument(
+        "--calib-percentile",
+        type=float,
+        default=97,
+        help="Percentile of held out calibration scores to use as the threshold "
+             "when --calibrate is set (default 97, the recommended middle ground "
+             "from the calibration sweep in RESULTS.md)",
     )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    logger.info("Component 1 training run -- entity=%s", args.entity)
-
-    logger.info("[1/5] Preprocessing SMD data...")
-    train_path = preprocess_entity(args.entity, split="train")
-    test_path = preprocess_entity(args.entity, split="test")
-    logger.info("  train=%s test=%s", train_path, test_path)
-
-    train_df = pd.read_parquet(train_path)
-    test_df = pd.read_parquet(test_path)
-    logger.info("  train=%s rows, test=%s rows", len(train_df), len(test_df))
-
-    mlflow.set_tracking_uri(PIPELINE_CFG.mlflow_tracking_uri)
-    mlflow.set_experiment(f"hst_{args.entity}")
-    mlflow.start_run(run_name=f"{args.entity}_component1")
-    try:
-        mlflow.log_params({
-            "n_trees": HST_CFG.n_trees,
-            "height": HST_CFG.height,
-            "window_size": HST_CFG.window_size,
-            "seed": HST_CFG.seed,
-            "entity_id": args.entity,
-            "eval_threshold": args.eval_threshold,
-        })
-
-        logger.info("[2/5] Warming up HST model (n_trees=%s, height=%s, window_size=%s)...",
-                    HST_CFG.n_trees, HST_CFG.height, HST_CFG.window_size)
-        model = build_model(HST_CFG)
-        train_rows = train_df.to_dict(orient="records")
-        warm_up_stats = warm_up(model, train_rows)
-        logger.info("  %s events in %.1fs (%.0f events/sec)",
-                    warm_up_stats.n_events, warm_up_stats.duration_seconds,
-                    warm_up_stats.throughput_events_per_sec)
-
-        logger.info("[3/5] Scoring test split (model frozen, no further learning)...")
-        test_rows = test_df.to_dict(orient="records")
-        scores = score_dataset(model, test_rows)
-        severities = [classify_severity(s) for s in scores]
-        logger.info("  scored %s rows, mean=%.4f max=%.4f",
-                    len(scores), sum(scores) / len(scores), max(scores))
-
-        logger.info("[4/5] Evaluating against SMD ground-truth labels...")
-        labels = load_labels(args.entity)
-        metrics = evaluate(scores, labels, threshold=args.eval_threshold)
-        logger.info("  precision=%.4f recall=%.4f f1=%.4f (threshold=%.2f)",
-                    metrics["precision"], metrics["recall"], metrics["f1"], metrics["threshold"])
-        mlflow.log_metrics({
-            "eval_precision": metrics["precision"],
-            "eval_recall": metrics["recall"],
-            "eval_f1": metrics["f1"],
-            "warm_up_events": warm_up_stats.n_events,
-            "warm_up_throughput_eps": warm_up_stats.throughput_events_per_sec,
-            "mean_test_score": sum(scores) / len(scores),
-        })
-
-        logger.info("[5/5] Saving trained model...")
-        snapshot_dir = Path(PIPELINE_CFG.model_snapshot_dir) / args.entity
-        snapshot_dir.mkdir(parents=True, exist_ok=True)
-        model_path = snapshot_dir / f"hst_model_step_{warm_up_stats.n_events}.pkl"
-        model_path.write_bytes(pickle.dumps(model))
-        logger.info("  saved %s (%.1f KB)", model_path, model_path.stat().st_size / 1024)
-        mlflow.log_artifact(str(model_path), artifact_path="model")
-
-        score_dir = Path(PIPELINE_CFG.score_output_dir)
-        score_dir.mkdir(parents=True, exist_ok=True)
-        scores_path = score_dir / f"{args.entity}_scores.csv"
-        with open(scores_path, "w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(["step", "anomaly_score", "severity", "label"])
-            for step, (score, severity, label) in enumerate(
-                zip(scores, severities, labels), start=1
-            ):
-                writer.writerow([step, round(score, 6), severity, label])
-        logger.info("  saved %s (%s rows)", scores_path, len(scores))
-    except Exception:
-        mlflow.end_run(status="FAILED")
-        raise
+    if args.calibrate:
+        logger.info("Component 1 training run entity=%s calibrate=True percentile=%s",
+                    args.entity, args.calib_percentile)
     else:
-        mlflow.end_run(status="FINISHED")
+        logger.info("Component 1 training run entity=%s threshold=%s",
+                    args.entity, args.eval_threshold)
+
+    result = train_and_evaluate(
+        args.entity, HST_CFG,
+        eval_threshold=args.eval_threshold,
+        calibrate=args.calibrate,
+        calib_percentile=args.calib_percentile,
+    )
+
+    logger.info("warm up events=%s throughput=%.0f events per sec",
+                result["warm_up_events"], result["warm_up_throughput_eps"])
+    logger.info("precision=%.4f recall=%.4f f1=%.4f",
+                result["precision"], result["recall"], result["f1"])
+    logger.info("saved model to %s/%s and scores to %s/%s_scores.csv",
+                PIPELINE_CFG.model_snapshot_dir, args.entity,
+                PIPELINE_CFG.score_output_dir, args.entity)
 
 
 if __name__ == "__main__":

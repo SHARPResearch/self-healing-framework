@@ -41,7 +41,8 @@ dashboard.
 | `services/shared/` | Cross-service shared code | — |
 | `services/target-services/` | Sample microservices for chaos-injection demos | Node/Python/Go |
 | `frontend/` | Observability Dashboard | React 18, Vite, Tailwind |
-| `ml-pipeline/` | Standalone HST warm-up + drift-detection research pipeline (Component 1-2). Component 1 (train/evaluate) is done — see `ml-pipeline/CLAUDE.md`; Component 2 (streaming + drift) is in progress by a teammate. | Python, river, MLflow |
+| `ml-pipeline/` | Standalone HST warm-up + drift-detection research pipeline (Component 1-2). Component 1 (train/evaluate/tune/calibrate) is done — see `ml-pipeline/RESULTS.md`; Component 2 (streaming + drift) is reserved (`src/data_pipeline.py`/`src/mlflow_lifecycle.py` stubs) for a teammate. | Python, river, MLflow |
+| `adaptive-pipeline/` | Standalone RL research pipeline (Component 4 — Adaptive Learning Decision Engine). Scaffold only, no code yet, no `.venv` installed yet — see `adaptive-pipeline/CLAUDE.md` for the open state/action/reward design questions that need answering first. | Python, Stable-Baselines3, Gymnasium, MLflow |
 | `infrastructure/` | Helm charts, Kubernetes manifests, Terraform | Helm, kubectl, Terraform |
 | `datasets/` | SMD/NAB dataset download + preprocessing scripts (not the raw data itself) | — |
 
@@ -54,7 +55,14 @@ Each service/area folder has its own short `CLAUDE.md` with specifics.
 - **Branches**: `feat/...`, `chore/...`, `init/...` — merged into `main` via PR (see closed PR#1,
   PR#2 for the existing pattern).
 - **Anomaly severity thresholds** (used consistently across ml-backend and decision-engine):
-  `< 0.5` watch, `0.5–0.7` warn, `0.7–0.85` degrade, `> 0.85` critical.
+  `< 0.5` watch, `0.5–0.7` warn, `0.7–0.85` degrade, `> 0.85` critical. `ml-pipeline/RESULTS.md`
+  found HST score distributions differ enough per machine that a single global threshold does
+  not transfer well across them (mean F1 nearly 5x worse across 28 entities than on the one
+  entity it was tuned on) — worth re-checking before assuming these fixed cutoffs generalize
+  across real services too. `ml-pipeline/calibrate.py` implements a validated fix (per-entity
+  percentile-based threshold calibration instead of one shared absolute cutoff) that
+  `services/decision-engine`'s `PolicyEvaluator` should probably adopt the same idea for, not
+  just `ml-backend`.
 
 ## Local dev
 

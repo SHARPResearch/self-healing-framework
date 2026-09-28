@@ -1,0 +1,41 @@
+import { Link } from "react-router-dom";
+import { INTEGRATION_ITEMS } from "../data/marketingContent";
+import { Reveal } from "./Reveal";
+
+export function IntegrationsSection() {
+  return (
+    <section className="mx-auto max-w-6xl px-6 py-24">
+      <Reveal>
+        <div className="flex flex-col items-center text-center">
+          <span className="rounded-full border border-foreground/15 bg-foreground/[0.04] px-4 py-1.5 text-xs text-foreground/60">
+            Integrations
+          </span>
+          <h2 className="mt-5 max-w-xl text-3xl font-medium tracking-display text-foreground sm:text-4xl">
+            Talks to the tools already running in your cluster
+          </h2>
+          <p className="mt-4 max-w-lg text-sm leading-relaxed text-foreground/60">
+            No new agents to install and no proprietary protocol. SHARP reads and writes through
+            APIs your platform team already trusts.
+          </p>
+          <Link
+            to="/settings"
+            className="mt-6 rounded-brand-sm border border-foreground/20 px-5 py-2 text-sm font-medium text-foreground/80 transition-colors hover:bg-foreground/5 hover:text-foreground"
+          >
+            View integration settings
+          </Link>
+        </div>
+      </Reveal>
+
+      <div className="mt-16 flex flex-wrap items-center justify-center gap-3">
+        {INTEGRATION_ITEMS.map((item, i) => (
+          <Reveal key={item.label} delay={i * 0.05}>
+            {/* Tag, not a button -- keeps the pill shape. */}
+            <div className="rounded-full border border-foreground/10 bg-foreground/[0.03] px-4 py-2 font-mono text-xs text-foreground/60">
+              {item.label}
+            </div>
+          </Reveal>
+        ))}
+      </div>
+    </section>
+  );
+}

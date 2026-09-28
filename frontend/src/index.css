@@ -1,0 +1,236 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --radius: 0.625rem;
+
+  /* Base surface colors */
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
+
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+
+  /* self-healing-framework severity palette (see root CLAUDE.md thresholds) */
+  --status-watch: oklch(0.556 0.02 260);
+  --status-warn: oklch(0.7 0.18 250);
+  --status-degrade: oklch(0.75 0.18 70);
+  --status-critical: oklch(0.63 0.24 25);
+  --status-healthy: oklch(0.72 0.19 150);
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+
+  --destructive: oklch(0.704 0.191 22.216);
+  --destructive-foreground: oklch(0.985 0 0);
+
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+
+  --status-watch: oklch(0.65 0.02 260);
+  --status-warn: oklch(0.72 0.16 250);
+  --status-degrade: oklch(0.78 0.17 70);
+  --status-critical: oklch(0.65 0.23 25);
+  --status-healthy: oklch(0.75 0.18 150);
+
+  /* SHARP brand system (adapted from DESIGN.md's Supabase analysis, canvas
+     polarity inverted: near-black instead of white, same rigor otherwise).
+     brand-primary intentionally aliases status-healthy by reference rather
+     than duplicating its oklch value -- same green, but named separately
+     since brand action color and service-health color are different
+     semantic intents that happen to share a hue. If they ever need to
+     diverge (e.g. accessibility tuning of the CTA fill), split the value
+     out then, not preemptively now. */
+  --brand-primary: var(--status-healthy);
+  --brand-primary-deep: oklch(0.65 0.19 150);
+  /* Near-black, not white -- DESIGN.md's own rule is dark text on the green
+     fill, and that pairing survives the canvas inversion unchanged; only
+     the canvas polarity flipped, not the accent or its text pairing. */
+  --brand-on-primary: oklch(0.16 0 0);
+  /* Logo badge background. Kept as a literal hex, not oklch, because it must
+     stay pixel-identical to public/favicon.svg's hardcoded fill -- a static
+     SVG file can't read a CSS custom property, so this is the one place in
+     the token system deliberately mirroring a value that lives outside it.
+     If this ever changes, update favicon.svg's rect fill to match by hand. */
+  --brand-badge: #0f172a;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-status-watch: var(--status-watch);
+  --color-status-warn: var(--status-warn);
+  --color-status-degrade: var(--status-degrade);
+  --color-status-critical: var(--status-critical);
+  --color-status-healthy: var(--status-healthy);
+
+  --color-brand-primary: var(--brand-primary);
+  --color-brand-primary-deep: var(--brand-primary-deep);
+  --color-brand-on-primary: var(--brand-on-primary);
+  --color-brand-badge: var(--brand-badge);
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  /* Slow drift for the marketing hero's ambient background blobs. */
+  --animate-blob-drift: blob-drift 18s ease-in-out infinite;
+  /* Pulsing glow for critical nodes on the dependency graph (Doc4 P-13). */
+  --animate-pulse-glow: pulse-glow 2s ease-in-out infinite;
+  /* Horizontal drift for the marketing footer's dotted top strip. */
+  --animate-footer-dots: footer-dots-move 18s linear infinite;
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  /* SHARP brand radius scale (DESIGN.md's 4/6/8/12/16px), additive and
+     namespaced separately from --radius-* above: that scale drives shadcn's
+     Button/Card/Dialog on every already-built page, so it stays untouched.
+     Marketing components adopt rounded-brand-* instead. */
+  --radius-brand-xs: 0.25rem;
+  --radius-brand-sm: 0.375rem;
+  --radius-brand-md: 0.5rem;
+  --radius-brand-lg: 0.75rem;
+  --radius-brand-xl: 1rem;
+
+  /* Tight negative tracking for the display tier, per DESIGN.md's discipline. */
+  --tracking-hero: -0.03em;
+  --tracking-display: -0.02em;
+}
+
+@keyframes pulse-glow {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.9;
+    transform: scale(1.12);
+  }
+}
+
+@keyframes blob-drift {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  33% {
+    transform: translate3d(3%, -4%, 0) scale(1.06);
+  }
+  66% {
+    transform: translate3d(-3%, 3%, 0) scale(0.96);
+  }
+}
+
+@keyframes footer-dots-move {
+  from {
+    transform: translate3d(0, -50%, 0);
+  }
+  to {
+    transform: translate3d(-50%, -50%, 0);
+  }
+}
+
+/* Decorative dotted strip at the top of the marketing footer. Kept as a
+   plain CSS class rather than Tailwind utilities -- three layered
+   radial-gradient dot patterns don't have a clean utility-class expression,
+   and this is scoped to exactly one element. Neutral foreground tone at low
+   opacity, not brand green: this is background texture, not a "small
+   accent," so it stays inside the sparse-green rule the rest of the
+   marketing page follows. */
+.footer-dots-line {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 200%;
+  height: 70px;
+  transform: translateY(-50%);
+  background-image:
+    radial-gradient(circle, var(--color-foreground) 1.5px, transparent 2px),
+    radial-gradient(circle, var(--color-foreground) 1px, transparent 1.5px),
+    radial-gradient(circle, var(--color-foreground) 1.2px, transparent 1.8px);
+  background-position:
+    0 8px,
+    24px 22px,
+    48px 14px;
+  background-size:
+    72px 38px,
+    110px 44px,
+    160px 52px;
+  opacity: 0.12;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground font-sans;
+  }
+}
+
+@layer utilities {
+  /* Scrollable content without a visible scrollbar track (main content area,
+     chat message lists, etc) -- scroll still works via wheel/trackpad/keys. */
+  .scrollbar-hidden {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .scrollbar-hidden::-webkit-scrollbar {
+    display: none;
+  }
+}

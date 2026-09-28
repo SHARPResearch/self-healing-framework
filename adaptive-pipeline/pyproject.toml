@@ -1,0 +1,19 @@
+[project]
+name = "adaptive-pipeline"
+version = "0.1.0"
+description = "Component 4: Adaptive Learning Decision Engine (RL) research pipeline"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "stable-baselines3>=2.3.0",
+    "gymnasium>=0.29.0",
+    "mlflow>=3.0.0",
+    "numpy>=1.26.0",
+    "pandas>=2.0.0",
+    "tensorboard>=2.16.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+]

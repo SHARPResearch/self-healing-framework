@@ -1,0 +1,17 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: StressChaos
+metadata:
+  name: payment-cpu-stress
+  namespace: online-boutique
+spec:
+  mode: one
+  selector:
+    namespaces:
+      - online-boutique
+    labelSelectors:
+      app: paymentservice
+  stressors:
+    cpu:
+      workers: 4
+      load: 100
+  duration: '5m'

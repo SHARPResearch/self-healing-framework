@@ -2,7 +2,7 @@
 hst_model.py — Half-Space Trees anomaly detection model with online streaming and ADWIN drift detection.
 
 Component 1: HST model initialization, warm-up on baseline telemetry, scoring, and severity classification.
-Component 2: Online streaming ingestion, score_and_learn loop, ADWIN concept drift detection, and state snapshots.
+Component 2: Online streaming ingestion wrapper (HSTStreamProcessor), score_and_learn loop, ADWIN concept drift detection, and state snapshots.
 """
 
 import logging
@@ -102,6 +102,11 @@ class StreamEvent:
     features: dict[str, float]
     timestamp: Optional[datetime] = None
 
+    def __iter__(self):
+        """Allows tuple unpacking: score, drift = event"""
+        yield self.anomaly_score
+        yield self.drift_detected
+
 
 @dataclass
 class RunningStats:
@@ -132,8 +137,11 @@ class RunningStats:
 
 class HSTStreamProcessor:
     """
-    Stateful per-service streaming anomaly processor connecting River telemetry streams
-    to Half-Space Trees anomaly detection and ADWIN drift detection.
+    Model Wrapper for the River HalfSpaceTrees (HST) anomaly detector with ADWIN drift detection.
+
+    Wraps the river HST model and strictly evaluates each observation with `score_one`
+    BEFORE calling `learn_one` to prevent test data leakage. Anomaly scores are continuously
+    fed into ADWIN (delta=0.002, bounding false positives at 0.2%) to flag concept drift.
     """
 
     def __init__(
@@ -142,13 +150,19 @@ class HSTStreamProcessor:
         hst_cfg: Optional[HSTConfig] = None,
         adwin_cfg: Optional[ADWINConfig] = None,
         model: Optional[HalfSpaceTrees] = None,
+        delta: float = 0.002,
     ):
         self.service_id = service_id
         self._hst_cfg = hst_cfg or HST_CFG
         self._adwin_cfg = adwin_cfg or ADWIN_CFG
 
+        # Initialize existing River HST model
         self._model = model if model is not None else build_model(self._hst_cfg)
-        self._adwin = ADWIN(delta=self._adwin_cfg.delta)
+
+        # Initialize ADWIN with delta=0.002 (bounds FPR at 0.2%)
+        chosen_delta = delta if delta != 0.002 else self._adwin_cfg.delta
+        self.adwin = ADWIN(delta=chosen_delta)
+        self._adwin = self.adwin
 
         self._step: int = 0
         self._drift_count: int = 0
@@ -161,7 +175,7 @@ class HSTStreamProcessor:
         logger.info(
             f"[{service_id}] HSTStreamProcessor initialized. "
             f"n_trees={self._hst_cfg.n_trees}, height={self._hst_cfg.height}, "
-            f"window_size={self._hst_cfg.window_size}, ADWIN_delta={self._adwin_cfg.delta}"
+            f"window_size={self._hst_cfg.window_size}, ADWIN_delta={chosen_delta}"
         )
 
     @property
@@ -175,6 +189,10 @@ class HSTStreamProcessor:
     @property
     def drift_count(self) -> int:
         return self._drift_count
+
+    @property
+    def drift_detected(self) -> bool:
+        return bool(self.adwin.drift_detected)
 
     @property
     def last_score(self) -> float:
@@ -210,32 +228,37 @@ class HSTStreamProcessor:
 
     def process_one(
         self,
-        features: dict[str, float],
+        observation: dict[str, float],
         timestamp: Optional[datetime] = None,
     ) -> StreamEvent:
         """
-        Process a single telemetry point through HST scoring, online learning, and ADWIN drift detection.
+        Process a single observation through HST scoring, online learning, and ADWIN drift detection.
+
+        Execution order (strictly enforced to prevent test data leakage):
+          1. score_one(observation) -> evaluate anomaly score against prior knowledge
+          2. learn_one(observation) -> update model weights incrementally
+          3. adwin.update(anomaly_score) -> evaluate distribution change point
         """
         t_start = time.perf_counter()
 
-        # Step 1: Score BEFORE learning against prior knowledge
-        raw_score: float = self._model.score_one(features)
+        # Step 1: Score BEFORE learning to prevent test data leakage
+        raw_score: float = self._model.score_one(observation)
         anomaly_score = float(min(max(raw_score, 0.0), 1.0))
 
         # Step 2: Incremental online update
-        self._model.learn_one(features)
+        self._model.learn_one(observation)
 
         latency_ms = (time.perf_counter() - t_start) * 1000.0
 
-        # Step 3: ADWIN drift detection on score stream
-        self._adwin.update(anomaly_score)
-        drift_detected = bool(self._adwin.drift_detected)
+        # Step 3: Feed anomaly score directly into ADWIN drift detector
+        self.adwin.update(anomaly_score)
+        drift_detected = bool(self.adwin.drift_detected)
 
         if drift_detected:
             self._drift_count += 1
             logger.warning(
-                f"[{self.service_id}] 🚨 ADWIN drift detected at step {self._step}! "
-                f"Score={anomaly_score:.4f}, Drift Count={self._drift_count}"
+                f"[{self.service_id}] ⚠️ [DRIFT DETECTED] ADWIN detected concept drift at step {self._step}! "
+                f"Anomaly Score={anomaly_score:.4f}, Total Drift Events={self._drift_count}"
             )
 
         # Step 4: Update stats and counter
@@ -250,17 +273,17 @@ class HSTStreamProcessor:
             severity=classify_severity(anomaly_score),
             drift_detected=drift_detected,
             latency_ms=round(latency_ms, 3),
-            features=features,
+            features=observation,
             timestamp=timestamp or datetime.now(),
         )
 
     def score_and_learn(
         self,
-        features: dict[str, float],
+        observation: dict[str, float],
         timestamp: Optional[datetime] = None,
     ) -> StreamEvent:
-        """Alias for process_one matching the Technical Guide API specification."""
-        return self.process_one(features, timestamp=timestamp)
+        """Alias for process_one."""
+        return self.process_one(observation, timestamp=timestamp)
 
     def process_stream(
         self,
@@ -273,15 +296,12 @@ class HSTStreamProcessor:
         """
         for item in stream:
             if isinstance(item, tuple) and len(item) == 2:
-                # River format (X, y)
                 features, _ = item
                 timestamp = None
             elif isinstance(item, dict) and "features" in item:
-                # RiverCollector point format {'features': {...}, 'timestamp': ...}
                 features = item["features"]
                 timestamp = item.get("timestamp")
             elif isinstance(item, dict):
-                # Raw feature dict
                 features = item
                 timestamp = None
             else:

@@ -4,6 +4,7 @@ Prometheus API Client for fetching metrics
 
 import os
 import logging
+import time
 from typing import List, Dict, Optional, Any
 from datetime import datetime, timedelta
 import pandas as pd
@@ -163,3 +164,46 @@ class PrometheusClient:
         except Exception as e:
             logger.error(f"❌ Failed to get targets: {e}")
             return []
+
+
+def fetch_k8s_telemetry(
+    prometheus_url: str = "http://localhost:9090",
+    namespace: str = "online-boutique",
+    timeout: float = 5.0,
+) -> Dict[str, float]:
+    """
+    Query the Prometheus API (/api/v1/query) using requests to extract pod telemetry:
+    - cpu_rate: CPU usage rate across pods in the namespace
+    - memory_usage: Memory usage in bytes across pods in the namespace
+    - network_receive_rate: Network receive bytes/sec across pods in the namespace
+
+    Returns:
+        Flat Python dictionary with float metric values.
+    """
+    endpoint = f"{prometheus_url.rstrip('/')}/api/v1/query"
+    queries = {
+        "cpu_rate": f'sum(rate(container_cpu_usage_seconds_total{{namespace="{namespace}"}}[1m]))',
+        "memory_usage": f'sum(container_memory_working_set_bytes{{namespace="{namespace}"}})',
+        "network_receive_rate": f'sum(rate(container_network_receive_bytes_total{{namespace="{namespace}"}}[1m]))',
+    }
+
+    metrics: Dict[str, float] = {
+        "cpu_rate": 0.0,
+        "memory_usage": 0.0,
+        "network_receive_rate": 0.0,
+    }
+
+    for metric_name, query in queries.items():
+        try:
+            resp = requests.get(endpoint, params={"query": query}, timeout=timeout)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("status") == "success":
+                    result = data.get("data", {}).get("result", [])
+                    if result:
+                        val = result[0].get("value", [None, 0.0])[1]
+                        metrics[metric_name] = float(val) if val is not None else 0.0
+        except Exception as e:
+            logger.warning(f"Error querying Prometheus metric '{metric_name}': {e}")
+
+    return metrics

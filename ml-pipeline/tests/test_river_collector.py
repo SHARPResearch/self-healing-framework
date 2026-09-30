@@ -139,7 +139,7 @@ def test_hst_stream_processor_drift_and_snapshot():
     
     # Restore from snapshot
     processor.restore(snapshot_bytes)
-    assert processor.model.n_trees == processor._hst_cfg.n_trees
+    assert processor.hst_model.n_trees == processor._hst_cfg.n_trees
     print("✅ HSTStreamProcessor drift and snapshot test passed")
 
 

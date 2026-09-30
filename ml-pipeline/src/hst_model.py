@@ -1,23 +1,29 @@
 """
-hst_model.py — Component 1: Half-Space Trees anomaly detection model.
+hst_model.py — Half-Space Trees anomaly detection model with online streaming and ADWIN drift detection.
 
-Trains and scores river's HalfSpaceTrees anomaly detector on SMD telemetry. This module
-owns the model only — data ingestion/streaming is a separate teammate's module
-(docs/Component_1_2_Technical_Guide.md Part 3), and ADWIN drift detection / MLflow
-rollback ("Component 2: dynamic model updating") is out of scope here.
+Component 1: HST model initialization, warm-up on baseline telemetry, scoring, and severity classification.
+Component 2: Online streaming ingestion, score_and_learn loop, ADWIN concept drift detection, and state snapshots.
 """
 
+import logging
+import pickle
 import time
-from dataclasses import dataclass
-from typing import Iterable
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any, Callable, Generator, Iterable, Optional
 
 from river.anomaly import HalfSpaceTrees
+from river.drift import ADWIN
 
-from src.config import HSTConfig
+from src.config import ADWIN_CFG, HST_CFG, ADWINConfig, HSTConfig
+
+logger = logging.getLogger(__name__)
 
 
-def build_model(cfg: HSTConfig) -> HalfSpaceTrees:
+def build_model(cfg: Optional[HSTConfig] = None) -> HalfSpaceTrees:
     """Construct a HalfSpaceTrees instance from the given hyperparameters."""
+    if cfg is None:
+        cfg = HST_CFG
     return HalfSpaceTrees(
         n_trees=cfg.n_trees,
         height=cfg.height,
@@ -28,7 +34,7 @@ def build_model(cfg: HSTConfig) -> HalfSpaceTrees:
 
 @dataclass
 class WarmUpStats:
-    """Summary of a warm-up training pass over the training split."""
+    """Summary of a warm-up training pass over normal/baseline telemetry."""
     n_events: int
     duration_seconds: float
     throughput_events_per_sec: float
@@ -59,10 +65,7 @@ def score_dataset(model: HalfSpaceTrees, rows: Iterable[dict]) -> list[float]:
     """
     Score rows against an already warmed-up model, clamped to [0, 1].
 
-    The model is frozen here — only score_one() is called, never learn_one(). Continuing
-    to learn during evaluation would blur "how well did the trained model do" with online
-    adaptation, which is Component 2's job (ADWIN drift detection + rollback), not this
-    module's.
+    The model is frozen here — only score_one() is called, never learn_one().
     """
     return [float(min(max(model.score_one(features), 0.0), 1.0)) for features in rows]
 
@@ -82,3 +85,236 @@ def classify_severity(score: float) -> str:
         return "degrade"
     else:
         return "critical"
+
+
+@dataclass
+class StreamEvent:
+    """
+    Result of processing one telemetry feature vector through the HST pipeline.
+    Matches the schema expected by the Decision Engine, MLflow, and downstream dashboards.
+    """
+    step: int
+    service_id: str
+    anomaly_score: float
+    severity: str
+    drift_detected: bool
+    latency_ms: float
+    features: dict[str, float]
+    timestamp: Optional[datetime] = None
+
+
+@dataclass
+class RunningStats:
+    """
+    Rolling statistics maintained over the last N scores for monitoring.
+    """
+    window_size: int = 500
+    _scores: list[float] = field(default_factory=list)
+
+    def update(self, score: float) -> None:
+        self._scores.append(score)
+        if len(self._scores) > self.window_size:
+            self._scores.pop(0)
+
+    @property
+    def mean(self) -> float:
+        return sum(self._scores) / len(self._scores) if self._scores else 0.0
+
+    @property
+    def maximum(self) -> float:
+        return max(self._scores) if self._scores else 0.0
+
+    @property
+    def above_warn(self) -> int:
+        """Count of scores exceeding the warn threshold (0.5) in current window."""
+        return sum(1 for s in self._scores if s >= 0.5)
+
+
+class HSTStreamProcessor:
+    """
+    Stateful per-service streaming anomaly processor connecting River telemetry streams
+    to Half-Space Trees anomaly detection and ADWIN drift detection.
+    """
+
+    def __init__(
+        self,
+        service_id: str = "default",
+        hst_cfg: Optional[HSTConfig] = None,
+        adwin_cfg: Optional[ADWINConfig] = None,
+        model: Optional[HalfSpaceTrees] = None,
+    ):
+        self.service_id = service_id
+        self._hst_cfg = hst_cfg or HST_CFG
+        self._adwin_cfg = adwin_cfg or ADWIN_CFG
+
+        self._model = model if model is not None else build_model(self._hst_cfg)
+        self._adwin = ADWIN(delta=self._adwin_cfg.delta)
+
+        self._step: int = 0
+        self._drift_count: int = 0
+        self._last_score: float = 0.0
+        self._stats = RunningStats(window_size=500)
+
+        self._last_stable_snapshot: Optional[bytes] = None
+        self._snapshot_step: int = 0
+
+        logger.info(
+            f"[{service_id}] HSTStreamProcessor initialized. "
+            f"n_trees={self._hst_cfg.n_trees}, height={self._hst_cfg.height}, "
+            f"window_size={self._hst_cfg.window_size}, ADWIN_delta={self._adwin_cfg.delta}"
+        )
+
+    @property
+    def model(self) -> HalfSpaceTrees:
+        return self._model
+
+    @property
+    def step(self) -> int:
+        return self._step
+
+    @property
+    def drift_count(self) -> int:
+        return self._drift_count
+
+    @property
+    def last_score(self) -> float:
+        return self._last_score
+
+    @property
+    def rolling_mean_score(self) -> float:
+        return self._stats.mean
+
+    @property
+    def rolling_max_score(self) -> float:
+        return self._stats.maximum
+
+    @property
+    def warn_rate(self) -> float:
+        """Fraction of recent scores at or above the 'warn' threshold (0.5)."""
+        if self._stats._scores:
+            return self._stats.above_warn / len(self._stats._scores)
+        return 0.0
+
+    def warm_up(self, train_stream: Iterable[dict], progress: bool = False) -> WarmUpStats:
+        """
+        Feed baseline training stream through learn_one() to initialize the normal baseline.
+        """
+        stats = warm_up(self._model, train_stream)
+        self._last_stable_snapshot = self.snapshot()
+        self._snapshot_step = stats.n_events
+        logger.info(
+            f"[{self.service_id}] Warm-up complete: {stats.n_events} events in "
+            f"{stats.duration_seconds}s ({stats.throughput_events_per_sec} events/s)"
+        )
+        return stats
+
+    def process_one(
+        self,
+        features: dict[str, float],
+        timestamp: Optional[datetime] = None,
+    ) -> StreamEvent:
+        """
+        Process a single telemetry point through HST scoring, online learning, and ADWIN drift detection.
+        """
+        t_start = time.perf_counter()
+
+        # Step 1: Score BEFORE learning against prior knowledge
+        raw_score: float = self._model.score_one(features)
+        anomaly_score = float(min(max(raw_score, 0.0), 1.0))
+
+        # Step 2: Incremental online update
+        self._model.learn_one(features)
+
+        latency_ms = (time.perf_counter() - t_start) * 1000.0
+
+        # Step 3: ADWIN drift detection on score stream
+        self._adwin.update(anomaly_score)
+        drift_detected = bool(self._adwin.drift_detected)
+
+        if drift_detected:
+            self._drift_count += 1
+            logger.warning(
+                f"[{self.service_id}] 🚨 ADWIN drift detected at step {self._step}! "
+                f"Score={anomaly_score:.4f}, Drift Count={self._drift_count}"
+            )
+
+        # Step 4: Update stats and counter
+        self._stats.update(anomaly_score)
+        self._last_score = anomaly_score
+        self._step += 1
+
+        return StreamEvent(
+            step=self._step,
+            service_id=self.service_id,
+            anomaly_score=anomaly_score,
+            severity=classify_severity(anomaly_score),
+            drift_detected=drift_detected,
+            latency_ms=round(latency_ms, 3),
+            features=features,
+            timestamp=timestamp or datetime.now(),
+        )
+
+    def score_and_learn(
+        self,
+        features: dict[str, float],
+        timestamp: Optional[datetime] = None,
+    ) -> StreamEvent:
+        """Alias for process_one matching the Technical Guide API specification."""
+        return self.process_one(features, timestamp=timestamp)
+
+    def process_stream(
+        self,
+        stream: Iterable[Any],
+        on_drift: Optional[Callable[["HSTStreamProcessor", StreamEvent], None]] = None,
+        progress: bool = False,
+    ) -> Generator[StreamEvent, None, None]:
+        """
+        Process an entire stream of feature dictionaries or River collector tuples.
+        """
+        for item in stream:
+            if isinstance(item, tuple) and len(item) == 2:
+                # River format (X, y)
+                features, _ = item
+                timestamp = None
+            elif isinstance(item, dict) and "features" in item:
+                # RiverCollector point format {'features': {...}, 'timestamp': ...}
+                features = item["features"]
+                timestamp = item.get("timestamp")
+            elif isinstance(item, dict):
+                # Raw feature dict
+                features = item
+                timestamp = None
+            else:
+                raise ValueError(f"Unsupported stream item format: {type(item)}")
+
+            event = self.process_one(features, timestamp=timestamp)
+
+            if event.drift_detected and on_drift is not None:
+                on_drift(self, event)
+
+            yield event
+
+    def snapshot(self) -> bytes:
+        """Serialise current HST model state to bytes (pickle)."""
+        return pickle.dumps(self._model)
+
+    def restore(self, model_bytes: bytes) -> None:
+        """Restore HST model state from a snapshot."""
+        self._model = pickle.loads(model_bytes)
+        logger.info(
+            f"[{self.service_id}] Model restored from snapshot (step {self._snapshot_step})."
+        )
+
+    def take_stable_snapshot(self) -> None:
+        """Mark current model state as stable checkpoint."""
+        self._last_stable_snapshot = self.snapshot()
+        self._snapshot_step = self._step
+        logger.info(f"[{self.service_id}] Stable snapshot taken at step {self._step}.")
+
+    def rollback_to_last_stable(self) -> bool:
+        """Rollback in-memory model to last stable snapshot."""
+        if self._last_stable_snapshot is None:
+            logger.error(f"[{self.service_id}] Rollback failed: no stable snapshot exists.")
+            return False
+        self.restore(self._last_stable_snapshot)
+        return True

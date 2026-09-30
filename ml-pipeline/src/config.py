@@ -138,6 +138,48 @@ PIPELINE_CFG = PipelineConfig()
 APP_CONFIG = AppConfig()
 
 
+class _ConfigProxy:
+    """Compatibility proxy so `from src.config import config` works with uppercase or attribute access."""
+    def __init__(self, app_config: AppConfig):
+        self._app_config = app_config
+
+    @property
+    def PROMETHEUS_URL(self) -> str:
+        return self._app_config.prometheus.url
+
+    @property
+    def PROMETHEUS_TIMEOUT(self) -> int:
+        return self._app_config.prometheus.timeout
+
+    @property
+    def RIVER_SERVICE_NAME(self) -> str:
+        return self._app_config.river_collector.service_name
+
+    @property
+    def RIVER_BATCH_SIZE(self) -> int:
+        return self._app_config.river_collector.batch_size
+
+    @property
+    def RIVER_POLL_INTERVAL(self) -> int:
+        return self._app_config.river_collector.poll_interval
+
+    @property
+    def DATA_TIME_RANGE(self) -> str:
+        return self._app_config.pipeline.data_time_range
+
+    @property
+    def DATA_STEP(self) -> str:
+        return self._app_config.pipeline.data_step
+
+    def __getattr__(self, item: str):
+        if hasattr(self._app_config, item):
+            return getattr(self._app_config, item)
+        raise AttributeError(f"Config has no attribute '{item}'")
+
+
+config = _ConfigProxy(APP_CONFIG)
+
+
 # ── Helper functions ───────────────────────────────────────────────────────────
 
 def get_config_dict() -> dict:

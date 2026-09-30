@@ -1,10 +1,10 @@
 """
-River-based data collector for streaming metrics from Prometheus
+River-based data collector for streaming metrics from Prometheus and feeding the HST model
 """
 
 import asyncio
 import logging
-from typing import Dict, List, Optional, Any, Callable
+from typing import Dict, List, Optional, Any, Callable, Generator, TYPE_CHECKING
 from datetime import datetime, timedelta
 import pandas as pd
 import numpy as np
@@ -14,14 +14,16 @@ from river import metrics as river_metrics
 
 from .prometheus_client import PrometheusClient
 
+if TYPE_CHECKING:
+    from .hst_model import HSTStreamProcessor, StreamEvent
+
 logger = logging.getLogger(__name__)
 
 
 class RiverCollector:
     """
-    Simple River-based collector that streams data from Prometheus
-    
-    This is just for DATA COLLECTION - no model training or updates
+    River-based collector that streams telemetry data from Prometheus
+    and integrates directly with the Half-Space Trees (HST) anomaly detection pipeline.
     """
     
     def __init__(
@@ -61,8 +63,9 @@ class RiverCollector:
         }
         
         # Callbacks
-        self.on_data_callbacks = []
-        self.on_batch_callbacks = []
+        self.on_data_callbacks: List[Callable[[Dict[str, Any]], None]] = []
+        self.on_batch_callbacks: List[Callable[[List[Dict[str, Any]]], None]] = []
+        self.on_event_callbacks: List[Callable[[Any], None]] = []
         
         logger.info(f"✅ RiverCollector initialized for {self.service_name}")
     
@@ -76,6 +79,9 @@ class RiverCollector:
         Returns:
             DataFrame with collected metrics
         """
+        if not self.prometheus.is_connected:
+            return pd.DataFrame()
+
         try:
             # Query for CPU metrics
             cpu_query = f'rate(container_cpu_usage_seconds_total{{service="{self.service_name}"}}[{time_range}])'
@@ -188,10 +194,10 @@ class RiverCollector:
         
         return river_data
     
-    def start_streaming(self):
+    async def start_streaming(self):
         """
-        Start streaming data from Prometheus
-        (Runs asynchronously, yielding data points)
+        Start streaming data from Prometheus asynchronously,
+        triggering registered data/batch/HST callbacks.
         """
         self.is_running = True
         self.stats['start_time'] = datetime.now()
@@ -220,12 +226,12 @@ class RiverCollector:
                         callback(point)
                 
                 # Wait before next poll
-                asyncio.sleep(self.poll_interval)
+                await asyncio.sleep(self.poll_interval)
                 
             except Exception as e:
                 logger.error(f"❌ Streaming error: {e}")
                 self.stats['error_count'] += 1
-                asyncio.sleep(5)  # Backoff on error
+                await asyncio.sleep(5)  # Backoff on error
     
     def _emit_batch(self):
         """Emit a batch of data"""
@@ -251,25 +257,12 @@ class RiverCollector:
     def get_dataframe(self, time_range: str = "5m") -> pd.DataFrame:
         """
         Get metrics as a DataFrame (convenience method)
-        
-        Args:
-            time_range: Time range to collect
-        
-        Returns:
-            DataFrame with metrics
         """
         return self.collect_metrics(time_range)
     
     def get_river_stream(self, time_range: str = "5m", shuffle: bool = False):
         """
-        Get River stream iterator
-        
-        Args:
-            time_range: Time range to collect
-            shuffle: Whether to shuffle the data
-        
-        Returns:
-            River stream iterator
+        Get River stream iterator (X, y)
         """
         data_points = self.collect_metrics_batch(time_range)
         
@@ -288,6 +281,70 @@ class RiverCollector:
             random.shuffle(stream_data)
         
         return stream.iter_array(stream_data)
+    
+    def connect_hst_model(
+        self,
+        processor: "HSTStreamProcessor",
+        on_event: Optional[Callable[["StreamEvent"], None]] = None,
+    ) -> Callable[[Dict[str, Any]], "StreamEvent"]:
+        """
+        Connect this RiverCollector directly to an HSTStreamProcessor.
+        Every telemetry data point received by the collector is automatically scored and learned by HST.
+        
+        Args:
+            processor: The HSTStreamProcessor instance to score points against
+            on_event: Optional callback receiving each resulting StreamEvent
+            
+        Returns:
+            The created handler callback
+        """
+        def _handle_point(point: Dict[str, Any]):
+            features = point.get('features', {})
+            timestamp = point.get('timestamp')
+            event = processor.process_one(features, timestamp=timestamp)
+            
+            if on_event is not None:
+                on_event(event)
+            for cb in self.on_event_callbacks:
+                cb(event)
+            return event
+        
+        self.register_on_data(_handle_point)
+        logger.info(f"🔗 Connected RiverCollector ({self.service_name}) to HST model ({processor.service_id})")
+        return _handle_point
+    
+    def register_on_event(self, callback: Callable[["StreamEvent"], None]):
+        """Register callback for each StreamEvent emitted from connected HST model"""
+        self.on_event_callbacks.append(callback)
+    
+    def score_batch(
+        self,
+        processor: "HSTStreamProcessor",
+        time_range: str = "5m",
+        step: str = "15s",
+    ) -> List["StreamEvent"]:
+        """
+        Collect a batch of metrics from Prometheus and process all points through the HST model.
+        """
+        data_points = self.collect_metrics_batch(time_range=time_range, step=step)
+        events = []
+        for point in data_points:
+            event = processor.process_one(point['features'], timestamp=point.get('timestamp'))
+            events.append(event)
+        return events
+    
+    def stream_to_hst(
+        self,
+        processor: "HSTStreamProcessor",
+        time_range: str = "5m",
+        step: str = "15s",
+    ) -> Generator["StreamEvent", None, None]:
+        """
+        Generator yielding StreamEvent instances directly from collected Prometheus metrics.
+        """
+        data_points = self.collect_metrics_batch(time_range=time_range, step=step)
+        for point in data_points:
+            yield processor.process_one(point['features'], timestamp=point.get('timestamp'))
     
     def get_stats(self) -> Dict[str, Any]:
         """Get collector statistics"""

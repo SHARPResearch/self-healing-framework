@@ -1,11 +1,12 @@
 """
 Main entry point: Dynamic Model Updating for Microservices.
 
-Bridges Kubernetes telemetry (online-boutique) from Prometheus to River's HalfSpaceTrees (HST)
+Bridges Kubernetes telemetry (online-boutique) from Prometheus to River's MinMaxScaler + HalfSpaceTrees (HST) Pipeline
 and ADWIN drift detection in a 15-second real-time streaming loop.
 """
 
 import logging
+import random
 import sys
 import time
 from datetime import datetime
@@ -32,6 +33,7 @@ def run_streaming_loop(
     namespace: str = "online-boutique",
     interval_seconds: int = 15,
     processor: Optional[HSTStreamProcessor] = None,
+    warmup_steps: int = 250,
     max_steps: Optional[int] = None,
 ):
     """
@@ -39,34 +41,47 @@ def run_streaming_loop(
     passes the observation dictionary to processor.process_one(), logs the anomaly score,
     and prints a warning if ADWIN's drift_detected flag evaluates to True.
     """
-    logger.info("=" * 70)
-    logger.info("🚀 STARTING REAL-TIME KUBERNETES -> RIVER HST STREAMING LOOP")
+    logger.info("=" * 75)
+    logger.info("🚀 STARTING REAL-TIME KUBERNETES -> RIVER PIPELINE STREAMING LOOP")
     logger.info(f"📍 Prometheus: {prometheus_url} | Namespace: {namespace} | Interval: {interval_seconds}s")
-    logger.info("=" * 70)
+    logger.info("=" * 75)
 
-    # 1. Initialize HSTStreamProcessor wrapper (wraps HST + ADWIN delta=0.002)
+    # 1. Initialize HSTStreamProcessor wrapper (wraps MinMaxScaler + HST Pipeline + ADWIN delta=0.002)
     if processor is None:
         processor = HSTStreamProcessor(
             service_id=namespace,
             hst_cfg=APP_CONFIG.hst,
             adwin_cfg=APP_CONFIG.adwin,
+            with_scaler=True,
         )
 
-    # 2. Baseline warm-up check: if model is freshly initialized, warm up with baseline
+    # 2. Reference window warm-up (at least 250 steps to fill HST reference window)
     if processor.step == 0:
-        logger.info(f"🔥 Warming up HST reference window with initial baseline observations...")
+        logger.info(f"🔥 Warming up HST reference window with {warmup_steps} baseline observations...")
         initial_telemetry = fetch_k8s_telemetry(prometheus_url=prometheus_url, namespace=namespace)
+        
+        # If cluster is live, sample baseline telemetry with small natural variations (+-3%)
         if any(v > 0 for v in initial_telemetry.values()):
-            # Fit initial telemetry point as baseline
-            for _ in range(50):
-                processor.model.learn_one(initial_telemetry)
+            random.seed(42)
+            for step_i in range(warmup_steps):
+                jittered_obs = {
+                    k: max(0.0, float(v) * random.uniform(0.97, 1.03))
+                    for k, v in initial_telemetry.items()
+                }
+                processor.model.learn_one(jittered_obs)
             processor.take_stable_snapshot()
-            logger.info("✅ Baseline warm-up initialized from live cluster telemetry.")
+            logger.info(
+                f"✅ Reference window filled ({warmup_steps} baseline events fitted). "
+                f"MinMaxScaler & HalfSpaceTrees baseline established."
+            )
         else:
-            warmup_stream = stream_synthetic_telemetry(n_steps=50, service_id=namespace, inject_anomaly_at=None)
+            warmup_stream = stream_synthetic_telemetry(n_steps=warmup_steps, service_id=namespace, inject_anomaly_at=None)
             processor.warm_up(warmup_stream)
 
     step_count = 0
+
+    logger.info("\n🟢 Model baseline is warm and monitoring live Kubernetes telemetry...")
+    logger.info("👉 You can now inject chaos or scale down payment-service to observe anomaly detection and ADWIN drift.\n")
 
     # 3. Continuous 15-second streaming loop
     try:
@@ -89,7 +104,7 @@ def run_streaming_loop(
             )
             logger.info(
                 f"[{status_badge}] Step #{event.step:04d} | "
-                f"Score: {event.anomaly_score:.4f} | "
+                f"Anomaly Score: {event.anomaly_score:.4f} | "
                 f"CPU: {telemetry.get('cpu_rate', 0.0):.4f} cores | "
                 f"Mem: {telemetry.get('memory_usage', 0.0) / (1024 * 1024):.1f} MB | "
                 f"Net Rx: {telemetry.get('network_receive_rate', 0.0) / 1024:.1f} KB/s | "
@@ -121,6 +136,7 @@ def main():
         prometheus_url=config.PROMETHEUS_URL,
         namespace="online-boutique",
         interval_seconds=15,
+        warmup_steps=250,
     )
 
 

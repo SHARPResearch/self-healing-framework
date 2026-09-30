@@ -1,8 +1,9 @@
 """
-hst_model.py — Half-Space Trees anomaly detection model with online streaming and ADWIN drift detection.
+hst_model.py — Half-Space Trees anomaly detection model with MinMaxScaler preprocessing and ADWIN drift detection.
 
 Component 1: HST model initialization, warm-up on baseline telemetry, scoring, and severity classification.
-Component 2: Online streaming ingestion wrapper (HSTStreamProcessor), score_and_learn loop, ADWIN concept drift detection, and state snapshots.
+Component 2: Online streaming ingestion wrapper (HSTStreamProcessor) wrapping river.compose.Pipeline(MinMaxScaler, HalfSpaceTrees)
+             with strict score_one before learn_one, ADWIN concept drift detection (delta=0.002), and state snapshots.
 """
 
 import logging
@@ -10,8 +11,9 @@ import pickle
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Callable, Generator, Iterable, Optional
+from typing import Any, Callable, Generator, Iterable, Optional, Union
 
+from river import compose, preprocessing
 from river.anomaly import HalfSpaceTrees
 from river.drift import ADWIN
 
@@ -20,8 +22,26 @@ from src.config import ADWIN_CFG, HST_CFG, ADWINConfig, HSTConfig
 logger = logging.getLogger(__name__)
 
 
-def build_model(cfg: Optional[HSTConfig] = None) -> HalfSpaceTrees:
-    """Construct a HalfSpaceTrees instance from the given hyperparameters."""
+def build_pipeline(cfg: Optional[HSTConfig] = None) -> compose.Pipeline:
+    """Construct a river.compose.Pipeline combining MinMaxScaler and HalfSpaceTrees."""
+    if cfg is None:
+        cfg = HST_CFG
+    hst = HalfSpaceTrees(
+        n_trees=cfg.n_trees,
+        height=cfg.height,
+        window_size=cfg.window_size,
+        seed=cfg.seed,
+    )
+    return compose.Pipeline(preprocessing.MinMaxScaler(), hst)
+
+
+def build_model(cfg: Optional[HSTConfig] = None, with_scaler: bool = True) -> Union[compose.Pipeline, HalfSpaceTrees]:
+    """
+    Construct model instance. By default wraps MinMaxScaler and HalfSpaceTrees in a river.compose.Pipeline
+    to prevent disparate metric scales from distorting tree partitions.
+    """
+    if with_scaler:
+        return build_pipeline(cfg)
     if cfg is None:
         cfg = HST_CFG
     return HalfSpaceTrees(
@@ -40,9 +60,9 @@ class WarmUpStats:
     throughput_events_per_sec: float
 
 
-def warm_up(model: HalfSpaceTrees, rows: Iterable[dict]) -> WarmUpStats:
+def warm_up(model: Any, rows: Iterable[dict]) -> WarmUpStats:
     """
-    Fit the model on training rows via learn_one() only (no scoring).
+    Fit the model/pipeline on training rows via learn_one() only (no scoring).
 
     Training data is assumed to be mostly-normal behaviour, so warm-up establishes
     what "normal" looks like before the model is used for detection.
@@ -61,7 +81,7 @@ def warm_up(model: HalfSpaceTrees, rows: Iterable[dict]) -> WarmUpStats:
     )
 
 
-def score_dataset(model: HalfSpaceTrees, rows: Iterable[dict]) -> list[float]:
+def score_dataset(model: Any, rows: Iterable[dict]) -> list[float]:
     """
     Score rows against an already warmed-up model, clamped to [0, 1].
 
@@ -137,11 +157,12 @@ class RunningStats:
 
 class HSTStreamProcessor:
     """
-    Model Wrapper for the River HalfSpaceTrees (HST) anomaly detector with ADWIN drift detection.
+    Model Wrapper combining river.preprocessing.MinMaxScaler and river.anomaly.HalfSpaceTrees
+    into a single river.compose.Pipeline with ADWIN drift detection.
 
-    Wraps the river HST model and strictly evaluates each observation with `score_one`
-    BEFORE calling `learn_one` to prevent test data leakage. Anomaly scores are continuously
-    fed into ADWIN (delta=0.002, bounding false positives at 0.2%) to flag concept drift.
+    Wraps the pipeline and strictly evaluates each observation with `score_one`
+    BEFORE calling `learn_one` to prevent test data leakage. Anomaly scores are
+    continuously fed into ADWIN (delta=0.002, bounding false positives at 0.2%) to flag concept drift.
     """
 
     def __init__(
@@ -149,15 +170,19 @@ class HSTStreamProcessor:
         service_id: str = "default",
         hst_cfg: Optional[HSTConfig] = None,
         adwin_cfg: Optional[ADWINConfig] = None,
-        model: Optional[HalfSpaceTrees] = None,
+        model: Optional[Any] = None,
         delta: float = 0.002,
+        with_scaler: bool = True,
     ):
         self.service_id = service_id
         self._hst_cfg = hst_cfg or HST_CFG
         self._adwin_cfg = adwin_cfg or ADWIN_CFG
 
-        # Initialize existing River HST model
-        self._model = model if model is not None else build_model(self._hst_cfg)
+        # Initialize MinMaxScaler + River HST Pipeline
+        if model is not None:
+            self._model = model
+        else:
+            self._model = build_model(self._hst_cfg, with_scaler=with_scaler)
 
         # Initialize ADWIN with delta=0.002 (bounds FPR at 0.2%)
         chosen_delta = delta if delta != 0.002 else self._adwin_cfg.delta
@@ -173,13 +198,25 @@ class HSTStreamProcessor:
         self._snapshot_step: int = 0
 
         logger.info(
-            f"[{service_id}] HSTStreamProcessor initialized. "
+            f"[{service_id}] HSTStreamProcessor initialized with river.compose.Pipeline(MinMaxScaler, HalfSpaceTrees). "
             f"n_trees={self._hst_cfg.n_trees}, height={self._hst_cfg.height}, "
             f"window_size={self._hst_cfg.window_size}, ADWIN_delta={chosen_delta}"
         )
 
     @property
-    def model(self) -> HalfSpaceTrees:
+    def model(self) -> Any:
+        return self._model
+
+    @property
+    def pipeline(self) -> compose.Pipeline:
+        if isinstance(self._model, compose.Pipeline):
+            return self._model
+        return compose.Pipeline(preprocessing.MinMaxScaler(), self._model)
+
+    @property
+    def hst_model(self) -> HalfSpaceTrees:
+        if isinstance(self._model, compose.Pipeline):
+            return self._model["HalfSpaceTrees"]
         return self._model
 
     @property
@@ -232,11 +269,11 @@ class HSTStreamProcessor:
         timestamp: Optional[datetime] = None,
     ) -> StreamEvent:
         """
-        Process a single observation through HST scoring, online learning, and ADWIN drift detection.
+        Process a single observation through MinMaxScaler -> HST scoring, online learning, and ADWIN drift detection.
 
         Execution order (strictly enforced to prevent test data leakage):
-          1. score_one(observation) -> evaluate anomaly score against prior knowledge
-          2. learn_one(observation) -> update model weights incrementally
+          1. score_one(observation) -> evaluate anomaly score against prior knowledge (MinMaxScaler + HST)
+          2. learn_one(observation) -> update min-max bounds and tree weights incrementally
           3. adwin.update(anomaly_score) -> evaluate distribution change point
         """
         t_start = time.perf_counter()
@@ -245,7 +282,7 @@ class HSTStreamProcessor:
         raw_score: float = self._model.score_one(observation)
         anomaly_score = float(min(max(raw_score, 0.0), 1.0))
 
-        # Step 2: Incremental online update
+        # Step 2: Incremental online update (MinMaxScaler + HST)
         self._model.learn_one(observation)
 
         latency_ms = (time.perf_counter() - t_start) * 1000.0
@@ -315,11 +352,11 @@ class HSTStreamProcessor:
             yield event
 
     def snapshot(self) -> bytes:
-        """Serialise current HST model state to bytes (pickle)."""
+        """Serialise current model/pipeline state to bytes (pickle)."""
         return pickle.dumps(self._model)
 
     def restore(self, model_bytes: bytes) -> None:
-        """Restore HST model state from a snapshot."""
+        """Restore model/pipeline state from a snapshot."""
         self._model = pickle.loads(model_bytes)
         logger.info(
             f"[{self.service_id}] Model restored from snapshot (step {self._snapshot_step})."

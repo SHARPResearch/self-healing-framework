@@ -1,18 +1,22 @@
 """
-Main entry point for ml-pipeline: River Collector connected to Half-Space Trees (HST) Anomaly Detection & ADWIN Drift Detection.
+Main entry point: Dynamic Model Updating for Microservices.
+
+Bridges Kubernetes telemetry (online-boutique) from Prometheus to River's HalfSpaceTrees (HST)
+and ADWIN drift detection in a 15-second real-time streaming loop.
 """
 
-import asyncio
 import logging
 import sys
-import threading
 import time
 from datetime import datetime
+from typing import Dict, Optional
+
+import requests
 
 from src.config import APP_CONFIG, config
 from src.data_pipeline import stream_synthetic_telemetry
 from src.hst_model import HSTStreamProcessor, StreamEvent, classify_severity
-from src.prometheus_client import PrometheusClient
+from src.prometheus_client import PrometheusClient, fetch_k8s_telemetry
 from src.river_collector import RiverCollector
 
 # Configure logging
@@ -23,115 +27,101 @@ logging.basicConfig(
 logger = logging.getLogger("ml-pipeline")
 
 
-def test_prometheus() -> PrometheusClient:
-    """Test Prometheus connection"""
-    logger.info("🔌 Testing Prometheus connection...")
-    client = PrometheusClient(url=config.PROMETHEUS_URL)
-    
-    if client.is_connected:
-        metrics = client.get_metrics_list()
-        targets = client.get_targets()
-        logger.info(f"✅ Connected to Prometheus! Found {len(metrics)} metrics and {len(targets)} targets")
-    else:
-        logger.warning(f"⚠️ Prometheus at {config.PROMETHEUS_URL} is unreachable (fallback mode available)")
-    
-    return client
-
-
-def demo_river_to_hst_connection():
+def run_streaming_loop(
+    prometheus_url: str = "http://localhost:9090",
+    namespace: str = "online-boutique",
+    interval_seconds: int = 15,
+    processor: Optional[HSTStreamProcessor] = None,
+    max_steps: Optional[int] = None,
+):
     """
-    Demonstrate connecting the RiverCollector metrics stream to the HST model.
+    Streaming loop that fetches Prometheus telemetry every 15 seconds,
+    passes the observation dictionary to processor.process_one(), logs the anomaly score,
+    and prints a warning if ADWIN's drift_detected flag evaluates to True.
     """
-    logger.info("=" * 60)
-    logger.info("🚀 INITIALIZING RIVER PIPELINE -> HST MODEL INTEGRATION")
-    logger.info("=" * 60)
+    logger.info("=" * 70)
+    logger.info("🚀 STARTING REAL-TIME KUBERNETES -> RIVER HST STREAMING LOOP")
+    logger.info(f"📍 Prometheus: {prometheus_url} | Namespace: {namespace} | Interval: {interval_seconds}s")
+    logger.info("=" * 70)
 
-    service_name = config.RIVER_SERVICE_NAME
-    
-    # 1. Instantiate the HST Stream Processor (Half-Space Trees + ADWIN)
-    processor = HSTStreamProcessor(
-        service_id=service_name,
-        hst_cfg=APP_CONFIG.hst,
-        adwin_cfg=APP_CONFIG.adwin,
-    )
-
-    # 2. Warm up HST on baseline normal telemetry
-    logger.info(f"🔥 Warming up HST model for '{service_name}' on baseline telemetry...")
-    warmup_stream = stream_synthetic_telemetry(n_steps=150, service_id=service_name, inject_anomaly_at=None)
-    warmup_stats = processor.warm_up(warmup_stream)
-    logger.info(
-        f"✅ HST Model Warmed Up: {warmup_stats.n_events} baseline events fitted "
-        f"at {warmup_stats.throughput_events_per_sec} events/sec"
-    )
-
-    # 3. Instantiate RiverCollector
-    collector = RiverCollector(
-        prometheus_url=config.PROMETHEUS_URL,
-        service_name=service_name,
-        batch_size=5,
-        poll_interval=2,
-    )
-
-    # 4. Connect RiverCollector directly to the HST Stream Processor
-    def on_hst_event(event: StreamEvent):
-        status_emoji = "🟢" if event.severity == "watch" else ("🟡" if event.severity == "warn" else "🔴")
-        drift_str = " 🚨 [ADWIN DRIFT DETECTED]" if event.drift_detected else ""
-        logger.info(
-            f"{status_emoji} [HST Event #{event.step:03d}] Service: {event.service_id} | "
-            f"Score: {event.anomaly_score:.4f} | Severity: {event.severity.upper():<8} | "
-            f"Latency: {event.latency_ms:.2f}ms{drift_str}"
+    # 1. Initialize HSTStreamProcessor wrapper (wraps HST + ADWIN delta=0.002)
+    if processor is None:
+        processor = HSTStreamProcessor(
+            service_id=namespace,
+            hst_cfg=APP_CONFIG.hst,
+            adwin_cfg=APP_CONFIG.adwin,
         )
 
-    collector.connect_hst_model(processor, on_event=on_hst_event)
+    # 2. Baseline warm-up check: if model is freshly initialized, warm up with baseline
+    if processor.step == 0:
+        logger.info(f"🔥 Warming up HST reference window with initial baseline observations...")
+        initial_telemetry = fetch_k8s_telemetry(prometheus_url=prometheus_url, namespace=namespace)
+        if any(v > 0 for v in initial_telemetry.values()):
+            # Fit initial telemetry point as baseline
+            for _ in range(50):
+                processor.model.learn_one(initial_telemetry)
+            processor.take_stable_snapshot()
+            logger.info("✅ Baseline warm-up initialized from live cluster telemetry.")
+        else:
+            warmup_stream = stream_synthetic_telemetry(n_steps=50, service_id=namespace, inject_anomaly_at=None)
+            processor.warm_up(warmup_stream)
 
-    # 5. Stream telemetry through the connected River + HST pipeline
-    logger.info("\n🌊 Streaming telemetry through River -> HST pipeline...")
-    
-    # If Prometheus has data, collect and score live metrics
-    live_df = collector.collect_metrics(time_range="5m")
-    if not live_df.empty:
-        logger.info(f"📊 Processing {len(live_df)} live Prometheus metric points through HST...")
-        for event in collector.stream_to_hst(processor, time_range="5m"):
-            on_hst_event(event)
-    else:
-        logger.info("ℹ️ Using simulated streaming telemetry (normal traffic + anomalous surge at step 20)...")
-        test_stream = stream_synthetic_telemetry(n_steps=40, service_id=service_name, inject_anomaly_at=20)
-        for point_features in test_stream:
-            # Emit into collector callback
-            point = {
-                "features": point_features,
-                "timestamp": datetime.now(),
-                "service": service_name,
-            }
-            for cb in collector.on_data_callbacks:
-                cb(point)
+    step_count = 0
 
-    # 6. Display pipeline stats
-    logger.info("=" * 60)
-    logger.info("📊 PIPELINE SUMMARY & MONITORING STATS")
-    logger.info("=" * 60)
-    logger.info(f"Total Steps Processed  : {processor.step}")
-    logger.info(f"ADWIN Drift Count      : {processor.drift_count}")
-    logger.info(f"Rolling Mean Score     : {processor.rolling_mean_score:.4f}")
-    logger.info(f"Rolling Max Score      : {processor.rolling_max_score:.4f}")
-    logger.info(f"Warn / Violation Rate  : {processor.warn_rate * 100:.1f}%")
-    logger.info(f"Collector Stats        : {collector.get_stats()}")
-    logger.info("=" * 60)
+    # 3. Continuous 15-second streaming loop
+    try:
+        while True:
+            # Step A: Ingest Kubernetes telemetry from Prometheus API (/api/v1/query)
+            telemetry: Dict[str, float] = fetch_k8s_telemetry(
+                prometheus_url=prometheus_url,
+                namespace=namespace,
+            )
+
+            # Step B: Pass data dictionary to process_one (score_one strictly before learn_one)
+            event: StreamEvent = processor.process_one(telemetry)
+            step_count += 1
+
+            # Step C: Log the observation and anomaly score
+            status_badge = "🟢 WATCH" if event.severity == "watch" else (
+                "🟡 WARN" if event.severity == "warn" else (
+                    "🟠 DEGRADE" if event.severity == "degrade" else "🔴 CRITICAL"
+                )
+            )
+            logger.info(
+                f"[{status_badge}] Step #{event.step:04d} | "
+                f"Score: {event.anomaly_score:.4f} | "
+                f"CPU: {telemetry.get('cpu_rate', 0.0):.4f} cores | "
+                f"Mem: {telemetry.get('memory_usage', 0.0) / (1024 * 1024):.1f} MB | "
+                f"Net Rx: {telemetry.get('network_receive_rate', 0.0) / 1024:.1f} KB/s | "
+                f"Latency: {event.latency_ms:.2f}ms"
+            )
+
+            # Step D: Conditional block - alert if ADWIN concept drift detected
+            if event.drift_detected or processor.adwin.drift_detected:
+                print(
+                    f"\n⚠️  [DRIFT DETECTED] ADWIN flagged significant concept drift in anomaly scores! "
+                    f"(Step #{event.step}, Current Score={event.anomaly_score:.4f}, Drift Count={processor.drift_count})\n"
+                )
+
+            # Check max_steps termination (useful for automated testing)
+            if max_steps is not None and step_count >= max_steps:
+                logger.info(f"Reached max requested steps ({max_steps}). Exiting streaming loop.")
+                break
+
+            # Step E: Wait 15 seconds before next poll
+            time.sleep(interval_seconds)
+
+    except KeyboardInterrupt:
+        logger.info("\n⏹️ Streaming loop gracefully stopped by user.")
 
 
 def main():
-    """Main execution entrypoint"""
-    logger.info("🚀 Starting ml-pipeline...")
-    logger.info(f"📋 Config: Prometheus={config.PROMETHEUS_URL}")
-    logger.info(f"📋 Config: Service={config.RIVER_SERVICE_NAME}")
-
-    # Check Prometheus
-    test_prometheus()
-
-    # Run the connected River -> HST pipeline
-    demo_river_to_hst_connection()
-
-    logger.info("✅ River pipeline -> HST model execution finished successfully!")
+    """Main application execution"""
+    run_streaming_loop(
+        prometheus_url=config.PROMETHEUS_URL,
+        namespace="online-boutique",
+        interval_seconds=15,
+    )
 
 
 if __name__ == "__main__":

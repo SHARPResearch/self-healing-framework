@@ -14,11 +14,11 @@ from prometheus_api_client.utils import parse_datetime
 
 logger = logging.getLogger(__name__)
 
-
 class PrometheusClient:
     """Simple Prometheus client for fetching metrics data"""
-    
-    def __init__(self, url: str = "http://localhost:9090", timeout: int = 30):
+    _connection_cache: Dict[str, tuple[bool, float]] = {}
+
+    def __init__(self, url: str = "http://localhost:9090", timeout: int = 5):
         """
         Initialize Prometheus client
         
@@ -34,17 +34,29 @@ class PrometheusClient:
             disable_ssl=False,
             timeout=timeout
         )
-        self._check_connection()
+        self.is_connected = self._check_connection()
     
     def _check_connection(self) -> bool:
-        """Check if Prometheus is reachable"""
+        """Check if Prometheus is reachable with cached result to avoid latency"""
+        now = time.time() if "time" in globals() else datetime.now().timestamp()
+        if self.url in self._connection_cache:
+            status, last_checked = self._connection_cache[self.url]
+            if now - last_checked < 10.0:
+                return status
+
         try:
-            self.client.check_prometheus_connection()
+            # Fast ping with 0.5s timeout
+            resp = requests.get(f"{self.url.rstrip('/')}/-/healthy", timeout=0.5)
+            connected = resp.status_code == 200
+        except Exception:
+            connected = False
+
+        self._connection_cache[self.url] = (connected, now)
+        if connected:
             logger.info(f"✅ Connected to Prometheus at {self.url}")
-            return True
-        except Exception as e:
-            logger.error(f"❌ Failed to connect to Prometheus: {e}")
-            raise ConnectionError(f"Cannot connect to Prometheus: {e}")
+        else:
+            logger.warning(f"⚠️ Prometheus not reachable at {self.url}")
+        return connected
     
     def query_instant(self, query: str, time: Optional[str] = None) -> pd.DataFrame:
         """

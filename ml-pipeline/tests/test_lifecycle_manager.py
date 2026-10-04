@@ -167,15 +167,29 @@ def test_strict_learn_gate_resists_absorbing_an_escalating_incident():
     assert rate(_run(strict, _escalating_incident())) > 2 * rate(_run(loose, _escalating_incident()))
 
 
-def _assert_restored_on(action, rows, events=()):
-    mgr = _manager(_cfg(), events=events)
-    pre = None
+def _spy_on_close(mgr):
+    """Record the champion (state, threshold, gate) at the moment each quarantine closes."""
+    seen = []
+    original = mgr._close_quarantine
+
+    def spy():
+        seen.append((capture(mgr.model).masses, mgr.threshold, mgr.learn_gate))
+        return original()
+
+    mgr._close_quarantine = spy
+    return seen
+
+
+def _assert_restored_on(action, rows, events=(), cfg=None):
+    mgr = DynamicModelManager("svc", cfg or _cfg(), HST, change_source=ReplayChangeEventSource(events))
+    rng = random.Random(0)
+    mgr.warm_up([_normal(rng) for _ in range(600)])
+    seen = _spy_on_close(mgr)
     for x in rows:
-        if mgr.phase == "stable":
-            pre = (capture(mgr.model).masses, mgr.threshold, mgr.learn_gate)
         res = mgr.process(x)
-        if res.lifecycle and res.lifecycle["action"] == action:
-            assert (capture(mgr.model).masses, mgr.threshold, mgr.learn_gate) == pre
+        if res.lifecycle:
+            assert res.lifecycle["action"] == action, res.lifecycle
+            assert (capture(mgr.model).masses, mgr.threshold, mgr.learn_gate) == seen[-1]
             return
     pytest.fail(f"expected a {action} decision")
 
@@ -183,20 +197,8 @@ def _assert_restored_on(action, rows, events=()):
 def test_hold_restores_the_champion_exactly():
     # With nothing allowed to count as learnable, a persistent shift must be held as an incident.
     never_learnable = AttributionConfig(learnable_factor=0.0, z=0.0)
-    mgr_cfg = _cfg(attribution=never_learnable)
-    mgr = DynamicModelManager("svc", mgr_cfg, HST,
-                              change_source=ReplayChangeEventSource([ChangeEvent("svc", "deployment", step=301)]))
-    mgr.warm_up([_normal(random.Random(0)) for _ in range(600)])
-    pre = None
-    for x in _shifted_stream():
-        if mgr.phase == "stable":
-            pre = (capture(mgr.model).masses, mgr.threshold, mgr.learn_gate)
-        res = mgr.process(x)
-        if res.lifecycle:
-            assert res.lifecycle["verdict"] == "incident" and res.lifecycle["action"] == "hold"
-            assert (capture(mgr.model).masses, mgr.threshold, mgr.learn_gate) == pre
-            return
-    pytest.fail("expected a hold decision")
+    _assert_restored_on("hold", _shifted_stream(), events=[ChangeEvent("svc", "deployment", step=301)],
+                        cfg=_cfg(attribution=never_learnable))
 
 
 def test_resume_restores_the_champion_exactly():
@@ -247,3 +249,23 @@ def test_start_from_shared_warm_state_matches_a_full_warm_up():
     mgr.start_from(warm, calib, rows[-300:])
     assert mgr.threshold == full.threshold and mgr.learn_gate == full.learn_gate
     assert capture(mgr.model).masses == capture(full.model).masses
+
+
+def test_rollback_is_refused_when_the_target_flags_the_new_normal():
+    # Promote to the post-deployment regime, then force a "decay" verdict on that same regime:
+    # restoring the pre-deployment v1 would alarm on nearly everything, so the manager keeps
+    # the champion instead of ping-ponging back (the failure of unconditional rollback).
+    cfg = _cfg(attribution=AttributionConfig(decay_factor=10.0))
+    mgr = _manager(cfg, events=[ChangeEvent("svc", "deployment", step=301)])
+    rng = random.Random(1)
+    _run(mgr, [_normal(rng) for _ in range(300)] + [_normal(rng, 0.35) for _ in range(500)])
+    promoted = mgr.registry.production().version
+    assert promoted > 1
+
+    mgr._open_quarantine("drift_down")
+    _run(mgr, [_normal(rng, 0.35) for _ in range(mgr._q_target_len)])
+    last = mgr.decisions[-1]
+    assert last["verdict"] == "no_change" and last["action"] == "resume"
+    assert last["evidence"]["rollback_target_version"] == 1
+    assert last["evidence"]["rollback_target_tail_alarm_rate"] >= 0.5
+    assert mgr.registry.production().version == promoted

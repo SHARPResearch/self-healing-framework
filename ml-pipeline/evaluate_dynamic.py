@@ -11,6 +11,8 @@ Policy variants:
   cadal                                              proposed method
   cadal_no_events                                    ablation: cadal without the change prior
   cadal_online                                       ablation: cadal with gated continuous learning
+  cadal_page_hinkley, cadal_kswin                    ablation: score drift detector (not in the default
+                                                     sweep, run with --variants)
 
 Outputs (outputs/component2/ by default), appended per run so an interrupted sweep resumes:
   runs.csv         one row per (entity, scenario, variant)
@@ -59,6 +61,11 @@ VARIANTS = {
     "cadal_no_events": replace(BASE, policy="cadal", use_change_events=False),
     "cadal_online": replace(BASE, policy="cadal", learn_gate_percentile=75.0),
 }
+DETECTOR_VARIANTS = {
+    "cadal_page_hinkley": replace(BASE, policy="cadal", detector="page_hinkley"),
+    "cadal_kswin": replace(BASE, policy="cadal", detector="kswin"),
+}
+ALL_VARIANTS = {**VARIANTS, **DETECTOR_VARIANTS}
 
 RUN_FIELDS = [
     "entity", "scenario", "variant", "precision", "recall", "f1", "mcc", "event_recall", "fa_rate",
@@ -139,7 +146,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--entities", nargs="*", default=None, help="default: all SMD entities")
     parser.add_argument("--scenarios", nargs="*", default=list(SCENARIOS), choices=SCENARIOS)
-    parser.add_argument("--variants", nargs="*", default=list(VARIANTS), choices=list(VARIANTS))
+    parser.add_argument("--variants", nargs="*", default=list(VARIANTS), choices=list(ALL_VARIANTS))
     parser.add_argument("--out-dir", default="outputs/component2")
     parser.add_argument("--seed", type=int, default=0, help="drift injection seed")
     parser.add_argument("--shard", default="0/1", help="i/n: run every n-th entity starting at i (parallel workers)")
@@ -172,7 +179,7 @@ def main() -> None:
                 if (entity_id, scenario, variant) in done:
                     continue
                 summary, curve, decisions = run_one(
-                    entity_id, model, warm_state, calib, recent, null, rows, labels, injections, VARIANTS[variant])
+                    entity_id, model, warm_state, calib, recent, null, rows, labels, injections, ALL_VARIANTS[variant])
                 key = {"entity": entity_id, "scenario": scenario, "variant": variant}
                 _append(runs_csv, RUN_FIELDS, {**key, **summary})
                 for i, f1 in enumerate(curve):

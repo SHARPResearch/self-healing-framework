@@ -48,7 +48,7 @@ from src.drift_attribution import (
 )
 from src.drift_detectors import ScoreDriftMonitor
 from src.hst_model import build_model, classify_severity
-from src.hst_state import apply, capture, reset
+from src.hst_state import HSTState, apply, capture, reset
 from src.mlflow_lifecycle import InMemoryRegistry
 from src.publishers import EventPublisher, NullPublisher
 
@@ -165,8 +165,22 @@ class DynamicModelManager:
         calib_scores = [_clamp(self.model.score_one(r)) for r in rows[split:]]
         for r in rows[split:]:
             self.model.learn_one(r)
+        self.start_from(None, calib_scores, rows[-self.cfg.periodic_window:])
+        duration = time.perf_counter() - start
+        return {"events": len(rows), "duration_s": round(duration, 2), "threshold": self.threshold}
+
+    def start_from(self, state: Optional[HSTState], calib_scores: list[float],
+                   recent_rows: list[dict]) -> None:
+        """
+        Begin serving from an already warmed-up state (None = the model as it is now).
+
+        Lets many policies or replicas share one expensive warm-up: apply the warm state to a
+        structurally identical model, calibrate from the same held-out scores, register v1.
+        """
+        if state is not None:
+            apply(self.model, state)
         self.threshold, self.learn_gate = self._calibrate(calib_scores)
-        self._recent_rows.extend(rows[-self.cfg.periodic_window:])
+        self._recent_rows.extend(recent_rows)
         version = self.registry.register(
             capture(self.model), self.threshold, self.cfg.target_rate,
             step=0, reason="calibrated warm-up on training split",
@@ -174,8 +188,6 @@ class DynamicModelManager:
         )
         self.registry.set_production(version, step=0, transition="promote",
                                      reason="initial production model after warm-up")
-        duration = time.perf_counter() - start
-        return {"events": len(rows), "duration_s": round(duration, 2), "threshold": self.threshold}
 
     # ── per-event ────────────────────────────────────────────────────────────
     def process(self, x: dict) -> StepResult:

@@ -79,6 +79,7 @@ class AttributionConfig:
     # A rollback target must still discriminate on recent data: a version that flags at least
     # this share of recent events (e.g. the pre-deployment model on a new normal) is not restored.
     rollback_max_alarm_rate: float = 0.5
+    moving_feature_rate: float = 0.5        # a feature out of fitted support this often is trending
 
 
 @dataclass(frozen=True)
@@ -90,7 +91,7 @@ class QuarantineEvidence:
     challenger_tail_alarm_rate: Optional[float]  # None if no challenger could be fitted
     change_event_id: Optional[str] = None     # most recent change event inside the horizon
     n_tail: Optional[int] = None              # tail size, for the sampling-noise slack
-    tail_out_of_support_rate: Optional[float] = None  # tail events outside the fit slice's range
+    tail_out_of_support_rate: Optional[float] = None  # max per-feature share of tail outside the fit range
 
 
 @dataclass(frozen=True)
@@ -149,12 +150,12 @@ def attribute(ev: QuarantineEvidence, cfg: AttributionConfig = AttributionConfig
     if ev.challenger_tail_alarm_rate is None:
         return done(Verdict.INCIDENT, "champion is alarming persistently and no challenger could be fitted")
 
-    if ev.tail_out_of_support_rate is not None and ev.tail_out_of_support_rate > learnable_line:
+    if ev.tail_out_of_support_rate is not None and ev.tail_out_of_support_rate > cfg.moving_feature_rate:
         return done(
             Verdict.INCIDENT,
-            f"champion alarming persistently and {ev.tail_out_of_support_rate:.4f} of the tail lies "
-            f"outside the range the challenger was fitted on (> {learnable_line:.4f}): the behaviour "
-            f"is still moving, not a new steady state",
+            f"champion alarming persistently and a feature is outside the range the challenger was "
+            f"fitted on for {ev.tail_out_of_support_rate:.4f} of the tail (> {cfg.moving_feature_rate}): "
+            f"the behaviour is still moving, not a new steady state",
         )
 
     if ev.challenger_tail_alarm_rate <= learnable_line:

@@ -62,12 +62,13 @@ class LifecycleConfig:
     policy: str = "cadal"
     use_change_events: bool = True          # False = cadal ablation without the change prior
     calib_percentile: float = 97.0          # per-version threshold, see ml-pipeline/RESULTS.md
-    # cadal learns only events scoring below this percentile of calibration scores. Gating on the
-    # alarm threshold itself lets a slowly escalating incident creep into "normal" one
-    # just-below-threshold event at a time; a stricter gate leaves that grey zone unlearned.
-    # 0 disables continuous learning entirely (the model then changes only through versioned,
-    # attributed transitions).
-    learn_gate_percentile: float = 75.0
+    # cadal learns only events scoring below this percentile of calibration scores. 0 (default)
+    # disables continuous learning: the served model changes only through versioned, attributed,
+    # validated transitions. On SMD every continuously learning variant lost recall, because
+    # HST's sliding reference window absorbs long anomaly segments. A positive value (e.g. 75)
+    # gives the gated-learning variant; gating on the alarm threshold itself would let a slowly
+    # escalating incident creep into "normal" one just-below-threshold event at a time.
+    learn_gate_percentile: float = 0.0
     detector: str = "adwin"
     adwin_delta: float = 0.002
     # Quarantine lengths (events). SMD is sampled once a minute, so 720 = 12 h, 1440 = 1 day.
@@ -91,6 +92,8 @@ class LifecycleConfig:
     @property
     def learns_while_serving(self) -> bool:
         """Whether the served model keeps learning between versions (decides how to calibrate)."""
+        if self.policy == "cadal":
+            return self.learn_gate_percentile > 0
         return self.policy not in ("static", "periodic")
 
     @property
@@ -117,17 +120,21 @@ def _clamp(x: float) -> float:
 
 def out_of_support_rate(fit_rows: list[dict], rows: list[dict], margin: float = 0.1) -> float:
     """
-    Fraction of `rows` with at least one feature outside the [min, max] seen in `fit_rows`,
-    widened by `margin` x that feature's range (and a small absolute floor for flat features).
+    How persistently the most-moving feature has left the range seen in `fit_rows`.
+
+    For each feature, the fraction of `rows` outside its fitted [min, max] widened by `margin` x
+    that range (with a small absolute floor for flat features); returns the maximum over
+    features. Transient spikes in a few of many features stay low; a feature that is trending
+    away (runaway metric, memory leak) is out of support for most of the tail.
     """
     keys = list(fit_rows[0])
-    lo = {k: min(r[k] for r in fit_rows) for k in keys}
-    hi = {k: max(r[k] for r in fit_rows) for k in keys}
-    pad = {k: max(margin * (hi[k] - lo[k]), 1e-3) for k in keys}
-    outside = sum(
-        1 for r in rows if any(r[k] < lo[k] - pad[k] or r[k] > hi[k] + pad[k] for k in keys)
-    )
-    return outside / len(rows)
+    worst = 0
+    for k in keys:
+        values = [r[k] for r in fit_rows]
+        lo, hi = min(values), max(values)
+        pad = max(margin * (hi - lo), 1e-3)
+        worst = max(worst, sum(1 for r in rows if r[k] < lo - pad or r[k] > hi + pad))
+    return worst / len(rows)
 
 
 class DynamicModelManager:
@@ -422,9 +429,13 @@ class DynamicModelManager:
                 )
 
         if result.action is Action.PROMOTE:
-            # Serving threshold: calibrated the way the promoted model will run (score each
-            # remaining buffered event, then learn it), not on the frozen stationarity test.
-            challenger_threshold, challenger_gate = self._calibrate(self._prequential(rows[n_fit:]))
+            if self.cfg.learns_while_serving:
+                # A learning model is served with a threshold calibrated the way it will run
+                # (score each remaining buffered event, then learn it), not on the frozen
+                # stationarity test.
+                challenger_threshold, challenger_gate = self._calibrate(self._prequential(rows[n_fit:]))
+            # A frozen-serving promotion serves exactly what was validated: the challenger
+            # fitted on the fit slice with the threshold from frozen scores of the calib slice.
             self.threshold, self.learn_gate = challenger_threshold, challenger_gate
             version = self.registry.register(
                 capture(self.model), self.threshold, self.cfg.target_rate, step=self.step,

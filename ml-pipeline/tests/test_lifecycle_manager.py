@@ -23,7 +23,7 @@ def _cfg(policy="cadal", **kw):
     base = dict(
         policy=policy, calib_percentile=95.0, quarantine_with_change=200, quarantine_silent=400,
         change_horizon=200, cooldown=50, scheduled_every=10**9, scheduled_window=100,
-        periodic_window=300, naive_stable_every=200,
+        periodic_window=300, naive_stable_every=200, null_windows=3,
     )
     base.update(kw)
     return LifecycleConfig(**base)

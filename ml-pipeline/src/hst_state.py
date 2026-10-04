@@ -209,18 +209,22 @@ def feature_names(model: Any) -> list[str]:
     return sorted(hst.limits)
 
 
-def reset(model: Any) -> None:
+def reset(model: Any, keep_scaler: bool = False) -> None:
     """
     Forget everything learned but keep the (expensive to build) tree structure.
 
     Gives a fresh challenger model in milliseconds instead of the ~16 s a newly constructed
     HST spends building its trees on its first learn_one().
+
+    keep_scaler=True keeps the MinMaxScaler's running min/max. Challengers want this: a scaler
+    re-learned from a few hundred events has narrow ranges that keep widening afterwards, which
+    moves every point to a different tree cell than the one its learned mass sits in.
     """
     scaler, hst = _split(model)
     _zero_masses(hst)
     hst.counter = 0
     hst._first_window = True
-    if scaler is not None:
+    if scaler is not None and not keep_scaler:
         fresh = type(scaler)()
         scaler.min = fresh.min
         scaler.max = fresh.max

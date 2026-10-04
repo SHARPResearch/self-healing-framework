@@ -5,7 +5,9 @@ import pytest
 
 from src.config import HSTConfig
 from src.hst_model import build_model
-from src.hst_state import HSTState, apply, capture, reset, structure_fingerprint
+from src.hst_state import (
+    HSTState, apply, capture, feature_names, materialize, reset, structure_fingerprint,
+)
 
 CFG = HSTConfig(n_trees=5, height=6, window_size=20, seed=7)
 
@@ -86,6 +88,19 @@ def test_apply_rejects_a_model_with_different_structure():
     assert structure_fingerprint(a) != structure_fingerprint(b)
     with pytest.raises(ValueError):
         apply(b, capture(a))
+
+
+def test_materialize_builds_identical_structure_without_data():
+    trained = build_model(CFG)
+    for r in _rows(60):
+        trained.learn_one(r)
+    replica = build_model(CFG)
+    materialize(replica, feature_names(trained))
+    assert feature_names(trained) == ["a", "b"]
+    assert structure_fingerprint(replica) == structure_fingerprint(trained)
+    apply(replica, capture(trained))
+    probe = _rows(20, seed=9)
+    assert _scores(replica, probe) == _scores(trained, probe)
 
 
 def test_capture_requires_a_built_model():

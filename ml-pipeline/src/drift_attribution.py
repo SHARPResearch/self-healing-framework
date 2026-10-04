@@ -32,6 +32,7 @@ alerting continues) to pick the response:
 Pure functions only: no model state, no I/O, so every rule is unit tested directly.
 """
 
+import math
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
@@ -70,6 +71,7 @@ class AttributionConfig:
     stale_factor_silent: float = 4.0        # ... and when nothing explains the shift
     learnable_factor: float = 2.0           # challenger tail alarm rate allowed for "self-consistent"
     decay_factor: float = 0.2               # champion alarm rate below this * r0 means insensitive
+    z: float = 2.33                         # one-sided 99% binomial slack on the learnable line
 
 
 @dataclass(frozen=True)
@@ -80,6 +82,7 @@ class QuarantineEvidence:
     champion_tail_alarm_rate: float           # over the tail (last part) of the quarantine
     challenger_tail_alarm_rate: Optional[float]  # None if no challenger could be fitted
     change_event_id: Optional[str] = None     # most recent change event inside the horizon
+    n_tail: Optional[int] = None              # tail size, for the sampling-noise slack
 
 
 @dataclass(frozen=True)
@@ -96,7 +99,10 @@ def attribute(ev: QuarantineEvidence, cfg: AttributionConfig = AttributionConfig
     has_change = ev.change_event_id is not None
     stale_factor = cfg.stale_factor_with_change if has_change else cfg.stale_factor_silent
     stale_line = stale_factor * r0
-    learnable_line = cfg.learnable_factor * r0
+    # A challenger calibrated to r0 on a few hundred events will not hit r0 exactly on the tail;
+    # allow for binomial sampling noise so a learnable regime is not rejected on noise alone.
+    slack = cfg.z * math.sqrt(r0 * (1 - r0) / ev.n_tail) if ev.n_tail else 0.0
+    learnable_line = cfg.learnable_factor * r0 + slack
 
     evidence = {
         "trigger": ev.trigger,
@@ -107,6 +113,7 @@ def attribute(ev: QuarantineEvidence, cfg: AttributionConfig = AttributionConfig
             None if ev.challenger_tail_alarm_rate is None else round(ev.challenger_tail_alarm_rate, 4)
         ),
         "change_event_id": ev.change_event_id,
+        "n_tail": ev.n_tail,
         "stale_line": round(stale_line, 4),
         "learnable_line": round(learnable_line, 4),
     }

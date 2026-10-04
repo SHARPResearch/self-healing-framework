@@ -142,6 +142,7 @@ def main() -> None:
     parser.add_argument("--variants", nargs="*", default=list(VARIANTS), choices=list(VARIANTS))
     parser.add_argument("--out-dir", default="outputs/component2")
     parser.add_argument("--seed", type=int, default=0, help="drift injection seed")
+    parser.add_argument("--shard", default="0/1", help="i/n: run every n-th entity starting at i (parallel workers)")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -151,6 +152,8 @@ def main() -> None:
     runs_csv, curves_csv, decisions_path = out / "runs.csv", out / "f1_curves.csv", out / "decisions.jsonl"
     done = _done_keys(runs_csv)
     entities = args.entities or discover_entities("train")
+    shard, n_shards = (int(v) for v in args.shard.split("/"))
+    entities = entities[shard::n_shards]
 
     for entity_id in entities:
         todo = [(s, v) for s in args.scenarios for v in args.variants if (entity_id, s, v) not in done]

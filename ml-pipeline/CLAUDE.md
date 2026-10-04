@@ -10,12 +10,25 @@ formerly `component-1-2-pipeline/` at repo root. Full spec: `docs/Component_1_2_
 PR-AUC, percentile threshold, oracle best F1), `src/pipeline.py` (shared `train_and_evaluate()`
 / `warm_up_and_score()` / `warm_up_calibrate_and_score()`, used by `train.py`,
 `sweep_hyperparams.py`, `train_all.py`, and `calibrate.py`) are implemented and tested (`tests/`).
-Component 2 (streaming ingestion + ADWIN drift detection + MLflow rollback) is a teammate's work
-and intentionally not started — `main.py` is still the uv-init placeholder, and
-`src/data_pipeline.py` / `src/mlflow_lifecycle.py` exist only as reserved, docstring-only stub
-files (no functions, no classes) marking out that territory so there's no filename collision
-when the real implementation lands. See each file's docstring for what it's meant to contain and
-which guide part it maps to.
+Component 2 (dynamic model updating, owned by Shalon) is implemented as CADAL, the Change-Aware
+Drift Attribution Lifecycle: `src/lifecycle_manager.py` (`DynamicModelManager`, every policy in the
+ablation), `src/drift_attribution.py` (pure verdict rules), `src/drift_detectors.py`,
+`src/change_events.py`, `src/hst_state.py` (sparse snapshots), `src/mlflow_lifecycle.py`
+(registry), `src/publishers.py`, plus `run_dynamic.py`, `evaluate_dynamic.py` and
+`summarize_dynamic.py`. Design and novelty: `../docs/Component_2_Dynamic_Model_Updating.md`;
+numbers: `RESULTS_COMPONENT2.md`. Things that look like knobs but were measured, so don't
+"simplify" them back:
+- CADAL serves a **frozen** model (`learn_gate_percentile=0`); every continuously learning
+  variant lost recall on SMD because HST's 250-event reference window absorbs long anomalies.
+- Each version is **calibrated the way it is served** (frozen vs prequential). Frozen calibration
+  of a learning model left promoted challengers silent.
+- Challenger learnability is a **frozen** stationarity test, with lines floored by a per-entity
+  null computed on training windows (`attribution_null`).
+- Rollback targets are **verified** on recent data, so the pre-deployment model is never restored
+  onto a new normal (the ping-pong failure of unconditional rollback).
+- Never pickle an HST for versioning (71 MB, ~6 s to load); use `hst_state.capture/apply`.
+  Challengers reuse the champion's tree structure (`reset(keep_scaler=True)`); building a fresh
+  HST costs ~16 s.
 
 **Tuning + calibration done, see `RESULTS.md` for full numbers and honest caveats**: threshold
 swept (0.7 guide default -> 0.4), hyperparameters swept one-at-a-time (baseline
@@ -40,8 +53,8 @@ baseline `height=15`'s 105.
 **Fixed gotcha**: the guide's Part 5 assumes `MLFLOW_TRACKING_URI=./mlruns` (a plain filesystem
 store), but `mlflow>=3` rejects that by default (`MlflowException: filesystem tracking backend
 ... is in maintenance mode`). `src/config.py`'s default is now `sqlite:///mlflow.db` instead —
-whoever builds Component 2's `mlflow_lifecycle.py` should keep using that URI, not the guide's
-literal `./mlruns`.
+Component 2's `MLflowRegistry` uses that URI too. MLflow 3 also deprecated registry *stages*
+(the guide's Production/Archived), so the registry uses the `production` alias plus status tags.
 
 `SMD_RAW_DIR` now points at `../datasets/smd/raw` (this repo's canonical dataset location) instead
 of a local copy — don't re-duplicate the ~466MB dataset here.

@@ -13,6 +13,9 @@ dashboard.
 - `docs/Doc3_Execution_Guide.md` — chronological build phases (Phase 0 workstation setup through
   Phase 9 CI/CD). Each phase lists manual tasks before coding tasks; don't start phase N+1 before
   phase N's verification passes.
+- `docs/Component_2_Dynamic_Model_Updating.md` — Component 2's research positioning (gap analysis,
+  related work, novelty claims), design and requirement mapping. Supersedes the guide's Part 5
+  "ADWIN fires → roll back" design, which it shows to be harmful after deployments.
 - `docs/Component_1_2_Technical_Guide.md` — the standalone HST anomaly-detection + drift-detection
   research prototype (now at `ml-pipeline/`), written to be lifted into `services/ml-backend` later.
 - The other files under `docs/` (`CodingStandards.md`, `Services.md`, `Architecture.md`, `API.md`,
@@ -41,7 +44,7 @@ dashboard.
 | `services/shared/` | Cross-service shared code | — |
 | `services/target-services/` | Sample microservices for chaos-injection demos | Node/Python/Go |
 | `frontend/` | Observability Dashboard | React 18, Vite, Tailwind |
-| `ml-pipeline/` | Standalone HST warm-up + drift-detection research pipeline (Component 1-2). Component 1 (train/evaluate/tune/calibrate) is done — see `ml-pipeline/RESULTS.md`; Component 2 (streaming + drift) is reserved (`src/data_pipeline.py`/`src/mlflow_lifecycle.py` stubs) for a teammate. | Python, river, MLflow |
+| `ml-pipeline/` | Standalone HST warm-up + drift-detection research pipeline (Component 1-2). Component 1 (train/evaluate/tune/calibrate) is done — see `ml-pipeline/RESULTS.md`; Component 2 (dynamic model updating, CADAL: drift attribution, versioned rollback, change-aware triggers) is implemented — see `docs/Component_2_Dynamic_Model_Updating.md` and `ml-pipeline/RESULTS_COMPONENT2.md`. | Python, river, MLflow |
 | `adaptive-pipeline/` | Standalone RL research pipeline (Component 4 — Adaptive Learning Decision Engine). Scaffold only, no code yet, no `.venv` installed yet — see `adaptive-pipeline/CLAUDE.md` for the open state/action/reward design questions that need answering first. | Python, Stable-Baselines3, Gymnasium, MLflow |
 | `infrastructure/` | Helm charts, Kubernetes manifests, Terraform | Helm, kubectl, Terraform |
 | `datasets/` | SMD/NAB dataset download + preprocessing scripts (not the raw data itself) | — |

@@ -316,3 +316,15 @@ def test_attribution_null_is_computed_from_training_windows_and_restores_the_mod
     assert all(0.0 <= v["learnable"] <= 1.0 and 0.0 <= v["moving"] <= 1.0 for v in null.values())
     assert capture(mgr.model).masses == before
     assert mgr.attribution_null, "warm_up computes the null for cadal"
+
+
+def test_the_change_that_opened_a_long_quarantine_still_explains_it_at_close():
+    # Quarantine (400) longer than the change horizon (100): the deployment that opened it must
+    # still count as the explanation when it closes, so the lower stale line applies.
+    cfg = _cfg(quarantine_with_change=400, quarantine_silent=400, change_horizon=100)
+    mgr = _manager(cfg, events=[ChangeEvent("svc", "deployment", step=301)])
+    _run(mgr, _shifted_stream())
+    first = mgr.decisions[0]
+    assert first["trigger"] == "change_event"
+    assert first["evidence"]["change_event_id"] == "svc:deployment@301"
+    assert first["evidence"]["stale_line"] == round(2.0 * cfg.target_rate, 4)

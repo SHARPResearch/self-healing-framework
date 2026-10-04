@@ -78,7 +78,7 @@ class LifecycleConfig:
     # quarantine restart and the lower persistence requirement instead.
     quarantine_with_change: int = 1440
     quarantine_silent: int = 1440
-    change_horizon: int = 720               # a change explains drift detected within this many steps
+    change_horizon: int = 720               # a change explains a shift whose quarantine opens within this many steps after it
     fit_frac: float = 0.5                   # quarantine buffer split: fit / calib / tail
     calib_frac: float = 0.3
     cooldown: int = 250                     # ignore drift signals right after a decision
@@ -207,6 +207,7 @@ class DynamicModelManager:
         self._q_alarms: list[bool] = []
         self._q_trigger = ""
         self._q_target_len = 0
+        self._q_start = 0
 
         self.decisions: list[dict] = []
         self.attribution_null: dict[int, dict[str, float]] = {}
@@ -377,10 +378,16 @@ class DynamicModelManager:
         self.transition_ms.append((time.perf_counter() - t) * 1000)
         return self._decide({"action": "promote", "verdict": "scheduled", "trigger": "scheduled"})
 
-    def _change_in_horizon(self) -> Optional[str]:
+    def _change_in_horizon(self, since: Optional[int] = None) -> Optional[str]:
+        """
+        Id of a change event that explains a shift observed from step `since` (default: now):
+        one that happened at most `change_horizon` steps before it, or any time after it (a
+        change during the quarantine explains what the quarantine observed).
+        """
         if not self.cfg.use_change_events or self._last_change is None:
             return None
-        if self.step - self._last_change_step <= self.cfg.change_horizon:
+        since = self.step if since is None else since
+        if self._last_change_step >= since - self.cfg.change_horizon:
             return self._last_change.event_id
         return None
 
@@ -397,6 +404,7 @@ class DynamicModelManager:
 
     def _open_quarantine(self, trigger: str) -> None:
         self.phase = "quarantine"
+        self._q_start = self.step
         self._q_trigger = trigger
         self._q_rows, self._q_alarms = [], []
         explained = trigger == "change_event" or self._change_in_horizon() is not None
@@ -455,7 +463,7 @@ class DynamicModelManager:
             champion_alarm_rate=sum(alarms) / n,
             champion_tail_alarm_rate=sum(tail_alarms) / len(tail_alarms),
             challenger_tail_alarm_rate=challenger_tail,
-            change_event_id=self._change_in_horizon(),
+            change_event_id=self._change_in_horizon(since=self._q_start),
             n_tail=len(tail_rows),
             tail_out_of_support_rate=out_of_support_rate(rows[:n_fit], tail_rows),
             learnable_floor=self.attribution_null.get(n, {}).get("learnable"),

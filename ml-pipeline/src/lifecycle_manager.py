@@ -71,9 +71,12 @@ class LifecycleConfig:
     learn_gate_percentile: float = 0.0
     detector: str = "adwin"
     adwin_delta: float = 0.002
-    # Quarantine lengths (events). SMD is sampled once a minute, so 720 = 12 h, 1440 = 1 day.
-    # Each must leave the challenger's fit slice >= HST window_size or it cannot score at all.
-    quarantine_with_change: int = 720
+    # Quarantine lengths (events). SMD is sampled once a minute, so 1440 = 1 day. Each must leave
+    # the challenger's fit slice >= HST window_size or it cannot score at all. A shorter buffer
+    # after a change event was tried (720) and made challengers too noisy to pass the
+    # stationarity test on SMD; the change prior now acts through the immediate trigger, the
+    # quarantine restart and the lower persistence requirement instead.
+    quarantine_with_change: int = 1440
     quarantine_silent: int = 1440
     change_horizon: int = 720               # a change explains drift detected within this many steps
     fit_frac: float = 0.5                   # quarantine buffer split: fit / calib / tail

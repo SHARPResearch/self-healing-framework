@@ -62,3 +62,12 @@ def test_evidence_is_recorded_for_the_audit_trail():
     assert a.evidence["change_event_id"] == "x"
     assert a.evidence["stale_line"] == round(2.0 * R0, 4)
     assert a.evidence["trigger"] == "drift_up"
+
+
+def test_small_tails_get_binomial_slack_on_the_learnable_line():
+    # 0.11 on a 40 event tail is 4 or 5 alarms vs an expected ~1: noise, not a failed regime.
+    noisy = _ev(challenger_tail_alarm_rate=0.11, n_tail=40)
+    assert attribute(noisy).verdict is Verdict.CONCEPT_DRIFT
+    assert attribute(_ev(challenger_tail_alarm_rate=0.11)).verdict is Verdict.INCIDENT
+    # The slack shrinks with more evidence.
+    assert attribute(_ev(challenger_tail_alarm_rate=0.11, n_tail=5000)).verdict is Verdict.INCIDENT

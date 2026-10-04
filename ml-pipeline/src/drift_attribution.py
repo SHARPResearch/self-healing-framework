@@ -25,6 +25,10 @@ alerting continues) to pick the response:
   learnability   a challenger fitted on the first part of the quarantine buffer and calibrated
                  on the middle part: does it find the tail of the buffer normal? A stable new
                  regime is self-consistent; an incident in progress usually is not.
+  support        does the tail stay inside the value range the challenger was fitted on? A
+                 new steady regime does; a trend keeps leaving it. Needed because tree models
+                 (HST included) put every value beyond the fitted range into the same edge cell,
+                 so a runaway metric looks "learnable" to the challenger itself.
   change prior   did an exogenous change (deployment, config) precede the shift? If so, less
                  persistence is required before accepting it as a new normal.
   direction      scores shifting down instead of up points at decay, not drift.
@@ -86,6 +90,7 @@ class QuarantineEvidence:
     challenger_tail_alarm_rate: Optional[float]  # None if no challenger could be fitted
     change_event_id: Optional[str] = None     # most recent change event inside the horizon
     n_tail: Optional[int] = None              # tail size, for the sampling-noise slack
+    tail_out_of_support_rate: Optional[float] = None  # tail events outside the fit slice's range
 
 
 @dataclass(frozen=True)
@@ -117,6 +122,9 @@ def attribute(ev: QuarantineEvidence, cfg: AttributionConfig = AttributionConfig
         ),
         "change_event_id": ev.change_event_id,
         "n_tail": ev.n_tail,
+        "tail_out_of_support_rate": (
+            None if ev.tail_out_of_support_rate is None else round(ev.tail_out_of_support_rate, 4)
+        ),
         "stale_line": round(stale_line, 4),
         "learnable_line": round(learnable_line, 4),
     }
@@ -140,6 +148,14 @@ def attribute(ev: QuarantineEvidence, cfg: AttributionConfig = AttributionConfig
 
     if ev.challenger_tail_alarm_rate is None:
         return done(Verdict.INCIDENT, "champion is alarming persistently and no challenger could be fitted")
+
+    if ev.tail_out_of_support_rate is not None and ev.tail_out_of_support_rate > learnable_line:
+        return done(
+            Verdict.INCIDENT,
+            f"champion alarming persistently and {ev.tail_out_of_support_rate:.4f} of the tail lies "
+            f"outside the range the challenger was fitted on (> {learnable_line:.4f}): the behaviour "
+            f"is still moving, not a new steady state",
+        )
 
     if ev.challenger_tail_alarm_rate <= learnable_line:
         why = f"after change {ev.change_event_id}" if has_change else "with no explaining change event"

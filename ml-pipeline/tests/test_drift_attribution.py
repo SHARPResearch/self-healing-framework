@@ -71,3 +71,11 @@ def test_small_tails_get_binomial_slack_on_the_learnable_line():
     assert attribute(_ev(challenger_tail_alarm_rate=0.11)).verdict is Verdict.INCIDENT
     # The slack shrinks with more evidence.
     assert attribute(_ev(challenger_tail_alarm_rate=0.11, n_tail=5000)).verdict is Verdict.INCIDENT
+
+
+def test_tail_leaving_the_fitted_support_is_an_incident_even_if_challenger_scores_it_normal():
+    a = attribute(_ev(challenger_tail_alarm_rate=0.01, tail_out_of_support_rate=0.6, n_tail=200))
+    assert a.verdict is Verdict.INCIDENT
+    assert "outside the range" in a.reason
+    ok = attribute(_ev(challenger_tail_alarm_rate=0.01, tail_out_of_support_rate=0.02, n_tail=200))
+    assert ok.verdict is Verdict.CONCEPT_DRIFT

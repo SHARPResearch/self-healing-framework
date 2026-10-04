@@ -139,10 +139,10 @@ class InMemoryRegistry:
         self._record(step, transition, previous, version, reason, evidence)
 
     def checkpoint(self, state: HSTState, threshold: float, target_rate: float, *, step: int,
-                   reason: str) -> int:
+                   reason: str, tags: Optional[dict] = None) -> int:
         """Register the current healthy production state as a new stable version and serve it."""
         version = self.register(state, threshold, target_rate, step=step, reason=reason,
-                                tags={"kind": "stable_checkpoint"})
+                                tags={"kind": "stable_checkpoint", **(tags or {})})
         self.set_production(version, step=step, transition="checkpoint", reason=reason)
         return version
 

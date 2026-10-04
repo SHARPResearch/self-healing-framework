@@ -92,6 +92,11 @@ class QuarantineEvidence:
     change_event_id: Optional[str] = None     # most recent change event inside the horizon
     n_tail: Optional[int] = None              # tail size, for the sampling-noise slack
     tail_out_of_support_rate: Optional[float] = None  # max per-feature share of tail outside the fit range
+    # Per-entity null: what the same stationarity test gives on windows of the entity's own
+    # normal training data (see lifecycle_manager.attribution_null). Raise the lines to these
+    # floors so natural non-stationarity (daily cycles, spiky features) is not read as "moving".
+    learnable_floor: Optional[float] = None
+    moving_floor: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -111,7 +116,8 @@ def attribute(ev: QuarantineEvidence, cfg: AttributionConfig = AttributionConfig
     # A challenger calibrated to r0 on a few hundred events will not hit r0 exactly on the tail;
     # allow for binomial sampling noise so a learnable regime is not rejected on noise alone.
     slack = cfg.z * math.sqrt(r0 * (1 - r0) / ev.n_tail) if ev.n_tail else 0.0
-    learnable_line = cfg.learnable_factor * r0 + slack
+    learnable_line = max(cfg.learnable_factor * r0 + slack, ev.learnable_floor or 0.0)
+    moving_line = max(cfg.moving_feature_rate, ev.moving_floor or 0.0)
 
     evidence = {
         "trigger": ev.trigger,
@@ -126,6 +132,7 @@ def attribute(ev: QuarantineEvidence, cfg: AttributionConfig = AttributionConfig
         "tail_out_of_support_rate": (
             None if ev.tail_out_of_support_rate is None else round(ev.tail_out_of_support_rate, 4)
         ),
+        "moving_line": round(moving_line, 4),
         "stale_line": round(stale_line, 4),
         "learnable_line": round(learnable_line, 4),
     }
@@ -150,11 +157,11 @@ def attribute(ev: QuarantineEvidence, cfg: AttributionConfig = AttributionConfig
     if ev.challenger_tail_alarm_rate is None:
         return done(Verdict.INCIDENT, "champion is alarming persistently and no challenger could be fitted")
 
-    if ev.tail_out_of_support_rate is not None and ev.tail_out_of_support_rate > cfg.moving_feature_rate:
+    if ev.tail_out_of_support_rate is not None and ev.tail_out_of_support_rate > moving_line:
         return done(
             Verdict.INCIDENT,
             f"champion alarming persistently and a feature is outside the range the challenger was "
-            f"fitted on for {ev.tail_out_of_support_rate:.4f} of the tail (> {cfg.moving_feature_rate}): "
+            f"fitted on for {ev.tail_out_of_support_rate:.4f} of the tail (> {moving_line:.4f}): "
             f"the behaviour is still moving, not a new steady state",
         )
 

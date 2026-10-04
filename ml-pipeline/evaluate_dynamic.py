@@ -44,7 +44,7 @@ from src.dynamic_eval import stream_metrics  # noqa: E402
 from src.evaluate import load_labels  # noqa: E402
 from src.hst_model import build_model  # noqa: E402
 from src.hst_state import capture  # noqa: E402
-from src.lifecycle_manager import DynamicModelManager, LifecycleConfig  # noqa: E402
+from src.lifecycle_manager import DynamicModelManager, LifecycleConfig, attribution_null  # noqa: E402
 
 logger = logging.getLogger("evaluate_dynamic")
 
@@ -61,8 +61,8 @@ VARIANTS = {
 }
 
 RUN_FIELDS = [
-    "entity", "scenario", "variant", "precision", "recall", "f1", "event_recall", "fa_rate",
-    "post_drift_precision", "post_drift_recall", "post_drift_f1", "post_drift_fa_rate",
+    "entity", "scenario", "variant", "precision", "recall", "f1", "mcc", "event_recall", "fa_rate",
+    "post_drift_precision", "post_drift_recall", "post_drift_f1", "post_drift_mcc", "post_drift_fa_rate",
     "recovery_steps", "n_promote", "n_rollback", "n_hold", "n_resume", "n_versions",
     "latency_mean_ms", "latency_p50_ms", "latency_p99_ms", "transition_max_ms", "duration_s",
 ]
@@ -99,14 +99,17 @@ def warm_up_entity(entity_id: str):
         model.learn_one(r)
     # Same warm state for every policy; each is calibrated the way it serves (see
     # DynamicModelManager.warm_up): frozen policies on frozen scores, learning ones prequentially.
-    return model, capture(model), {"frozen": frozen, "prequential": prequential}, train[-BASE.periodic_window:]
+    # The attribution null depends only on the quarantine lengths, so cadal variants share it.
+    null = attribution_null(DynamicModelManager(entity_id, BASE, HST_CFG, model=model), train)
+    return model, capture(model), {"frozen": frozen, "prequential": prequential}, train[-BASE.periodic_window:], null
 
 
-def run_one(entity_id, model, warm_state, calib, recent, rows, labels, injections, cfg):
+def run_one(entity_id, model, warm_state, calib, recent, null, rows, labels, injections, cfg):
     events = change_events_for(injections, entity_id)
     mgr = DynamicModelManager(entity_id, cfg, HST_CFG, model=model,
                               change_source=ReplayChangeEventSource(events))
-    mgr.start_from(warm_state, calib["prequential" if cfg.learns_while_serving else "frozen"], recent)
+    mgr.start_from(warm_state, calib["prequential" if cfg.learns_while_serving else "frozen"], recent,
+                   null if cfg.policy == "cadal" else None)
     alarms, latency = [], []
     t0 = time.perf_counter()
     for x in rows:
@@ -154,7 +157,7 @@ def main() -> None:
         if not todo:
             continue
         t = time.perf_counter()
-        model, warm_state, calib, recent = warm_up_entity(entity_id)
+        model, warm_state, calib, recent, null = warm_up_entity(entity_id)
         logger.info("[%s] warm-up %.0fs, %d runs to do", entity_id, time.perf_counter() - t, len(todo))
         test_df = pd.read_parquet(preprocess_entity(entity_id, split="test"))
         labels = load_labels(entity_id)
@@ -166,7 +169,7 @@ def main() -> None:
                 if (entity_id, scenario, variant) in done:
                     continue
                 summary, curve, decisions = run_one(
-                    entity_id, model, warm_state, calib, recent, rows, labels, injections, VARIANTS[variant])
+                    entity_id, model, warm_state, calib, recent, null, rows, labels, injections, VARIANTS[variant])
                 key = {"entity": entity_id, "scenario": scenario, "variant": variant}
                 _append(runs_csv, RUN_FIELDS, {**key, **summary})
                 for i, f1 in enumerate(curve):

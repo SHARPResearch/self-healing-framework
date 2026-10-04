@@ -196,7 +196,7 @@ def test_hold_restores_the_champion_exactly():
     # With nothing allowed to count as learnable, a persistent shift must be held as an incident.
     never_learnable = AttributionConfig(learnable_factor=0.0, z=0.0)
     _assert_restored_on("hold", _shifted_stream(), events=[ChangeEvent("svc", "deployment", step=301)],
-                        cfg=_cfg(attribution=never_learnable))
+                        cfg=_cfg(attribution=never_learnable, null_windows=0))
 
 
 def test_resume_restores_the_champion_exactly():
@@ -304,3 +304,15 @@ def test_verified_rollback_restores_the_previous_production_version(monkeypatch)
     assert capture(mgr.model).masses == v1.state.masses
     assert mgr.threshold == v1.threshold and mgr.learn_gate == v1.tags["learn_gate"]
     assert mgr.registry.transitions[-1].transition == "rollback"
+
+
+def test_attribution_null_is_computed_from_training_windows_and_restores_the_model():
+    from src.lifecycle_manager import attribution_null
+    mgr = _manager(_cfg(quarantine_with_change=200, quarantine_silent=250))
+    before = capture(mgr.model).masses
+    rng = random.Random(3)
+    null = attribution_null(mgr, [_normal(rng) for _ in range(600)])
+    assert set(null) == {200, 250}
+    assert all(0.0 <= v["learnable"] <= 1.0 and 0.0 <= v["moving"] <= 1.0 for v in null.values())
+    assert capture(mgr.model).masses == before
+    assert mgr.attribution_null, "warm_up computes the null for cadal"

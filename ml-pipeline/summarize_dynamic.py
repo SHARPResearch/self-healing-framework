@@ -32,8 +32,8 @@ def to_markdown(df: pd.DataFrame, index: bool = True) -> str:
     return "\n".join([header, sep] + ["| " + " | ".join(r) + " |" for r in cells])
 
 
-MEAN_COLS = ["f1", "precision", "recall", "event_recall", "fa_rate",
-             "post_drift_f1", "post_drift_fa_rate", "recovery_steps"]
+MEAN_COLS = ["f1", "mcc", "precision", "recall", "event_recall", "fa_rate",
+             "post_drift_f1", "post_drift_mcc", "post_drift_fa_rate", "recovery_steps"]
 
 
 def mean_table(runs: pd.DataFrame) -> pd.DataFrame:
@@ -99,11 +99,13 @@ def main() -> None:
         f"## Paired comparison: {args.target} vs each policy on {args.metric}\n",
         to_markdown(paired_table(runs, args.target, args.metric), index=False), "",
     ]
-    if args.metric != "post_drift_f1" and "post_drift_f1" in runs:
-        drifted = runs[runs["scenario"].isin(["deploy", "silent"])]
-        if not drifted.empty:
-            parts += [f"## Paired comparison: {args.target} vs each policy on post_drift_f1\n",
-                      to_markdown(paired_table(drifted, args.target, "post_drift_f1"), index=False), ""]
+    for extra in ("mcc", "post_drift_f1", "post_drift_mcc"):
+        if extra == args.metric or extra not in runs:
+            continue
+        subset = runs[runs["scenario"].isin(["deploy", "silent"])] if extra.startswith("post") else runs
+        if not subset.empty:
+            parts += [f"## Paired comparison: {args.target} vs each policy on {extra}\n",
+                      to_markdown(paired_table(subset, args.target, extra), index=False), ""]
     parts += ["## Latency (FR6) and lifecycle activity\n", to_markdown(ops_table(runs)), ""]
     text = "\n".join(parts)
     (out / "summary.md").write_text(text)

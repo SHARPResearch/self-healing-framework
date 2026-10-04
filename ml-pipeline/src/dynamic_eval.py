@@ -8,6 +8,10 @@ time (a promoted challenger brings its own threshold), not on a re-thresholded s
 
 Metrics:
   precision / recall / f1          point-wise, whole test stream
+  mcc                              Matthews correlation, point-wise. Reported next to F1 because
+                                   F1 rewards a stale model that flags everything when anomalies
+                                   are frequent (F1 of always-alarm = 2p/(1+p)); MCC is 0 for any
+                                   constant predictor.
   post_drift_*                     the same, from the first injected drift onward
   event_recall                     fraction of labelled anomaly segments with at least one alarm
   fa_rate / post_drift_fa_rate     alarm rate on normal points (false alarms per normal event)
@@ -18,7 +22,7 @@ Metrics:
 
 from typing import Optional
 
-from sklearn.metrics import f1_score, precision_score, recall_score
+from sklearn.metrics import f1_score, matthews_corrcoef, precision_score, recall_score
 
 
 def _prf(alarms: list[bool], labels: list[int]) -> tuple[float, float, float]:
@@ -83,6 +87,7 @@ def stream_metrics(
     p, r, f = _prf(alarms, labels)
     out = {
         "precision": p, "recall": r, "f1": f,
+        "mcc": round(float(matthews_corrcoef(labels, [int(a) for a in alarms])), 4),
         "event_recall": event_recall(alarms, labels),
         "fa_rate": false_alarm_rate(alarms, labels),
     }
@@ -90,6 +95,8 @@ def stream_metrics(
         pa, ra, fa = _prf(alarms[drift_start:], labels[drift_start:])
         out.update({
             "post_drift_precision": pa, "post_drift_recall": ra, "post_drift_f1": fa,
+            "post_drift_mcc": round(float(matthews_corrcoef(
+                labels[drift_start:], [int(a) for a in alarms[drift_start:]])), 4),
             "post_drift_fa_rate": false_alarm_rate(alarms[drift_start:], labels[drift_start:]),
             "recovery_steps": recovery_steps(alarms, labels, drift_start, target_rate),
         })

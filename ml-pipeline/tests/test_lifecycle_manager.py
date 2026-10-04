@@ -143,19 +143,17 @@ def _runaway_incident(seed=7, n_before=300, n_incident=1500):
     return rows
 
 
-def test_absorbed_runaway_is_detected_as_decay_and_rolled_back():
-    # MinMaxScaler -> HST cannot see values beyond the learned max (they fall in the same top
-    # cell as the largest normal value), so the runaway is learned and alarms collapse to zero,
-    # far below the calibrated target rate. Attribution calls that model decay and restores the
-    # last good version, which brings the alarms back.
+def test_runaway_incident_is_held_not_learned():
+    # The challenger itself cannot see the runaway (values beyond its fitted range land in an
+    # edge cell it already populated), but the tail leaving the fitted support marks it as a
+    # moving incident rather than a new steady state.
     mgr = _manager(_cfg())
-    results = _run(mgr, _runaway_incident())
-    decay = [d for d in mgr.decisions if d["verdict"] == "model_decay"]
-    assert decay and decay[0]["action"] == "rollback" and decay[0]["trigger"] == "drift_down"
-    at = decay[0]["step"]
-    before = sum(r.alarm for r in results[at - 100:at]) / 100
-    after = sum(r.alarm for r in results[at:at + 100]) / 100
-    assert after > before + 0.1
+    _run(mgr, _runaway_incident())
+    assert mgr.decisions
+    first = mgr.decisions[0]
+    assert first["verdict"] == "incident" and first["action"] == "hold"
+    assert first["evidence"]["tail_out_of_support_rate"] > first["evidence"]["learnable_line"]
+    assert all(d["action"] != "promote" for d in mgr.decisions)
 
 
 def test_strict_learn_gate_resists_absorbing_an_escalating_incident():
@@ -269,3 +267,38 @@ def test_rollback_is_refused_when_the_target_flags_the_new_normal():
     assert last["evidence"]["rollback_target_version"] == 1
     assert last["evidence"]["rollback_target_tail_alarm_rate"] >= 0.5
     assert mgr.registry.production().version == promoted
+
+
+def test_out_of_support_rate_flags_values_beyond_the_fitted_range():
+    from src.lifecycle_manager import out_of_support_rate
+    fit = [{"a": 0.1 * i, "b": 0.5} for i in range(11)]  # a in [0, 1], b flat
+    assert out_of_support_rate(fit, [{"a": 0.5, "b": 0.5}, {"a": 1.05, "b": 0.5}]) == 0.0
+    assert out_of_support_rate(fit, [{"a": 1.2, "b": 0.5}, {"a": 0.5, "b": 0.6}]) == 1.0
+
+
+def test_verified_rollback_restores_the_previous_production_version(monkeypatch):
+    import src.lifecycle_manager as lm
+    from src.drift_attribution import Action, Attribution, Verdict
+
+    mgr = _manager(_cfg(), events=[ChangeEvent("svc", "deployment", step=301)])
+    rng = random.Random(1)
+    _run(mgr, [_normal(rng) for _ in range(300)] + [_normal(rng, 0.35) for _ in range(500)])
+    assert mgr.registry.production().version == 2
+    v1 = mgr.registry.get(1)
+
+    # The service itself is rolled back (old behaviour returns) and the next quarantine is
+    # attributed to decay; v1 fits the returned behaviour, so the rollback is verified and runs.
+    monkeypatch.setattr(lm, "attribute", lambda ev, cfg: Attribution(
+        Verdict.MODEL_DECAY, Action.ROLLBACK, "forced for test", {}))
+    mgr._open_quarantine("drift_down")
+    seen = []
+    for x in [_normal(rng) for _ in range(mgr._q_target_len)]:
+        res = mgr.process(x)
+        if res.lifecycle:
+            seen.append(res.lifecycle)
+    assert seen and seen[0]["action"] == "rollback"
+    assert seen[0]["evidence"]["rollback_target_version"] == 1
+    assert mgr.registry.production().version == 1
+    assert capture(mgr.model).masses == v1.state.masses
+    assert mgr.threshold == v1.threshold and mgr.learn_gate == v1.tags["learn_gate"]
+    assert mgr.registry.transitions[-1].transition == "rollback"

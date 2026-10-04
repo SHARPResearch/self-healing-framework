@@ -184,6 +184,31 @@ def apply(model: Any, state: HSTState) -> None:
         scaler.max = restored.max
 
 
+def materialize(model: Any, feature_names: list[str]) -> None:
+    """
+    Build an unbuilt model's tree structure from feature names alone, leaving it untrained.
+
+    river builds the trees inside the first learn_one(), so this feeds one all-zero row and then
+    resets. Used when a replica or an MLflow pyfunc loads a snapshot without any telemetry yet.
+    """
+    _, hst = _split(model)
+    if not hst.trees:
+        model.learn_one({name: 0.0 for name in feature_names})
+    reset(model)
+
+
+def feature_names(model: Any) -> list[str]:
+    """
+    Feature names a built model's trees were constructed from.
+
+    Read from `limits` (a defaultdict that river fills for every feature of the first row while
+    building) rather than from the split nodes: features that never became a split still shaped
+    the structure through the random draws.
+    """
+    _, hst = _split(model)
+    return sorted(hst.limits)
+
+
 def reset(model: Any) -> None:
     """
     Forget everything learned but keep the (expensive to build) tree structure.

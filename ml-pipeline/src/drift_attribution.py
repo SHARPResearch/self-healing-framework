@@ -72,6 +72,9 @@ class AttributionConfig:
     learnable_factor: float = 2.0           # challenger tail alarm rate allowed for "self-consistent"
     decay_factor: float = 0.2               # champion alarm rate below this * r0 means insensitive
     z: float = 2.33                         # one-sided 99% binomial slack on the learnable line
+    # A rollback target must still discriminate on recent data: a version that flags at least
+    # this share of recent events (e.g. the pre-deployment model on a new normal) is not restored.
+    rollback_max_alarm_rate: float = 0.5
 
 
 @dataclass(frozen=True)

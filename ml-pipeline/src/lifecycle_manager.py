@@ -44,7 +44,7 @@ import numpy as np
 from src.change_events import ChangeEvent, ChangeEventSource, NullChangeEventSource
 from src.config import HST_CFG, HSTConfig
 from src.drift_attribution import (
-    Action, Attribution, AttributionConfig, QuarantineEvidence, attribute,
+    Action, Attribution, AttributionConfig, QuarantineEvidence, Verdict, attribute,
 )
 from src.drift_detectors import ScoreDriftMonitor
 from src.hst_model import build_model, classify_severity
@@ -259,7 +259,7 @@ class DynamicModelManager:
 
     def _fit_challenger(self, rows: list[dict], calib_rows: list[dict]) -> tuple[float, float]:
         """Reset the model in place, learn `rows`, calibrate (threshold, gate) on `calib_rows`."""
-        reset(self.model)
+        reset(self.model, keep_scaler=True)
         for r in rows:
             self.model.learn_one(r)
         return self._calibrate([_clamp(self.model.score_one(r)) for r in calib_rows])
@@ -298,11 +298,9 @@ class DynamicModelManager:
         self._last_change, self._last_change_step = evt, self.step
         self.publisher.publish_lifecycle({"service_id": self.service_id, "event": "change_observed",
                                           "change_event_id": evt.event_id, "step": self.step})
-        if self.phase == "stable":
-            self._open_quarantine("change_event")
-        elif self._q_target_len > self.cfg.quarantine_with_change:
-            # A change explains the shift already under observation: less persistence needed.
-            self._q_target_len = max(self.cfg.quarantine_with_change, len(self._q_rows))
+        # Evidence about the post-change regime has to come from after the change, so a change
+        # during an open quarantine restarts it rather than reusing the pre-change buffer.
+        self._open_quarantine("change_event")
         return None
 
     def _open_quarantine(self, trigger: str) -> None:
@@ -316,6 +314,9 @@ class DynamicModelManager:
                                           "length": self._q_target_len})
 
     def _cadal_step(self, x: dict, score: float, alarm: bool) -> Optional[dict]:
+        if score < self.learn_gate:
+            self.model.learn_one(x)                 # gated learning: only clearly typical events teach
+
         if self.phase == "quarantine":
             self._q_rows.append(x)
             self._q_alarms.append(alarm)
@@ -323,9 +324,6 @@ class DynamicModelManager:
             if len(self._q_rows) >= self._q_target_len:
                 return self._close_quarantine()
             return None
-
-        if score < self.learn_gate:
-            self.model.learn_one(x)                 # gated learning: only clearly typical events teach
         signal = self.monitor.update(score, self.step)
         if signal is not None and self.step >= self._cooldown_until:
             self._open_quarantine("drift_" + signal.direction)
@@ -367,6 +365,22 @@ class DynamicModelManager:
         )
         result: Attribution = attribute(evidence, self.cfg.attribution)
 
+        rollback_target = None
+        if result.action is Action.ROLLBACK:
+            rollback_target = self.registry.previous_production() or self.registry.production()
+            target_rate = self._alarm_rate_of(rollback_target, rows[tail])
+            healthy = (self.cfg.attribution.decay_factor * self.cfg.target_rate <= target_rate
+                       < self.cfg.attribution.rollback_max_alarm_rate)
+            result.evidence["rollback_target_version"] = rollback_target.version
+            result.evidence["rollback_target_tail_alarm_rate"] = round(target_rate, 4)
+            if not healthy:
+                result = Attribution(
+                    Verdict.NO_CHANGE, Action.RESUME,
+                    f"{result.reason}; but rollback target v{rollback_target.version} does not fit "
+                    f"recent data either (tail alarm rate {target_rate:.4f}), keeping the champion",
+                    result.evidence,
+                )
+
         if result.action is Action.PROMOTE:
             for r in rows[n_fit:]:
                 self.model.learn_one(r)
@@ -379,7 +393,7 @@ class DynamicModelManager:
             self.registry.set_production(version, step=self.step, transition="promote",
                                          reason=result.reason, evidence=result.evidence)
         elif result.action is Action.ROLLBACK:
-            target = self.registry.previous_production() or self.registry.production()
+            target = rollback_target
             apply(self.model, target.state)
             self.threshold = target.threshold
             self.learn_gate = target.tags.get("learn_gate", target.threshold)
@@ -396,6 +410,14 @@ class DynamicModelManager:
         return self._decide({"action": result.action.value, "verdict": result.verdict.value,
                              "trigger": self._q_trigger, "reason": result.reason,
                              "evidence": result.evidence})
+
+    def _alarm_rate_of(self, version, rows: list[dict]) -> float:
+        """Alarm rate a registered version would produce on `rows` (model restored afterwards)."""
+        current = capture(self.model)
+        apply(self.model, version.state)
+        rate = sum(_clamp(self.model.score_one(r)) >= version.threshold for r in rows) / len(rows)
+        apply(self.model, current)
+        return rate
 
     def _decide(self, decision: dict) -> dict:
         decision = {"service_id": self.service_id, "step": self.step,

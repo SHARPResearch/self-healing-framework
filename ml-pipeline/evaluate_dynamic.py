@@ -10,7 +10,7 @@ Policy variants:
   static, online, naive_rollback, periodic, gated   baselines, see src/lifecycle_manager.py
   cadal                                              proposed method
   cadal_no_events                                    ablation: cadal without the change prior
-  cadal_frozen                                       ablation: cadal with no continuous learning
+  cadal_online                                       ablation: cadal with gated continuous learning
 
 Outputs (outputs/component2/ by default), appended per run so an interrupted sweep resumes:
   runs.csv         one row per (entity, scenario, variant)
@@ -57,7 +57,7 @@ VARIANTS = {
     "gated": replace(BASE, policy="gated"),
     "cadal": replace(BASE, policy="cadal"),
     "cadal_no_events": replace(BASE, policy="cadal", use_change_events=False),
-    "cadal_frozen": replace(BASE, policy="cadal", learn_gate_percentile=0.0),
+    "cadal_online": replace(BASE, policy="cadal", learn_gate_percentile=75.0),
 }
 
 RUN_FIELDS = [

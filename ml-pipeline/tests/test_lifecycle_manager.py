@@ -143,17 +143,17 @@ def _runaway_incident(seed=7, n_before=300, n_incident=1500):
     return rows
 
 
-def test_runaway_incident_is_held_not_learned():
+def test_runaway_incident_is_never_learned():
     # The challenger itself cannot see the runaway (values beyond its fitted range land in an
-    # edge cell it already populated), but the tail leaving the fitted support marks it as a
-    # moving incident rather than a new steady state.
+    # edge cell it already populated); the support check and frozen serving keep it out of the
+    # model, so the champion stays v1 and keeps alarming.
     mgr = _manager(_cfg())
-    _run(mgr, _runaway_incident())
-    assert mgr.decisions
-    first = mgr.decisions[0]
-    assert first["verdict"] == "incident" and first["action"] == "hold"
-    assert first["evidence"]["tail_out_of_support_rate"] > first["evidence"]["learnable_line"]
+    results = _run(mgr, _runaway_incident())
+    assert mgr.decisions, "the incident should trigger a quarantine"
     assert all(d["action"] != "promote" for d in mgr.decisions)
+    assert mgr.registry.production().version == 1
+    assert any(d["evidence"]["tail_out_of_support_rate"] == 1.0 for d in mgr.decisions)
+    assert sum(r.alarm for r in results[-300:]) / 300 > 0.1
 
 
 def test_strict_learn_gate_resists_absorbing_an_escalating_incident():
@@ -273,7 +273,9 @@ def test_out_of_support_rate_flags_values_beyond_the_fitted_range():
     from src.lifecycle_manager import out_of_support_rate
     fit = [{"a": 0.1 * i, "b": 0.5} for i in range(11)]  # a in [0, 1], b flat
     assert out_of_support_rate(fit, [{"a": 0.5, "b": 0.5}, {"a": 1.05, "b": 0.5}]) == 0.0
-    assert out_of_support_rate(fit, [{"a": 1.2, "b": 0.5}, {"a": 0.5, "b": 0.6}]) == 1.0
+    # Worst single feature counts: a leaves its range in 1 of 2 rows, b in 1 of 2 rows.
+    assert out_of_support_rate(fit, [{"a": 1.2, "b": 0.5}, {"a": 0.5, "b": 0.6}]) == 0.5
+    assert out_of_support_rate(fit, [{"a": 1.2, "b": 0.5}, {"a": 1.3, "b": 0.5}]) == 1.0
 
 
 def test_verified_rollback_restores_the_previous_production_version(monkeypatch):

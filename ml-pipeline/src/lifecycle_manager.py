@@ -89,6 +89,11 @@ class LifecycleConfig:
             raise ValueError(f"Unknown policy {self.policy!r}, expected one of {POLICIES}")
 
     @property
+    def learns_while_serving(self) -> bool:
+        """Whether the served model keeps learning between versions (decides how to calibrate)."""
+        return self.policy not in ("static", "periodic")
+
+    @property
     def target_rate(self) -> float:
         return 1.0 - self.calib_percentile / 100.0
 
@@ -108,6 +113,21 @@ class StepResult:
 
 def _clamp(x: float) -> float:
     return float(min(max(x, 0.0), 1.0))
+
+
+def out_of_support_rate(fit_rows: list[dict], rows: list[dict], margin: float = 0.1) -> float:
+    """
+    Fraction of `rows` with at least one feature outside the [min, max] seen in `fit_rows`,
+    widened by `margin` x that feature's range (and a small absolute floor for flat features).
+    """
+    keys = list(fit_rows[0])
+    lo = {k: min(r[k] for r in fit_rows) for k in keys}
+    hi = {k: max(r[k] for r in fit_rows) for k in keys}
+    pad = {k: max(margin * (hi[k] - lo[k]), 1e-3) for k in keys}
+    outside = sum(
+        1 for r in rows if any(r[k] < lo[k] - pad[k] or r[k] > hi[k] + pad[k] for k in keys)
+    )
+    return outside / len(rows)
 
 
 class DynamicModelManager:
@@ -157,14 +177,18 @@ class DynamicModelManager:
         Calibrated warm-up (same split as src.pipeline.warm_up_calibrate_and_score): learn the
         first 80%, set the threshold at `calib_percentile` of scores on the held-out last 20%,
         then learn that 20% too. Registers the result as production version 1.
+
+        Policies that keep learning while serving are calibrated prequentially (score each
+        held-out row, then learn it), frozen policies on frozen scores: calibrate the way the
+        model will be served.
         """
         start = time.perf_counter()
         split = int(len(rows) * (1 - calib_frac))
         for r in rows[:split]:
             self.model.learn_one(r)
-        calib_scores = [_clamp(self.model.score_one(r)) for r in rows[split:]]
-        for r in rows[split:]:
-            self.model.learn_one(r)
+        frozen = [_clamp(self.model.score_one(r)) for r in rows[split:]]
+        prequential = self._prequential(rows[split:])
+        calib_scores = prequential if self.cfg.learns_while_serving else frozen
         self.start_from(None, calib_scores, rows[-self.cfg.periodic_window:])
         duration = time.perf_counter() - start
         return {"events": len(rows), "duration_s": round(duration, 2), "threshold": self.threshold}
@@ -257,8 +281,19 @@ class DynamicModelManager:
         gate = float(np.percentile(calib_scores, gate_pct)) if gate_pct > 0 else -1.0
         return threshold, min(gate, threshold)
 
+    def _prequential(self, rows: list[dict]) -> list[float]:
+        """Score each row, then learn it: the way a serving model sees the stream."""
+        scores = []
+        for r in rows:
+            scores.append(_clamp(self.model.score_one(r)))
+            self.model.learn_one(r)
+        return scores
+
     def _fit_challenger(self, rows: list[dict], calib_rows: list[dict]) -> tuple[float, float]:
-        """Reset the model in place, learn `rows`, calibrate (threshold, gate) on `calib_rows`."""
+        """
+        Reset the model in place, learn `rows`, return (threshold, gate) calibrated on frozen
+        scores of `calib_rows`. The caller decides whether the model then learns `calib_rows`.
+        """
         reset(self.model, keep_scaler=True)
         for r in rows:
             self.model.learn_one(r)
@@ -275,6 +310,7 @@ class DynamicModelManager:
         t = time.perf_counter()
         rows = list(self._recent_rows)
         split = int(len(rows) * 0.8)
+        # periodic serves a frozen model between retrains, so frozen calibration matches serving
         self.threshold, self.learn_gate = self._fit_challenger(rows[:split], rows[split:])
         for r in rows[split:]:
             self.model.learn_one(r)
@@ -349,6 +385,9 @@ class DynamicModelManager:
         champion_state = capture(self.model)
         champion_threshold, champion_gate = self.threshold, self.learn_gate
         challenger_threshold, challenger_gate = self._fit_challenger(rows[:n_fit], rows[n_fit:n_fit + n_calib])
+        # Learnability is a stationarity test, so it is measured frozen: fitted on the start of
+        # the buffer, calibrated on the middle, does the model still find the tail normal? A new
+        # steady regime passes; a trend or an escalating incident drifts away from the fit.
         tail_rows = rows[tail]
         challenger_tail = (
             sum(_clamp(self.model.score_one(r)) >= challenger_threshold for r in tail_rows) / len(tail_rows)
@@ -362,6 +401,7 @@ class DynamicModelManager:
             challenger_tail_alarm_rate=challenger_tail,
             change_event_id=self._change_in_horizon(),
             n_tail=len(tail_rows),
+            tail_out_of_support_rate=out_of_support_rate(rows[:n_fit], tail_rows),
         )
         result: Attribution = attribute(evidence, self.cfg.attribution)
 
@@ -382,8 +422,9 @@ class DynamicModelManager:
                 )
 
         if result.action is Action.PROMOTE:
-            for r in rows[n_fit:]:
-                self.model.learn_one(r)
+            # Serving threshold: calibrated the way the promoted model will run (score each
+            # remaining buffered event, then learn it), not on the frozen stationarity test.
+            challenger_threshold, challenger_gate = self._calibrate(self._prequential(rows[n_fit:]))
             self.threshold, self.learn_gate = challenger_threshold, challenger_gate
             version = self.registry.register(
                 capture(self.model), self.threshold, self.cfg.target_rate, step=self.step,

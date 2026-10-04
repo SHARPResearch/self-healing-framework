@@ -35,6 +35,8 @@ def test_stream_metrics_reports_post_drift_section_and_curve():
     m = stream_metrics(alarms, labels, drift_start=40, target_rate=0.03, n_slices=4)
     assert m["f1"] == 1.0 and m["post_drift_f1"] == 1.0
     assert m["fa_rate"] == 0.0 and m["event_recall"] == 1.0
+    assert m["mcc"] == 1.0 and m["post_drift_mcc"] == 1.0
+    assert stream_metrics([True] * 100, labels, None, 0.03)["mcc"] == 0.0  # always-alarm
     assert len(m["f1_curve"]) == 4
     assert "recovery_steps" in m
     assert "post_drift_f1" not in stream_metrics(alarms, labels, None, 0.03)

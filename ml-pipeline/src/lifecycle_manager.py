@@ -84,6 +84,8 @@ class LifecycleConfig:
     periodic_window: int = 1440             # training window for the periodic policy
     naive_stable_every: int = 1000          # naive_rollback stable-snapshot cadence (guide Part 5)
     attribution: AttributionConfig = field(default_factory=AttributionConfig)
+    null_windows: int = 8                   # training windows per quarantine length (0 disables)
+    null_quantile: float = 0.9              # normal windows pass the stationarity test this often
 
     def __post_init__(self):
         if self.policy not in POLICIES:
@@ -116,6 +118,34 @@ class StepResult:
 
 def _clamp(x: float) -> float:
     return float(min(max(x, 0.0), 1.0))
+
+
+def attribution_null(mgr: "DynamicModelManager", train_rows: list[dict]) -> dict[int, dict[str, float]]:
+    """
+    Per-entity null distribution of the stationarity test, from normal training data.
+
+    For each quarantine length the manager can use, run the exact quarantine test
+    (DynamicModelManager.stationarity_test) on `null_windows` evenly spaced windows of the
+    training split and keep the `null_quantile` of the challenger tail alarm rate and of the
+    out-of-support rate. Attribution then only calls a regime unlearnable or moving when it is
+    worse than this entity's own normal behaviour usually looks. The model is restored after.
+    """
+    cfg = mgr.cfg
+    if cfg.null_windows <= 0:
+        return {}
+    saved = capture(mgr.model)
+    null = {}
+    for length in sorted({cfg.quarantine_with_change, cfg.quarantine_silent}):
+        if len(train_rows) < 2 * length:
+            continue
+        starts = np.linspace(0, len(train_rows) - length, cfg.null_windows).astype(int)
+        rates, moving = zip(*(mgr.stationarity_test(train_rows[s:s + length]) for s in starts))
+        null[length] = {
+            "learnable": float(np.quantile(rates, cfg.null_quantile)),
+            "moving": float(np.quantile(moving, cfg.null_quantile)),
+        }
+    apply(mgr.model, saved)
+    return null
 
 
 def out_of_support_rate(fit_rows: list[dict], rows: list[dict], margin: float = 0.1) -> float:
@@ -176,6 +206,7 @@ class DynamicModelManager:
         self._q_target_len = 0
 
         self.decisions: list[dict] = []
+        self.attribution_null: dict[int, dict[str, float]] = {}
         self.transition_ms: list[float] = []
 
     # ── warm-up ──────────────────────────────────────────────────────────────
@@ -196,12 +227,13 @@ class DynamicModelManager:
         frozen = [_clamp(self.model.score_one(r)) for r in rows[split:]]
         prequential = self._prequential(rows[split:])
         calib_scores = prequential if self.cfg.learns_while_serving else frozen
-        self.start_from(None, calib_scores, rows[-self.cfg.periodic_window:])
+        null = attribution_null(self, rows) if self.cfg.policy == "cadal" else {}
+        self.start_from(None, calib_scores, rows[-self.cfg.periodic_window:], null)
         duration = time.perf_counter() - start
         return {"events": len(rows), "duration_s": round(duration, 2), "threshold": self.threshold}
 
     def start_from(self, state: Optional[HSTState], calib_scores: list[float],
-                   recent_rows: list[dict]) -> None:
+                   recent_rows: list[dict], null: Optional[dict] = None) -> None:
         """
         Begin serving from an already warmed-up state (None = the model as it is now).
 
@@ -210,6 +242,7 @@ class DynamicModelManager:
         """
         if state is not None:
             apply(self.model, state)
+        self.attribution_null = dict(null or {})
         self.threshold, self.learn_gate = self._calibrate(calib_scores)
         self._recent_rows.extend(recent_rows)
         version = self.registry.register(
@@ -295,6 +328,19 @@ class DynamicModelManager:
             scores.append(_clamp(self.model.score_one(r)))
             self.model.learn_one(r)
         return scores
+
+    def stationarity_test(self, rows: list[dict]) -> tuple[float, float]:
+        """
+        The quarantine's label-free stationarity test on one buffer, run on the model in place:
+        fit a challenger on the first part, calibrate on the middle, return (challenger tail
+        alarm rate, tail out-of-support rate). Leaves the model holding the challenger.
+        """
+        n = len(rows)
+        n_fit, n_calib = int(n * self.cfg.fit_frac), int(n * self.cfg.calib_frac)
+        threshold, _ = self._fit_challenger(rows[:n_fit], rows[n_fit:n_fit + n_calib])
+        tail = rows[n_fit + n_calib:]
+        rate = sum(_clamp(self.model.score_one(r)) >= threshold for r in tail) / len(tail)
+        return rate, out_of_support_rate(rows[:n_fit], tail)
 
     def _fit_challenger(self, rows: list[dict], calib_rows: list[dict]) -> tuple[float, float]:
         """
@@ -409,6 +455,8 @@ class DynamicModelManager:
             change_event_id=self._change_in_horizon(),
             n_tail=len(tail_rows),
             tail_out_of_support_rate=out_of_support_rate(rows[:n_fit], tail_rows),
+            learnable_floor=self.attribution_null.get(n, {}).get("learnable"),
+            moving_floor=self.attribution_null.get(n, {}).get("moving"),
         )
         result: Attribution = attribute(evidence, self.cfg.attribution)
 

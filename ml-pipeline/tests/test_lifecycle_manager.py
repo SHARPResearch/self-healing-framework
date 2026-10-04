@@ -6,6 +6,7 @@ import pytest
 from src.change_events import ChangeEvent, ReplayChangeEventSource
 from src.config import HSTConfig
 from src.drift_attribution import AttributionConfig
+from src.hst_model import build_model
 from src.hst_state import capture
 from src.lifecycle_manager import DynamicModelManager, LifecycleConfig
 from src.publishers import RecordingPublisher
@@ -225,3 +226,24 @@ def test_every_transition_is_in_the_registry_audit_log():
     assert kinds[:2] == ["register", "promote"]
     promote = [t for t in mgr.registry.transitions if t.transition == "promote"][-1]
     assert promote.evidence["change_event_id"] == "svc:deployment@301"
+
+
+def test_start_from_shared_warm_state_matches_a_full_warm_up():
+    full = _manager(_cfg("static"))
+    shared_model = build_model(HST)
+    rng = random.Random(0)
+    rows = [_normal(rng) for _ in range(600)]
+    split = int(len(rows) * 0.8)
+    for r in rows[:split]:
+        shared_model.learn_one(r)
+    calib = [min(max(shared_model.score_one(r), 0.0), 1.0) for r in rows[split:]]
+    for r in rows[split:]:
+        shared_model.learn_one(r)
+    warm = capture(shared_model)
+    for r in _shifted_stream()[:200]:
+        shared_model.learn_one(r)  # dirty the shared model, start_from must undo this
+
+    mgr = DynamicModelManager("svc", _cfg("static"), HST, model=shared_model)
+    mgr.start_from(warm, calib, rows[-300:])
+    assert mgr.threshold == full.threshold and mgr.learn_gate == full.learn_gate
+    assert capture(mgr.model).masses == capture(full.model).masses

@@ -1,18 +1,14 @@
 import type { ServiceHealth } from "@/features/dashboard/types";
 
-export type Runtime = "node" | "python" | "go";
+export type Runtime = string;
 
-/**
- * Static service-registry data (namespace, runtime, replicas) that would come
- * from the k8s API/service catalog in a real deployment -- a different source
- * than the live telemetry in ServiceHealth (dashboard/types.ts), joined by
- * serviceId. See data/mockData.ts.
- */
 export interface ServiceMetadata {
-  serviceId: string;
   runtime: Runtime;
-  namespace: string;
-  clusterIp: string;
+  team: string;
+  tier: number;
+  region: string;
+  nodePool: string;
+  node: string;
   replicas: string;
 }
 

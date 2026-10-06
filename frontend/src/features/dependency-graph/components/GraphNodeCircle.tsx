@@ -1,22 +1,32 @@
 import type { Severity } from "@/shared/types";
-import type { PositionedNode } from "../types";
+import { useRef } from "react";
+import type { PointerEvent } from "react";
+import type { PositionedNode, ServiceLayer } from "../types";
 
-const NODE_RADIUS = 24;
+// ─── Node sizing ───────────────────────────────────────────────────
+const BASE_RADIUS = 28;
 
-const STROKE: Record<Severity, string> = {
+// Bigger nodes for critical services (higher criticality = bigger)
+function radiusFor(criticality: number | undefined): number {
+  const c = criticality ?? 0.6;
+  return BASE_RADIUS + Math.round(c * 10); // 28..38
+}
+
+// ─── Status colors (ring + text) ──────────────────────────────────
+const STATUS_STROKE: Record<Severity, string> = {
   watch: "var(--color-status-watch)",
   warn: "var(--color-status-warn)",
   degrade: "var(--color-status-degrade)",
   critical: "var(--color-status-critical)",
 };
 
-// Dark, translucent fill tinted by status -- reads as "dark surface with a
-// colored outline" rather than a solid status-colored disc.
-const FILL: Record<Severity, string> = {
-  watch: "color-mix(in oklch, var(--color-status-watch) 15%, var(--color-background))",
-  warn: "color-mix(in oklch, var(--color-status-warn) 15%, var(--color-background))",
-  degrade: "color-mix(in oklch, var(--color-status-degrade) 18%, var(--color-background))",
-  critical: "color-mix(in oklch, var(--color-status-critical) 20%, var(--color-background))",
+// ─── Layer colors (fill) ──────────────────────────────────────────
+const LAYER_FILL: Record<ServiceLayer, { accent: string; label: string }> = {
+  edge: { accent: "#3b82f6", label: "edge" },
+  bff: { accent: "#a855f7", label: "bff" },
+  domain: { accent: "#22c55e", label: "domain" },
+  data: { accent: "#f59e0b", label: "data" },
+  unknown: { accent: "#64748b", label: "unknown" },
 };
 
 interface GraphNodeCircleProps {
@@ -25,28 +35,68 @@ interface GraphNodeCircleProps {
   selected: boolean;
   onHover: (node: PositionedNode | null) => void;
   onSelect: (node: PositionedNode) => void;
+  onNodePointerDown: (
+    node: PositionedNode,
+    event: PointerEvent<SVGGElement>,
+  ) => void;
+  onNodePointerMove: (
+    node: PositionedNode,
+    event: PointerEvent<SVGGElement>,
+  ) => void;
+  onNodePointerUp: (event: PointerEvent<SVGGElement>) => void;
 }
 
-export function GraphNodeCircle({ node, dimmed, selected, onHover, onSelect }: GraphNodeCircleProps) {
+export function GraphNodeCircle({
+  node,
+  dimmed,
+  selected,
+  onHover,
+  onSelect,
+  onNodePointerDown,
+  onNodePointerMove,
+  onNodePointerUp,
+}: GraphNodeCircleProps) {
+  const draggedRef = useRef(false);
+  const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
+  const r = radiusFor(node.criticality);
+  const layer = (node.layer ?? "unknown") as ServiceLayer;
+  const layerStyle = LAYER_FILL[layer];
+
   const isCritical = node.status === "critical";
-  const isGlowing = node.status === "critical" || node.status === "degrade" || node.status === "warn";
-  // "svc-a-auth" -> "auth"; keeps the label inside a 24px circle.
-  const short = node.serviceId.split("-").slice(2).join("-") || node.serviceId;
+  const isUnhealthy = node.status !== "watch";
+  const statusColor = STATUS_STROKE[node.status];
+
+  // Short label: "service-a-auth" -> "auth"
+  const short = node.serviceId.split("-").slice(-1)[0] || node.serviceId;
+  const versionTag = node.version ? `v${node.version.split(".")[0]}` : "";
 
   return (
     <>
-      {/* Rendered outside the interactive group on purpose: the pulse scales,
-          and inside the group it would make the button's own hit area pulse
-          with it. */}
-      {isGlowing && (
+      {/* ── Pulsing glow for unhealthy nodes ─────────────────────── */}
+      {isUnhealthy && (
         <circle
           cx={node.x}
           cy={node.y}
-          r={isCritical ? NODE_RADIUS + 8 : NODE_RADIUS + 5}
-          fill={STROKE[node.status]}
+          r={isCritical ? r + 12 : r + 7}
+          fill={statusColor}
           filter="url(#node-glow)"
-          opacity={isCritical ? undefined : 0.35}
+          opacity={isCritical ? 0.9 : 0.35}
           className={isCritical ? "animate-pulse-glow" : undefined}
+          pointerEvents="none"
+        />
+      )}
+
+      {/* ── Selection halo ───────────────────────────────────────── */}
+      {selected && (
+        <circle
+          cx={node.x}
+          cy={node.y}
+          r={r + 8}
+          fill="none"
+          stroke={statusColor}
+          strokeWidth={2}
+          strokeDasharray="4 4"
+          opacity={0.8}
           pointerEvents="none"
         />
       )}
@@ -54,14 +104,42 @@ export function GraphNodeCircle({ node, dimmed, selected, onHover, onSelect }: G
       <g
         role="button"
         tabIndex={0}
-        aria-label={`${node.displayName}, ${node.status}, anomaly score ${node.anomalyScore.toFixed(2)}`}
-        className="cursor-pointer transition-opacity duration-150 focus-visible:outline-none"
-        opacity={dimmed ? 0.25 : 1}
+        aria-label={`${node.displayName}, ${node.status}, layer ${layer}, anomaly ${node.anomalyScore.toFixed(2)}`}
+        className="cursor-grab transition-opacity duration-150 focus-visible:outline-none active:cursor-grabbing"
+        opacity={dimmed ? 0.2 : 1}
         onMouseEnter={() => onHover(node)}
         onMouseLeave={() => onHover(null)}
         onFocus={() => onHover(node)}
         onBlur={() => onHover(null)}
-        onClick={() => onSelect(node)}
+        onPointerDown={(event) => {
+          draggedRef.current = false;
+          pointerStartRef.current = {
+            x: event.clientX,
+            y: event.clientY,
+          };
+          onNodePointerDown(node, event);
+        }}
+        onPointerMove={(event) => {
+          const start = pointerStartRef.current;
+          if (
+            start &&
+            Math.hypot(event.clientX - start.x, event.clientY - start.y) > 3
+          ) {
+            draggedRef.current = true;
+          }
+          onNodePointerMove(node, event);
+        }}
+        onPointerUp={onNodePointerUp}
+        onPointerCancel={onNodePointerUp}
+        onClick={() => {
+          if (draggedRef.current) {
+            draggedRef.current = false;
+            pointerStartRef.current = null;
+            return;
+          }
+          pointerStartRef.current = null;
+          onSelect(node);
+        }}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
@@ -69,61 +147,142 @@ export function GraphNodeCircle({ node, dimmed, selected, onHover, onSelect }: G
           }
         }}
       >
-        {selected && (
-          <circle
-            cx={node.x}
-            cy={node.y}
-            r={NODE_RADIUS + 6}
-            fill="none"
-            stroke={STROKE[node.status]}
-            strokeWidth={1}
-            strokeDasharray="3 3"
-            opacity={0.7}
-          />
-        )}
+        {/* ── Shadow / depth ──────────────────────────────────── */}
+        <circle
+          cx={node.x + 1}
+          cy={node.y + 2}
+          r={r}
+          fill="black"
+          opacity={0.25}
+          pointerEvents="none"
+        />
 
+        {/* ── Main body — filled by severity color ─────────────── */}
         <circle
           cx={node.x}
           cy={node.y}
-          r={NODE_RADIUS}
-          fill={FILL[node.status]}
-          stroke={STROKE[node.status]}
-          strokeWidth={selected ? 2.5 : 1.5}
+          r={r}
+          fill={statusColor}
+          stroke={layerStyle.accent}
+          strokeWidth={3}
         />
 
+        {/* ── Status ring around the body ─────────────────────── */}
+        <circle
+          cx={node.x}
+          cy={node.y}
+          r={r - 3}
+          fill="none"
+          stroke={statusColor}
+          strokeWidth={isUnhealthy ? 3 : 1.5}
+          opacity={isUnhealthy ? 1 : 0.5}
+        />
+
+        {/* ── Short service name (center) ─────────────────────── */}
         <text
           x={node.x}
           y={node.y}
           textAnchor="middle"
           dominantBaseline="central"
-          fontSize={10}
-          fill={STROKE[node.status]}
-          fontWeight={600}
+          fontSize={11}
+          fontWeight={700}
+          fill="#111827"
           pointerEvents="none"
+          style={{ textTransform: "uppercase", letterSpacing: "0.5px" }}
         >
-          {short}
+          {short.slice(0, 8)}
         </text>
 
-        {/* Status dot badge, corner of the node -- matches the reference design. */}
+        {/* ── Status dot badge (top-right corner) ─────────────── */}
         <circle
-          cx={node.x + NODE_RADIUS * 0.62}
-          cy={node.y - NODE_RADIUS * 0.62}
-          r={5}
-          fill={STROKE[node.status]}
+          cx={node.x + r * 0.72}
+          cy={node.y - r * 0.72}
+          r={6}
+          fill={statusColor}
           stroke="var(--color-background)"
-          strokeWidth={1.5}
+          strokeWidth={2}
           pointerEvents="none"
         />
 
+        {/* ── Version tag (bottom-right corner) ───────────────── */}
+        {versionTag && (
+          <>
+            <rect
+              x={node.x + r * 0.45}
+              y={node.y + r * 0.65}
+              width={28}
+              height={14}
+              rx={7}
+              fill="var(--color-background)"
+              stroke={layerStyle.accent}
+              strokeWidth={1}
+              pointerEvents="none"
+            />
+            <text
+              x={node.x + r * 0.45 + 14}
+              y={node.y + r * 0.65 + 7}
+              textAnchor="middle"
+              dominantBaseline="central"
+              fontSize={9}
+              fontFamily="monospace"
+              fontWeight={600}
+              fill={layerStyle.accent}
+              pointerEvents="none"
+            >
+              {versionTag}
+            </text>
+          </>
+        )}
+
+        {/* ── Display name BELOW the circle ───────────────────── */}
         <text
           x={node.x}
-          y={node.y + NODE_RADIUS + 14}
+          y={node.y + r + 16}
           textAnchor="middle"
-          fontSize={11}
-          fill="var(--color-muted-foreground)"
+          fontSize={12}
+          fontWeight={600}
+          fill="var(--color-foreground)"
           pointerEvents="none"
         >
           {node.displayName}
+        </text>
+
+        {/* ── Service ID (smaller, under name) ────────────────── */}
+        <text
+          x={node.x}
+          y={node.y + r + 30}
+          textAnchor="middle"
+          fontSize={10}
+          fontFamily="monospace"
+          fill="var(--color-muted-foreground)"
+          pointerEvents="none"
+        >
+          {node.serviceId}
+        </text>
+
+        {/* ── Layer tag (top-left) ────────────────────────────── */}
+        <rect
+          x={node.x - r * 0.95}
+          y={node.y - r * 0.95}
+          width={40}
+          height={14}
+          rx={7}
+          fill={layerStyle.accent}
+          pointerEvents="none"
+        />
+        <text
+          x={node.x - r * 0.95 + 20}
+          y={node.y - r * 0.95 + 7}
+          textAnchor="middle"
+          dominantBaseline="central"
+          fontSize={9}
+          fontFamily="monospace"
+          fontWeight={700}
+          fill="black"
+          pointerEvents="none"
+          style={{ textTransform: "uppercase" }}
+        >
+          {layerStyle.label}
         </text>
       </g>
     </>

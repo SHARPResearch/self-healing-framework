@@ -12,12 +12,21 @@ export interface GraphEdge {
   latencyMs: number;
 }
 
+export type ServiceLayer = "edge" | "bff" | "domain" | "data" | "unknown";
+
 export interface GraphNodeInput {
   serviceId: string;
   displayName: string;
   status: Severity;
   anomalyScore: number;
   lastAction: string | null;
+
+  // NEW — optional so existing mock data doesn't break
+  layer?: ServiceLayer;
+  team?: string;
+  runtime?: string;
+  version?: string;
+  criticality?: number; // 0..1 — controls node size
 }
 
 /** A node after the force layout has assigned it a position. */

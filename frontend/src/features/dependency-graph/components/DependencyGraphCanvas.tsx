@@ -3,7 +3,8 @@ import { Info, Minus, Plus, RotateCcw, X } from "lucide-react";
 import { useResizeObserver } from "@/shared/hooks/useResizeObserver";
 import { SeverityBadge } from "@/shared/components/SeverityBadge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { graphEdges, graphNodes } from "../data/mockData";
+// import { graphEdges, graphNodes } from "../data/mockData";
+import { useLiveGraph } from "../data/useLiveGraph";
 import { runLayout } from "../lib/runLayout";
 import { identifyRootCause } from "../lib/identifyRootCause";
 import { GraphEdgeLine } from "./GraphEdgeLine";
@@ -23,19 +24,60 @@ interface Transform {
 const IDENTITY_TRANSFORM: Transform = { x: 0, y: 0, k: 1 };
 
 export function DependencyGraphCanvas() {
-  const { ref, size } = useResizeObserver<HTMLDivElement>({ width: 900, height: 520 });
+  const { ref, size } = useResizeObserver<HTMLDivElement>({
+    width: 900,
+    height: 520,
+  });
   const svgRef = useRef<SVGSVGElement>(null);
   const [hovered, setHovered] = useState<PositionedNode | null>(null);
   const [selected, setSelected] = useState<PositionedNode | null>(null);
   const [transform, setTransform] = useState<Transform>(IDENTITY_TRANSFORM);
-  const panRef = useRef<{ pointerId: number; startX: number; startY: number; origX: number; origY: number } | null>(
-    null,
-  );
+  const [manualPositions, setManualPositions] = useState<
+    Record<string, { x: number; y: number }>
+  >({});
+  const nodeDragRef = useRef<{
+    pointerId: number;
+    serviceId: string;
+    startX: number;
+    startY: number;
+    origX: number;
+    origY: number;
+    scale: number;
+  } | null>(null);
+  const panRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    origX: number;
+    origY: number;
+  } | null>(null);
+  const {
+    nodes: graphNodes,
+    edges: graphEdges,
+    infraByService,
+    appByService,
+    anomalyByService,
+    loading,
+    error,
+  } = useLiveGraph(3000);
 
-  const layout = useMemo(
+  const baseLayout = useMemo(
     () => runLayout(graphNodes, graphEdges, size.width, size.height),
-    [size.width, size.height],
+    [graphNodes, graphEdges, size.width, size.height],
   );
+  const layout = useMemo(() => {
+    const nodes = baseLayout.nodes.map((node) => {
+      const position = manualPositions[node.serviceId];
+      return position ? { ...node, ...position } : node;
+    });
+    const nodesById = new Map(nodes.map((node) => [node.serviceId, node]));
+    const edges = baseLayout.edges.map((edge) => ({
+      ...edge,
+      source: nodesById.get(edge.source.serviceId)!,
+      target: nodesById.get(edge.target.serviceId)!,
+    }));
+    return { nodes, edges };
+  }, [baseLayout, manualPositions]);
 
   const focused = selected ?? hovered;
 
@@ -45,7 +87,10 @@ export function DependencyGraphCanvas() {
     const nodeIds = new Set([focused.serviceId]);
     const edgeKeys = new Set<string>();
     for (const edge of layout.edges) {
-      if (edge.source.serviceId === focused.serviceId || edge.target.serviceId === focused.serviceId) {
+      if (
+        edge.source.serviceId === focused.serviceId ||
+        edge.target.serviceId === focused.serviceId
+      ) {
         nodeIds.add(edge.source.serviceId);
         nodeIds.add(edge.target.serviceId);
         edgeKeys.add(`${edge.source.serviceId}-${edge.target.serviceId}`);
@@ -57,8 +102,14 @@ export function DependencyGraphCanvas() {
   // Root-cause finding for the toast, recomputed whenever the selection changes.
   const rootCause = useMemo(() => {
     if (!selected || selected.status === "watch") return null;
-    const result = identifyRootCause(selected.serviceId, graphNodes, graphEdges);
-    const rootCauseNode = graphNodes.find((n) => n.serviceId === result.rootCauseId)!;
+    const result = identifyRootCause(
+      selected.serviceId,
+      graphNodes,
+      graphEdges,
+    );
+    const rootCauseNode = graphNodes.find(
+      (n) => n.serviceId === result.rootCauseId,
+    )!;
     return { ...result, rootCauseNode };
   }, [selected]);
 
@@ -89,7 +140,9 @@ export function DependencyGraphCanvas() {
     return () => el.removeEventListener("wheel", handleWheel);
   }, []);
 
-  const handleBackgroundPointerDown = (e: React.PointerEvent<SVGRectElement>) => {
+  const handleBackgroundPointerDown = (
+    e: React.PointerEvent<SVGRectElement>,
+  ) => {
     e.currentTarget.setPointerCapture(e.pointerId);
     panRef.current = {
       pointerId: e.pointerId,
@@ -100,7 +153,9 @@ export function DependencyGraphCanvas() {
     };
   };
 
-  const handleBackgroundPointerMove = (e: React.PointerEvent<SVGRectElement>) => {
+  const handleBackgroundPointerMove = (
+    e: React.PointerEvent<SVGRectElement>,
+  ) => {
     const pan = panRef.current;
     if (!pan || pan.pointerId !== e.pointerId) return;
     setTransform((prev) => ({
@@ -112,6 +167,45 @@ export function DependencyGraphCanvas() {
 
   const endPan = () => {
     panRef.current = null;
+  };
+
+  const handleNodePointerDown = (
+    node: PositionedNode,
+    e: React.PointerEvent<SVGGElement>,
+  ) => {
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    nodeDragRef.current = {
+      pointerId: e.pointerId,
+      serviceId: node.serviceId,
+      startX: e.clientX,
+      startY: e.clientY,
+      origX: node.x,
+      origY: node.y,
+      scale: transform.k,
+    };
+  };
+
+  const handleNodePointerMove = (
+    _node: PositionedNode,
+    e: React.PointerEvent<SVGGElement>,
+  ) => {
+    const drag = nodeDragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    const deltaX = e.clientX - drag.startX;
+    const deltaY = e.clientY - drag.startY;
+    setManualPositions((prev) => ({
+      ...prev,
+      [drag.serviceId]: {
+        x: drag.origX + deltaX / drag.scale,
+        y: drag.origY + deltaY / drag.scale,
+      },
+    }));
+  };
+
+  const endNodeDrag = (e: React.PointerEvent<SVGGElement>) => {
+    if (nodeDragRef.current?.pointerId === e.pointerId)
+      nodeDragRef.current = null;
   };
 
   const zoomBy = (factor: number) => {
@@ -127,6 +221,30 @@ export function DependencyGraphCanvas() {
 
   const resetView = () => setTransform(IDENTITY_TRANSFORM);
 
+  if (loading) {
+    return (
+      <div className="flex h-140 items-center justify-center rounded-xl border border-border/60">
+        <p className="text-sm text-muted-foreground">Loading graph…</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex h-140 items-center justify-center rounded-xl border border-destructive/40 bg-destructive/5">
+        <div className="text-center">
+          <p className="text-sm font-medium text-destructive">
+            Failed to load graph
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">{error}</p>
+          <p className="mt-3 text-xs text-muted-foreground">
+            Is the backend running at http://localhost:8000?
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-3">
       {rootCause && (
@@ -137,13 +255,18 @@ export function DependencyGraphCanvas() {
             <span>
               {rootCause.isRootCause ? (
                 <>
-                  <span className="font-medium">{selected!.displayName}</span> has no unhealthy
-                  downstream dependency — it is the likely root cause.
+                  <span className="font-medium">{selected!.displayName}</span>{" "}
+                  has no unhealthy downstream dependency — it is the likely root
+                  cause.
                 </>
               ) : (
                 <>
-                  Likely root cause: <span className="font-medium">{rootCause.rootCauseNode.displayName}</span>.{" "}
-                  {selected!.displayName}'s score ({selected!.anomalyScore.toFixed(2)}) is a cascading symptom.
+                  Likely root cause:{" "}
+                  <span className="font-medium">
+                    {rootCause.rootCauseNode.displayName}
+                  </span>
+                  . {selected!.displayName}'s score (
+                  {selected!.anomalyScore.toFixed(2)}) is a cascading symptom.
                 </>
               )}
             </span>
@@ -170,14 +293,39 @@ export function DependencyGraphCanvas() {
             className="touch-none"
           >
             <defs>
-              <filter id="node-glow" x="-50%" y="-50%" width="200%" height="200%">
+              <filter
+                id="node-glow"
+                x="-50%"
+                y="-50%"
+                width="200%"
+                height="200%"
+              >
                 <feGaussianBlur stdDeviation="6" />
               </filter>
-              <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <marker
+                id="arrow"
+                viewBox="0 0 10 10"
+                refX="9"
+                refY="5"
+                markerWidth="6"
+                markerHeight="6"
+                orient="auto-start-reverse"
+              >
                 <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--color-border)" />
               </marker>
-              <marker id="arrow-critical" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--color-status-degrade)" />
+              <marker
+                id="arrow-critical"
+                viewBox="0 0 10 10"
+                refX="9"
+                refY="5"
+                markerWidth="6"
+                markerHeight="6"
+                orient="auto-start-reverse"
+              >
+                <path
+                  d="M 0 0 L 10 5 L 0 10 z"
+                  fill="var(--color-status-degrade)"
+                />
               </marker>
             </defs>
 
@@ -197,7 +345,9 @@ export function DependencyGraphCanvas() {
               onClick={() => setSelected(null)}
             />
 
-            <g transform={`translate(${transform.x}, ${transform.y}) scale(${transform.k})`}>
+            <g
+              transform={`translate(${transform.x}, ${transform.y}) scale(${transform.k})`}
+            >
               {layout.edges.map((edge) => {
                 const key = `${edge.source.serviceId}-${edge.target.serviceId}`;
                 return (
@@ -213,12 +363,19 @@ export function DependencyGraphCanvas() {
                 <GraphNodeCircle
                   key={node.serviceId}
                   node={node}
-                  dimmed={connected ? !connected.nodeIds.has(node.serviceId) : false}
+                  dimmed={
+                    connected ? !connected.nodeIds.has(node.serviceId) : false
+                  }
                   selected={selected?.serviceId === node.serviceId}
                   onHover={setHovered}
                   onSelect={(n) =>
-                    setSelected((prev) => (prev?.serviceId === n.serviceId ? null : n))
+                    setSelected((prev) =>
+                      prev?.serviceId === n.serviceId ? null : n,
+                    )
                   }
+                  onNodePointerDown={handleNodePointerDown}
+                  onNodePointerMove={handleNodePointerMove}
+                  onNodePointerUp={endNodeDrag}
                 />
               ))}
             </g>
@@ -256,7 +413,10 @@ export function DependencyGraphCanvas() {
               role="tooltip"
               className="pointer-events-none absolute z-10 w-56 rounded-lg border border-border bg-popover p-3 shadow-lg"
               style={{
-                left: Math.min(hovered.x * transform.k + transform.x + 32, size.width - 240),
+                left: Math.min(
+                  hovered.x * transform.k + transform.x + 32,
+                  size.width - 240,
+                ),
                 top: Math.max(hovered.y * transform.k + transform.y - 40, 8),
               }}
             >
@@ -264,18 +424,34 @@ export function DependencyGraphCanvas() {
                 <p className="text-sm font-medium">{hovered.displayName}</p>
                 <SeverityBadge severity={hovered.status} />
               </div>
-              <p className="mt-1 font-mono text-xs text-muted-foreground">{hovered.serviceId}</p>
+              <p className="mt-1 font-mono text-xs text-muted-foreground">
+                {hovered.serviceId}
+              </p>
               <p className="mt-2 text-xs">
-                Anomaly score <span className="font-mono font-medium">{hovered.anomalyScore.toFixed(2)}</span>
+                Anomaly score{" "}
+                <span className="font-mono font-medium">
+                  {hovered.anomalyScore.toFixed(2)}
+                </span>
               </p>
               <p className="mt-1 text-xs text-muted-foreground">
-                {hovered.lastAction ? `Last action: ${hovered.lastAction}` : "No actions taken"}
+                {hovered.lastAction
+                  ? `Last action: ${hovered.lastAction}`
+                  : "No actions taken"}
               </p>
             </div>
           )}
         </div>
 
-        <GraphDetailPanel selected={selected} />
+        <GraphDetailPanel
+          selected={selected}
+          graphNodes={graphNodes}
+          graphEdges={graphEdges}
+          infra={selected ? infraByService.get(selected.serviceId) : undefined}
+          app={selected ? appByService.get(selected.serviceId) : undefined}
+          anomaly={
+            selected ? anomalyByService.get(selected.serviceId) : undefined
+          }
+        />
       </div>
     </div>
   );

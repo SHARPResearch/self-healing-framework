@@ -1,0 +1,17 @@
+{
+  "id": "ANM-2026-10-05-0001",
+  "service_id": "service-b-orders",
+  "anomaly_score": 0.87,
+  "severity": "high",
+  "metric": "request_latency_p99",
+  "actual_value": 2450.3,
+  "expected_value": 320.0,
+  "deviation_sigma": 4.2,
+  "detected_at": "2026-10-05T10:14:23.512Z",
+  "model_version": "hst-v3.2",
+  "features": {
+    "cpu_pct": 0.82,
+    "mem_mb": 1240,
+    "error_rate": 0.034
+  }
+}

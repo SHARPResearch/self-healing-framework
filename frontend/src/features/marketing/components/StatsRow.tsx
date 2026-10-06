@@ -11,15 +11,15 @@ function Stat({ stat, index }: { stat: HeroStat; index: number }) {
 
   return (
     <div className="flex flex-col items-center gap-1 text-center">
-      <span aria-hidden="true" className="font-mono text-lg text-white/40">
+      <span aria-hidden="true" className="font-mono text-lg text-foreground/40">
         {stat.symbol}
       </span>
-      <span className="font-mono text-xl font-semibold tracking-tight text-white tabular-nums sm:text-2xl">
+      <span className="font-mono text-xl font-semibold tracking-tight text-foreground tabular-nums sm:text-2xl">
         {stat.prefix}
         <span ref={ref}>{display}</span>
         {stat.suffix}
       </span>
-      <span className="text-xs text-white/50">{stat.label}</span>
+      <span className="text-xs text-foreground/50">{stat.label}</span>
     </div>
   );
 }

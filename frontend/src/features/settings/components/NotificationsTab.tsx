@@ -17,7 +17,7 @@ const CHANNELS = [
 
 export function NotificationsTab() {
   return (
-    <div className="max-w-3xl space-y-6">
+    <div className="mx-auto max-w-3xl space-y-6">
       <div>
         <h3 className="text-base font-semibold">Notifications</h3>
         <p className="text-sm text-muted-foreground">

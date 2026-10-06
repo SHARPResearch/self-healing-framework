@@ -2,6 +2,7 @@ import { MarketingNav } from "./components/MarketingNav";
 import { HeroSection } from "./components/HeroSection";
 import { TechMarquee } from "./components/TechMarquee";
 import { HowItWorks } from "./components/HowItWorks";
+import { RolloutPath } from "./components/RolloutPath";
 import { IntegratedPlatform } from "./components/IntegratedPlatform";
 import { FeatureGrid } from "./components/FeatureGrid";
 import { SeverityLadder } from "./components/SeverityLadder";
@@ -18,12 +19,13 @@ import { MarketingFooter } from "./components/MarketingFooter";
  */
 export function MarketingPage() {
   return (
-    <div className="min-h-screen scroll-smooth bg-black text-white">
+    <div className="min-h-screen scroll-smooth bg-background text-foreground">
       <MarketingNav />
       <main>
         <HeroSection />
         <TechMarquee />
         <HowItWorks />
+        <RolloutPath />
         <IntegratedPlatform />
         <FeatureGrid />
         <SeverityLadder />

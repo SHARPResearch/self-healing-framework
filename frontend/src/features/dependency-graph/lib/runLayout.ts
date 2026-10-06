@@ -5,7 +5,12 @@ import {
   forceSimulation,
   type SimulationNodeDatum,
 } from "d3-force";
-import type { GraphEdge, GraphNodeInput, PositionedEdge, PositionedNode } from "../types";
+import type {
+  GraphEdge,
+  GraphNodeInput,
+  PositionedEdge,
+  PositionedNode,
+} from "../types";
 
 interface SimNode extends SimulationNodeDatum, GraphNodeInput {}
 
@@ -35,17 +40,20 @@ export function runLayout(
   height: number,
 ): { nodes: PositionedNode[]; edges: PositionedEdge[] } {
   const simNodes: SimNode[] = nodes.map((n) => ({ ...n }));
-  const simLinks: SimLink[] = edges.map((e) => ({ source: e.source, target: e.target }));
+  const simLinks: SimLink[] = edges.map((e) => ({
+    source: e.source,
+    target: e.target,
+  }));
 
   const simulation = forceSimulation(simNodes)
     .force(
       "link",
       forceLink<SimNode, SimLink>(simLinks)
         .id((d) => d.serviceId)
-        .distance(150)
-        .strength(0.4),
+        .distance(220) // ← was 150
+        .strength(0.35),
     )
-    .force("charge", forceManyBody().strength(-900))
+    .force("charge", forceManyBody().strength(-2200)) // ← was -900
     .force("center", forceCenter(width / 2, height / 2))
     .stop();
 
@@ -58,6 +66,11 @@ export function runLayout(
     status: n.status,
     anomalyScore: n.anomalyScore,
     lastAction: n.lastAction,
+    layer: n.layer,
+    team: n.team,
+    runtime: n.runtime,
+    version: n.version,
+    criticality: n.criticality,
     // Clamp so nodes near the edge are never clipped by the viewport.
     x: Math.max(padding, Math.min(width - padding, n.x ?? width / 2)),
     y: Math.max(padding, Math.min(height - padding, n.y ?? height / 2)),
@@ -69,7 +82,14 @@ export function runLayout(
     const source = byId.get(e.source);
     const target = byId.get(e.target);
     if (!source || !target) return [];
-    return [{ source, target, downstreamCritical: target.status === "critical" }];
+    return [
+      {
+        source,
+        target,
+        downstreamCritical: target.status === "critical",
+        latencyMs: e.latencyMs,
+      },
+    ];
   });
 
   return { nodes: positioned, edges: positionedEdges };

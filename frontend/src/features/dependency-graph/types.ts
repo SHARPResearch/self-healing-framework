@@ -8,7 +8,11 @@ import type { Severity } from "@/shared/types";
 export interface GraphEdge {
   source: string;
   target: string;
+  /** Hand-authored, plausible latency for the detail panel -- see data/mockData.ts. */
+  latencyMs: number;
 }
+
+export type ServiceLayer = "edge" | "bff" | "domain" | "data" | "unknown";
 
 export interface GraphNodeInput {
   serviceId: string;
@@ -16,6 +20,13 @@ export interface GraphNodeInput {
   status: Severity;
   anomalyScore: number;
   lastAction: string | null;
+
+  // NEW — optional so existing mock data doesn't break
+  layer?: ServiceLayer;
+  team?: string;
+  runtime?: string;
+  version?: string;
+  criticality?: number; // 0..1 — controls node size
 }
 
 /** A node after the force layout has assigned it a position. */
@@ -29,4 +40,5 @@ export interface PositionedEdge {
   target: PositionedNode;
   /** True when the callee is critical, which is what turns the edge amber. */
   downstreamCritical: boolean;
+  latencyMs: number;
 }

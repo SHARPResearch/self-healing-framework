@@ -1,16 +1,24 @@
+from river import compose
 from river.anomaly import HalfSpaceTrees
+from river.preprocessing import MinMaxScaler
 
 from src.config import HSTConfig
-from src.hst_model import build_model, classify_severity, score_dataset, warm_up
+from src.hst_model import build_model, build_pipeline, classify_severity, score_dataset, warm_up
 
 
 def test_build_model_applies_config():
     cfg = HSTConfig(n_trees=7, height=5, window_size=100, seed=1)
-    model = build_model(cfg)
-    assert isinstance(model, HalfSpaceTrees)
-    assert model.n_trees == 7
-    assert model.height == 5
-    assert model.window_size == 100
+    pipeline = build_model(cfg)
+    assert isinstance(pipeline, compose.Pipeline)
+    assert isinstance(pipeline["MinMaxScaler"], MinMaxScaler)
+    assert isinstance(pipeline["HalfSpaceTrees"], HalfSpaceTrees)
+    assert pipeline["HalfSpaceTrees"].n_trees == 7
+    assert pipeline["HalfSpaceTrees"].height == 5
+    assert pipeline["HalfSpaceTrees"].window_size == 100
+
+    raw_model = build_model(cfg, with_scaler=False)
+    assert isinstance(raw_model, HalfSpaceTrees)
+    assert raw_model.n_trees == 7
 
 
 def test_warm_up_counts_events_and_reports_throughput():
@@ -45,3 +53,20 @@ def test_classify_severity_thresholds():
     assert classify_severity(0.84) == "degrade"
     assert classify_severity(0.85) == "critical"
     assert classify_severity(1.0) == "critical"
+
+
+def test_minmax_scaler_hst_disparate_scales():
+    """Test that MinMaxScaler + HST detects anomalies with massive scale differences"""
+    cfg = HSTConfig(n_trees=10, height=8, window_size=50, seed=42)
+    pipe = build_model(cfg)
+    # Warm up with baseline
+    baseline_rows = [
+        {"cpu_rate": 0.2 + (i % 5) * 0.01, "memory_usage": 7.0e8 + (i % 10) * 1e6, "network_receive_rate": 4.0e4 + (i % 3) * 1e3}
+        for i in range(100)
+    ]
+    warm_up(pipe, baseline_rows)
+    
+    # Anomaly with scaled down memory and CPU
+    anomaly_obs = {"cpu_rate": 0.05, "memory_usage": 4.5e8, "network_receive_rate": 1.5e4}
+    score = pipe.score_one(anomaly_obs)
+    assert score > 0.5

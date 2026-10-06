@@ -1,11 +1,27 @@
+import {
+  Activity,
+  Bot,
+  GitBranch,
+  History,
+  Plug,
+  Rocket,
+  Route,
+  Search,
+  ShieldCheck,
+  SlidersHorizontal,
+  type LucideIcon,
+} from "lucide-react";
+import {
+  siDotnet,
+  siKubernetes,
+  siMlflow,
+  siPrometheus,
+  siReact,
+  siRedis,
+  siTimescale,
+  type SimpleIcon,
+} from "simple-icons";
 import type { Severity } from "@/shared/types";
-
-/**
- * Third party asset, outside this repo's control. The hero renders a gradient
- * behind it so a dead URL degrades instead of showing black.
- */
-export const HERO_VIDEO_URL =
-  "https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260809_012548_ef22562c-c0ae-4816-ad9d-f8922af4e6a7.mp4";
 
 export interface HeroStat {
   symbol: string;
@@ -144,48 +160,113 @@ export const STACK: StackItem[] = [
   { layer: "Runtime", tech: "Kubernetes", why: "Every remediation is an ordinary API call against the cluster." },
 ];
 
-/** "Built on" strip -- what SHARP actually runs on, not fake customer logos. */
-export const MARQUEE_ITEMS: string[] = [
-  "Kubernetes",
-  "Prometheus",
-  "Redis",
-  "MLflow",
-  "river",
-  ".NET 8",
-  "YARP",
-  "TimescaleDB",
-  "React",
+export interface MarqueeItem {
+  label: string;
+  icon?: SimpleIcon;
+}
+
+/**
+ * "Built on" strip -- what SHARP actually runs on, not fake customer logos.
+ * Logos come from simple-icons. river and YARP are left text-only rather
+ * than given a fake/generic icon -- river is a niche Python library and YARP
+ * is an internal Microsoft project, neither has a real brand mark anywhere.
+ */
+export const MARQUEE_ITEMS: MarqueeItem[] = [
+  { label: "Kubernetes", icon: siKubernetes },
+  { label: "Prometheus", icon: siPrometheus },
+  { label: "Redis", icon: siRedis },
+  { label: "MLflow", icon: siMlflow },
+  { label: "river" },
+  { label: ".NET 8", icon: siDotnet },
+  { label: "YARP" },
+  { label: "TimescaleDB", icon: siTimescale },
+  { label: "React", icon: siReact },
 ];
 
 export interface FeatureCard {
   title: string;
+  icon: LucideIcon;
   body: string;
 }
 
+/**
+ * Icons are reused from the app's own nav/action iconography where the
+ * concept overlaps (GitBranch is the dependency graph nav icon, Route is the
+ * shift-traffic action icon on the services detail panel, Bot is the copilot
+ * nav icon) rather than picked arbitrarily, so the marketing page's visual
+ * language matches the real product's.
+ */
 export const FEATURE_GRID: FeatureCard[] = [
   {
     title: "Online learning",
+    icon: Activity,
     body: "Every Prometheus scrape updates the model in place. No batch retrain job, no stale window.",
   },
   {
     title: "Graduated remediation",
+    icon: SlidersHorizontal,
     body: "Four severity tiers, each with its own response, from a log line up to a full rollback.",
   },
   {
     title: "Dependency aware",
+    icon: GitBranch,
     body: "A service going critical elevates its upstreams and pre-scales its downstreams automatically.",
   },
   {
     title: "Zero downtime traffic shifts",
+    icon: Route,
     body: "YARP drains a failing pod to 0% weight instead of killing it, so in-flight requests finish.",
   },
   {
     title: "Versioned models",
+    icon: History,
     body: "Every run is tracked in MLflow. Rollback to the last stable snapshot is one click, or automatic.",
   },
   {
     title: "Copilot for root cause",
+    icon: Bot,
     body: "Ask what happened in plain English. RAG over incident history and telemetry summaries.",
+  },
+];
+
+export interface RolloutPillar {
+  label: string;
+  icon: LucideIcon;
+  items: string[];
+  /** Absolute position within the desktop staircase, as a percentage of the
+   *  container's own box -- not viewport units, so it stays scoped to this
+   *  page's max-w-6xl column instead of the raw browser width. */
+  leftPct: number;
+  bottomPct: number;
+}
+
+/**
+ * The adoption path, not the runtime loop -- LOOP_STEPS (Ingest/Predict/
+ * Decide/Act) already covers what SHARP does once it's running; this is
+ * about how a team actually gets it there.
+ */
+export const ROLLOUT_PILLARS: RolloutPillar[] = [
+  { label: "Scope", icon: Search, items: ["services", "thresholds", "SLOs", "timeline"], leftPct: 3, bottomPct: 20 },
+  {
+    label: "Integrate",
+    icon: Plug,
+    items: ["Prometheus", "Redis", "MLflow", "Kubernetes API"],
+    leftPct: 27,
+    bottomPct: 27,
+  },
+  {
+    label: "Certify",
+    icon: ShieldCheck,
+    items: ["dry-run mode", "chaos test", "policy check", "sign-off"],
+    leftPct: 51,
+    bottomPct: 34,
+  },
+  {
+    label: "Activate",
+    icon: Rocket,
+    items: ["runbooks", "on-call handoff", "SLA tracking", "go-live"],
+    leftPct: 75,
+    bottomPct: 41,
   },
 ];
 

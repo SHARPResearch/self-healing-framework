@@ -27,7 +27,7 @@ export function MarketingNav() {
     <header
       className={cn(
         "fixed inset-x-0 top-0 z-50 transition-colors duration-300",
-        scrolled ? "border-b border-white/10 bg-black/70 backdrop-blur-md" : "bg-transparent",
+        scrolled ? "border-b border-foreground/10 bg-background/70 backdrop-blur-md" : "bg-transparent",
       )}
     >
       <nav className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
@@ -40,7 +40,7 @@ export function MarketingNav() {
             <a
               key={link.href}
               href={link.href}
-              className="text-sm text-white/60 transition-colors hover:text-white"
+              className="text-sm text-foreground/60 transition-colors hover:text-foreground"
             >
               {link.label}
             </a>
@@ -48,10 +48,18 @@ export function MarketingNav() {
         </div>
 
         <div className="hidden items-center gap-2 md:flex">
-          <Button asChild variant="ghost" size="sm" className="text-white hover:bg-white/10 hover:text-white">
+          <Button
+            asChild
+            variant="ghost"
+            size="sm"
+            className="text-foreground hover:bg-foreground/10 hover:text-foreground"
+          >
             <Link to="/login">Sign in</Link>
           </Button>
-          <Button asChild size="sm" className="bg-white text-black hover:bg-white/90">
+          {/* Neutral, not green: the nav is fixed and always co-visible with
+              whichever section's own primary CTA is in view, so making this
+              green too would put two filled green buttons in one viewport. */}
+          <Button asChild size="sm">
             <Link to="/signup">Sign up</Link>
           </Button>
         </div>
@@ -61,30 +69,35 @@ export function MarketingNav() {
           onClick={() => setOpen((prev) => !prev)}
           aria-label={open ? "Close menu" : "Open menu"}
           aria-expanded={open}
-          className="rounded-md p-1.5 text-white md:hidden"
+          className="rounded-md p-1.5 text-foreground md:hidden"
         >
           {open ? <X className="size-5" /> : <Menu className="size-5" />}
         </button>
       </nav>
 
       {open && (
-        <div className="border-t border-white/10 bg-black/95 backdrop-blur-md md:hidden">
+        <div className="border-t border-foreground/10 bg-background/95 backdrop-blur-md md:hidden">
           <div className="flex flex-col gap-1 px-6 py-4">
             {LINKS.map((link) => (
               <a
                 key={link.href}
                 href={link.href}
                 onClick={() => setOpen(false)}
-                className="py-2 text-sm text-white/70 transition-colors hover:text-white"
+                className="py-2 text-sm text-foreground/70 transition-colors hover:text-foreground"
               >
                 {link.label}
               </a>
             ))}
-            <div className="mt-3 flex flex-col gap-2 border-t border-white/10 pt-4">
-              <Button asChild variant="ghost" size="sm" className="text-white hover:bg-white/10 hover:text-white">
+            <div className="mt-3 flex flex-col gap-2 border-t border-foreground/10 pt-4">
+              <Button
+                asChild
+                variant="ghost"
+                size="sm"
+                className="text-foreground hover:bg-foreground/10 hover:text-foreground"
+              >
                 <Link to="/login">Sign in</Link>
               </Button>
-              <Button asChild size="sm" className="bg-white text-black hover:bg-white/90">
+              <Button asChild size="sm">
                 <Link to="/signup">Sign up</Link>
               </Button>
             </div>

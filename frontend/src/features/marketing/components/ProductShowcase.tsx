@@ -10,15 +10,15 @@ export function ProductShowcase() {
   return (
     <section id="product" className="mx-auto max-w-6xl px-6 py-24">
       <Reveal>
-        <p className="text-xs font-medium tracking-widest text-white/40 uppercase">The product</p>
-        <h2 className="mt-3 max-w-2xl text-3xl font-semibold tracking-tight text-white sm:text-4xl">
+        <p className="text-xs font-medium tracking-widest text-foreground/40 uppercase">The product</p>
+        <h2 className="mt-3 max-w-2xl text-3xl font-medium tracking-display text-foreground sm:text-4xl">
           Everything the loop does, visible
         </h2>
       </Reveal>
 
       <Reveal delay={0.1}>
         <figure className="mt-14">
-          <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03] shadow-2xl">
+          <div className="overflow-hidden rounded-brand-lg border border-foreground/10 bg-foreground/[0.03] shadow-2xl">
             <img
               src="/marketing/dependency-graph.png"
               alt="SHARP dependency graph with service nodes coloured by severity and a critical service highlighted"
@@ -30,8 +30,8 @@ export function ProductShowcase() {
             />
           </div>
           <figcaption className="mt-4 flex flex-col gap-1">
-            <span className="text-sm font-semibold text-white">Dependency graph</span>
-            <span className="max-w-2xl text-sm text-white/60">
+            <span className="text-sm font-semibold text-foreground">Dependency graph</span>
+            <span className="max-w-2xl text-sm text-foreground/60">
               Who calls whom, coloured by severity. Amber edges point at a service that is already
               critical, so the caller is one step from cascading failure.
             </span>

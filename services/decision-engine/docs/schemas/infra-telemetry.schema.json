@@ -1,0 +1,11 @@
+{
+  "service_id": "service-b-orders",
+  "timestamp": "2026-10-05T10:14:23Z",
+  "pod_count": 3,
+  "ready_pods": 2,
+  "cpu": { "usage_pct": 0.82, "limit_pct": 1.0, "cores_used": 0.82 },
+  "memory": { "used_mb": 1240, "limit_mb": 2048, "pct": 0.61 },
+  "network": { "rx_kbps": 850, "tx_kbps": 420 },
+  "restarts_last_5m": 1,
+  "node": "ip-10-0-1-42"
+}

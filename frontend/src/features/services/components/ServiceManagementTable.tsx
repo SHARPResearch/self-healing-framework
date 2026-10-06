@@ -2,16 +2,23 @@ import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ServiceTableRow } from "./ServiceTableRow";
 import { ServiceDetailPanel } from "./ServiceDetailPanel";
-import { activityLogByService as initialActivityLog, serviceRows } from "../data/mockData";
 import type { ActivityLogEntry, ServiceRow } from "../types";
+import { useLiveServiceData } from "@/lib/useLiveServiceData";
 
 export function ServiceManagementTable() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [activityLog, setActivityLog] = useState(initialActivityLog);
+  const [activityLog, setActivityLog] = useState<
+    Record<string, ActivityLogEntry[]>
+  >({});
+  const { serviceRows, loading, error } = useLiveServiceData();
 
-  const selectedIndex = serviceRows.findIndex((s) => s.serviceId === selectedId);
+  const selectedIndex = serviceRows.findIndex(
+    (s) => s.serviceId === selectedId,
+  );
   const selectedService: ServiceRow | undefined = serviceRows[selectedIndex];
-  const criticalCount = serviceRows.filter((s) => s.status === "critical").length;
+  const criticalCount = serviceRows.filter(
+    (s) => s.status === "critical",
+  ).length;
 
   useEffect(() => {
     if (!selectedId) return;
@@ -41,33 +48,55 @@ export function ServiceManagementTable() {
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
             <div className="size-2 animate-pulse rounded-full bg-status-healthy" />
-            <h1 className="text-xl font-medium text-foreground">Active services</h1>
+            <h1 className="text-xl font-medium text-foreground">
+              Active services
+            </h1>
           </div>
           <div className="text-sm text-muted-foreground">
-            {serviceRows.length} services &bull; {criticalCount} critical
+            {loading && serviceRows.length === 0
+              ? "Loading services..."
+              : `${serviceRows.length} services · ${criticalCount} critical`}
           </div>
         </div>
       </div>
 
+      {error && (
+        <p
+          role="alert"
+          className="mb-4 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
+        >
+          Could not refresh service data: {error}
+        </p>
+      )}
+
       <div className="overflow-x-auto">
         <motion.div
           className="min-w-220 space-y-2"
-          variants={{ visible: { transition: { staggerChildren: 0.08, delayChildren: 0.1 } } }}
+          variants={{
+            visible: {
+              transition: { staggerChildren: 0.08, delayChildren: 0.1 },
+            },
+          }}
           initial="hidden"
           animate="visible"
         >
           <div className="grid grid-cols-12 gap-4 px-4 py-2 text-xs font-medium tracking-wider text-muted-foreground uppercase">
             <div className="col-span-1">No</div>
             <div className="col-span-2">Service name</div>
-            <div className="col-span-2">Namespace</div>
-            <div className="col-span-2">Cluster IP</div>
+            <div className="col-span-2">Team / tier</div>
+            <div className="col-span-2">Node</div>
             <div className="col-span-2">Replicas</div>
             <div className="col-span-2">Anomaly score</div>
             <div className="col-span-1">Status</div>
           </div>
 
           {serviceRows.map((row, index) => (
-            <ServiceTableRow key={row.serviceId} row={row} index={index} onSelect={(s) => setSelectedId(s.serviceId)} />
+            <ServiceTableRow
+              key={row.serviceId}
+              row={row}
+              index={index}
+              onSelect={(s) => setSelectedId(s.serviceId)}
+            />
           ))}
         </motion.div>
       </div>

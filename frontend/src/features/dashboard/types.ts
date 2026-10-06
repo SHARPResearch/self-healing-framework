@@ -35,7 +35,7 @@ export interface AnomalyTrendPoint {
 export interface StatCardData {
   label: string;
   value: string;
-  deltaLabel: string;
-  deltaDirection: "up" | "down";
-  deltaTone: "positive" | "negative";
+  deltaLabel?: string;
+  deltaDirection?: "up" | "down";
+  deltaTone?: "positive" | "negative";
 }

@@ -18,7 +18,11 @@ interface ServiceTableRowProps {
   onSelect: (row: ServiceRow) => void;
 }
 
-export function ServiceTableRow({ row, index, onSelect }: ServiceTableRowProps) {
+export function ServiceTableRow({
+  row,
+  index,
+  onSelect,
+}: ServiceTableRowProps) {
   return (
     <motion.div
       variants={{
@@ -28,7 +32,12 @@ export function ServiceTableRow({ row, index, onSelect }: ServiceTableRowProps) 
           x: 0,
           scale: 1,
           filter: "blur(0px)",
-          transition: { type: "spring", stiffness: 400, damping: 28, mass: 0.6 },
+          transition: {
+            type: "spring",
+            stiffness: 400,
+            damping: 28,
+            mass: 0.6,
+          },
         },
       }}
       className="relative cursor-pointer rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -44,11 +53,18 @@ export function ServiceTableRow({ row, index, onSelect }: ServiceTableRowProps) 
     >
       <motion.div
         className="relative overflow-hidden rounded-xl border border-border/50 bg-muted/50 p-4"
-        whileHover={{ y: -1, transition: { type: "spring", stiffness: 400, damping: 25 } }}
+        whileHover={{
+          y: -1,
+          transition: { type: "spring", stiffness: 400, damping: 25 },
+        }}
       >
         <div
           className={`absolute inset-0 bg-gradient-to-l pointer-events-none ${SEVERITY_ROW_GRADIENT[row.status]} to-transparent`}
-          style={{ backgroundSize: "30% 100%", backgroundPosition: "right", backgroundRepeat: "no-repeat" }}
+          style={{
+            backgroundSize: "30% 100%",
+            backgroundPosition: "right",
+            backgroundRepeat: "no-repeat",
+          }}
         />
 
         <div className="relative grid grid-cols-12 items-center gap-4">
@@ -60,22 +76,30 @@ export function ServiceTableRow({ row, index, onSelect }: ServiceTableRowProps) 
 
           <div className="col-span-2 flex items-center gap-3">
             <RuntimeIcon runtime={row.runtime} />
-            <span className="font-medium text-foreground">{row.displayName}</span>
+            <span className="font-medium text-foreground">
+              {row.displayName}
+            </span>
           </div>
 
           <div className="col-span-2 flex items-center gap-3">
             <div className="flex size-8 items-center justify-center rounded-full border border-border/30 bg-muted/40">
               <Layers className="size-4 text-muted-foreground" />
             </div>
-            <span className="text-foreground">{row.namespace}</span>
+            <span className="text-foreground">
+              {row.team} · tier {row.tier}
+            </span>
           </div>
 
           <div className="col-span-2">
-            <span className="font-mono text-sm text-foreground">{row.clusterIp}</span>
+            <span className="font-mono text-sm text-foreground">
+              {row.node}
+            </span>
           </div>
 
           <div className="col-span-2">
-            <span className="font-mono text-sm text-foreground">{row.replicas}</span>
+            <span className="font-mono text-sm text-foreground">
+              {row.replicas}
+            </span>
           </div>
 
           <div className="col-span-2">

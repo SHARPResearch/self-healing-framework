@@ -427,7 +427,7 @@ def _apply_health_multipliers(health: str) -> dict:
 # ─────────────────────────────────────────────────────────────────────
 # ANOMALY
 # ─────────────────────────────────────────────────────────────────────
-def _anomaly(sid: str) -> dict | None:
+def _anomaly(sid: str):
     health = _health(sid)
     if health == "healthy":
         return None
@@ -440,15 +440,17 @@ def _anomaly(sid: str) -> dict | None:
         2,
     )
 
-    # Pick the dominant metric driving this anomaly
     metric_choice = random.choice([
         ("request_latency_p99", p["base_p99"] * m["lat"], p["base_p99"]),
         ("cpu_usage_pct",       p["base_cpu"] * m["cpu"], p["base_cpu"]),
         ("error_rate",          p["base_err"] * m["err"], p["base_err"]),
     ])
 
+    # ✅ STABLE ID: same scenario + same service = same anomaly_id
+    stable_id = f"ANM-{CURRENT_SCENARIO}-{sid}"
+
     return {
-        "id": f"ANM-{datetime.now().strftime('%Y%m%d')}-{random.randint(1000, 9999)}",
+        "id": stable_id,   # ← was f"ANM-{datetime...}-{random.randint(...)}"
         "service_id": sid,
         "service_name": p["display_name"],
         "team": p["team"],
@@ -469,7 +471,6 @@ def _anomaly(sid: str) -> dict | None:
             "p99_ms": round(p["base_p99"] * m["lat"], 1),
         },
     }
-
 
 # ─────────────────────────────────────────────────────────────────────
 # INFRA

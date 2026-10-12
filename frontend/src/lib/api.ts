@@ -7,6 +7,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+// ─── Service catalog ───────────────────────────────────────────────
 export interface ApiService {
   service_id: string;
   display_name: string;
@@ -21,18 +22,87 @@ export interface ApiService {
   health: string;
 }
 
+// ─── Anomaly (live, from mock) ─────────────────────────────────────
 export interface ApiAnomaly {
   id: string;
   service_id: string;
-  service_name: string;
+  service_name?: string;
   anomaly_score: number;
   severity: "low" | "medium" | "high";
-  metric: string;
-  actual_value: number;
-  expected_value: number;
+  metric?: string;
+  actual_value?: number;
+  expected_value?: number;
   detected_at: string;
+  features?: Record<string, unknown>;
 }
 
+// ─── Anomaly (from DB) ─────────────────────────────────────────────
+export interface ApiDbAnomaly {
+  id: string;
+  service_id: string;
+  service_name: string | null;
+  team: string | null;
+  layer: string | null;
+  anomaly_score: number;
+  severity: "low" | "medium" | "high";
+  metric: string | null;
+  actual_value: number | null;
+  expected_value: number | null;
+  deviation_sigma: number | null;
+  confidence: number | null;
+  model_version: string | null;
+  features: Record<string, unknown> | null;
+  detected_at: string;
+  snapshot_status: "pending" | "captured" | "failed";
+  snapshot_from: string | null;
+  snapshot_to: string | null;
+  captured_at: string | null;
+}
+
+// ─── Evidence bundle ───────────────────────────────────────────────
+export interface ApiInfraSnapshot {
+  anomaly_id: string;
+  time: string;
+  service_id: string;
+  cpu_usage_pct: number | null;
+  mem_pct: number | null;
+  mem_used_mb: number | null;
+  mem_limit_mb: number | null;
+  ready_pods: number | null;
+  pod_count: number | null;
+  restarts_last_5m: number | null;
+  net_rx_kbps: number | null;
+  net_tx_kbps: number | null;
+}
+
+export interface ApiAppSnapshot {
+  anomaly_id: string;
+  time: string;
+  service_id: string;
+  rps: number | null;
+  latency_p50: number | null;
+  latency_p90: number | null;
+  latency_p95: number | null;
+  latency_p99: number | null;
+  error_rate: number | null;
+  status_2xx: number | null;
+  status_3xx: number | null;
+  status_4xx: number | null;
+  status_5xx: number | null;
+  active_conns: number | null;
+  queue_depth: number | null;
+  db_p95_ms: number | null;
+  cache_hit_rate: number | null;
+}
+
+export interface ApiEvidenceBundle {
+  anomaly: ApiDbAnomaly;
+  infra_snapshots: ApiInfraSnapshot[];
+  app_snapshots: ApiAppSnapshot[];
+  counts: { infra: number; app: number };
+}
+
+// ─── Live infra + app ──────────────────────────────────────────────
 export interface ApiInfra {
   service_id: string;
   pod_count: number;
@@ -40,6 +110,14 @@ export interface ApiInfra {
   node: string;
 }
 
+export interface ApiApp {
+  service_id: string;
+  requests_per_sec: number;
+  latency_ms: { p50: number; p95: number; p99: number };
+  error_rate: number;
+}
+
+// ─── Graph ─────────────────────────────────────────────────────────
 export interface ApiGraph {
   nodes: Array<{
     id: string;
@@ -56,12 +134,27 @@ export interface ApiGraph {
   }>;
 }
 
+// ─── API functions ─────────────────────────────────────────────────
 export async function fetchGraph(): Promise<ApiGraph> {
   return request<ApiGraph>("/api/graph/");
 }
 
 export async function fetchAnomalies(): Promise<ApiAnomaly[]> {
   return request<ApiAnomaly[]>("/api/anomalies/recent");
+}
+
+/** Anomalies from the DB with snapshot_status — used by /anomalies page */
+export async function fetchDbAnomalies(limit = 100): Promise<ApiDbAnomaly[]> {
+  return request<ApiDbAnomaly[]>(`/api/anomalies/recent?limit=${limit}`);
+}
+
+/** Full evidence bundle: anomaly + all infra/app snapshots */
+export async function fetchAnomalyEvidence(
+  anomalyId: string,
+): Promise<ApiEvidenceBundle> {
+  return request<ApiEvidenceBundle>(
+    `/api/anomalies/${encodeURIComponent(anomalyId)}/evidence`,
+  );
 }
 
 export async function fetchInfra(): Promise<ApiInfra[]> {

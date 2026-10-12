@@ -137,3 +137,152 @@ SELECT create_hypertable('app_snapshots', 'time', if_not_exists => TRUE);
 CREATE INDEX IF NOT EXISTS idx_app_anomaly
     ON app_snapshots (anomaly_id, time);
 """
+
+
+# ─────────────────────────────────────────────────────────────────────
+# BATCH 1 — RULES (Component 2 Rule Engine)
+# ─────────────────────────────────────────────────────────────────────
+RULES_DDL = """
+CREATE TABLE IF NOT EXISTS rules (
+    id             TEXT PRIMARY KEY,
+    version        INT NOT NULL DEFAULT 1,
+    priority       INT NOT NULL DEFAULT 100,
+    description    TEXT NOT NULL DEFAULT '',
+    enabled        BOOLEAN NOT NULL DEFAULT TRUE,
+    applies_to     JSONB NOT NULL,
+    when_condition JSONB NOT NULL,
+    then_action    JSONB NOT NULL,
+    guardrails     JSONB NOT NULL,
+    tags           JSONB NOT NULL DEFAULT '[]'::jsonb,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_rules_enabled_priority
+    ON rules (enabled, priority DESC);
+"""
+
+
+# ─────────────────────────────────────────────────────────────────────
+# BATCH 1 — Placeholders for later batches (schemas created now,
+#           code that uses them lands in Batch 2/3/4).
+# ─────────────────────────────────────────────────────────────────────
+DECISION_LOG_DDL = """
+CREATE TABLE IF NOT EXISTS decision_log (
+    id                TEXT PRIMARY KEY,           -- DEC-{ulid}
+    anomaly_id        TEXT NOT NULL,
+    service_id        TEXT NOT NULL,
+    rule_id           TEXT,
+    rule_version      INT,
+
+    action            TEXT NOT NULL,
+    action_params     JSONB NOT NULL DEFAULT '{}'::jsonb,
+
+    detection_conf    DOUBLE PRECISION NOT NULL DEFAULT 0,
+    rule_conf         DOUBLE PRECISION NOT NULL DEFAULT 0,
+    final_conf        DOUBLE PRECISION NOT NULL DEFAULT 0,
+
+    base_risk         TEXT,
+    blast_factor      DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+    centrality        DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+    effective_severity DOUBLE PRECISION NOT NULL DEFAULT 0,
+
+    policy_outcome    TEXT NOT NULL,             -- AUTO_EXECUTE / SHADOW_MODE / HUMAN_LOOP / BLOCK
+    policy_reason     TEXT,
+
+    context           JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_decision_log_anomaly  ON decision_log (anomaly_id);
+CREATE INDEX IF NOT EXISTS idx_decision_log_service  ON decision_log (service_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_decision_log_outcome  ON decision_log (policy_outcome, created_at DESC);
+"""
+
+
+SHADOW_RECORDS_DDL = """
+CREATE TABLE IF NOT EXISTS shadow_records (
+    id                 TEXT PRIMARY KEY,          -- SHD-{ulid}
+    decision_id        TEXT NOT NULL,             -- FK by convention → decision_log.id
+    anomaly_id         TEXT NOT NULL,
+    service_id         TEXT NOT NULL,
+
+    candidate_action   TEXT NOT NULL,
+    confidence         DOUBLE PRECISION NOT NULL,
+    risk               TEXT NOT NULL,
+
+    simulated_outcome  JSONB NOT NULL DEFAULT '{}'::jsonb,
+    actual_outcome     JSONB,
+    verdict            TEXT,                      -- ACTION_WOULD_HAVE_HELPED / UNNECESSARY / HARMFUL / UNKNOWN
+    learning           TEXT,
+
+    observed_at        TIMESTAMPTZ,               -- when the actual outcome was observed
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_shadow_decision ON shadow_records (decision_id);
+CREATE INDEX IF NOT EXISTS idx_shadow_verdict  ON shadow_records (verdict);
+"""
+
+
+ESCALATIONS_DDL = """
+CREATE TABLE IF NOT EXISTS escalations (
+    id              TEXT PRIMARY KEY,             -- ESC-{ulid}
+    decision_id     TEXT NOT NULL,
+    anomaly_id      TEXT NOT NULL,
+    service_id      TEXT NOT NULL,
+
+    status          TEXT NOT NULL DEFAULT 'PENDING',  -- PENDING / AWAITING_HUMAN / RESOLVED / FAILED
+    attempt         INT NOT NULL DEFAULT 0,           -- 0 → not sent; 1,2,3 → attempts
+    max_attempts    INT NOT NULL DEFAULT 3,
+
+    notifications   JSONB NOT NULL DEFAULT '[]'::jsonb, -- [{attempt, sent_at, message_id}]
+    response        JSONB,                              -- {decision: approve|reject, by, at, note}
+    failure_report  TEXT,
+
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_escalations_status ON escalations (status, created_at DESC);
+"""
+
+
+ACTION_HISTORY_DDL = """
+-- Used by Validation Layer: "has this action failed N times recently?"
+CREATE TABLE IF NOT EXISTS action_history (
+    id            BIGSERIAL PRIMARY KEY,
+    decision_id   TEXT NOT NULL,
+    service_id    TEXT NOT NULL,
+    action        TEXT NOT NULL,
+    outcome       TEXT NOT NULL,               -- SUCCESS / FAILED / NEUTRAL / UNKNOWN
+    occurred_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_action_history_lookup
+    ON action_history (service_id, action, occurred_at DESC);
+"""
+
+
+IN_FLIGHT_ACTIONS_DDL = """
+-- Used by Validation Layer: conflict detection.
+CREATE TABLE IF NOT EXISTS in_flight_actions (
+    decision_id   TEXT PRIMARY KEY,
+    service_id    TEXT NOT NULL,
+    action        TEXT NOT NULL,
+    started_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at    TIMESTAMPTZ NOT NULL              -- guardrail.cooldown_seconds after started_at
+);
+CREATE INDEX IF NOT EXISTS idx_in_flight_service
+    ON in_flight_actions (service_id, expires_at DESC);
+"""
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Register all new DDL in the list that run_migrations() iterates.
+# If your existing schemas.py has a list like `ALL_DDL = [...]`, append
+# these. If it uses a function, call these from there.
+# ─────────────────────────────────────────────────────────────────────
+BATCH1_DDL = [
+    RULES_DDL,
+    DECISION_LOG_DDL,
+    SHADOW_RECORDS_DDL,
+    ESCALATIONS_DDL,
+    ACTION_HISTORY_DDL,
+    IN_FLIGHT_ACTIONS_DDL,
+]

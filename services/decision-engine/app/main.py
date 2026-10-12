@@ -39,6 +39,11 @@ from app.persistence.neo4j import neo4j_store
 from app.persistence.migrate import run_migrations
 from app.ingestion.telemetry_puller import start_telemetry_puller, pull_once
 from app.ingestion.anomaly_sink import start_anomaly_sink, resume_pending_snapshots
+from app.api.routes import (
+    graph, health, mock_data, anomaly_evidence, telemetry_history,
+    rules,                                   
+)
+from app.rules.registry import rule_registry    
 
 logging.basicConfig(
     level=logging.INFO,
@@ -66,6 +71,13 @@ async def lifespan(app: FastAPI):
 
     # Load seed topology into memory
     load_static_topology("seeds/topology.yaml")
+
+    # ★ BATCH 1 — seed rules (first boot only) then load into memory
+    inserted = await rule_registry.seed_if_empty()
+    if inserted:
+        log.info("Seeded %d starter rules", inserted)
+    await rule_registry.load_from_db()
+    log.info("RuleRegistry ready (%d rules)", rule_registry.count())
 
     # Push topology to Neo4j so Aura is populated
     from app.core.graph_store import GraphStore
@@ -123,7 +135,7 @@ app.include_router(health.router)
 app.include_router(mock_data.router)
 app.include_router(anomaly_evidence.router)
 app.include_router(telemetry_history.router)
-
+app.include_router(rules.router)  
 
 @app.get("/api/debug/buffer")
 async def debug_buffer():

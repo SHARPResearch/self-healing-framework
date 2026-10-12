@@ -12,6 +12,7 @@ dependencies = [
     "asyncpg>=0.30.0",
     "neo4j>=5.26.0",
     "apscheduler>=3.10.4",
+    "python-dotenv>=1.0.1",
 ]
 
 [dependency-groups]

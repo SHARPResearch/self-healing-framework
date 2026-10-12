@@ -465,6 +465,21 @@ export function GraphDetailPanel({
         View incidents
         <ArrowRight className="size-3.5" />
       </button>
+      {anomaly && (
+        <button
+          type="button"
+          onClick={() => {
+            // anomalyId isn't in the current prop shape — pass it through
+            window.dispatchEvent(
+              new CustomEvent("open-anomaly", { detail: selected.serviceId }),
+            );
+          }}
+          className="mt-1 flex items-center gap-1.5 text-xs font-medium text-foreground/80 hover:text-foreground"
+        >
+          View evidence
+          <ArrowRight className="size-3.5" />
+        </button>
+      )}
     </div>
   );
 }

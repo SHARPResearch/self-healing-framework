@@ -72,7 +72,7 @@ class GuardrailStatus(BaseModel):
 
 class EnrichedContextPayload(BaseModel):
     """
-    Master payload schema passed from LiyanaArachchi's engine to Wijesinghe's RL engine.
+    Master payload schema passed from LiyanaArachchi's engine to my RL engine.
     """
     model_config = ConfigDict(extra="ignore")
     

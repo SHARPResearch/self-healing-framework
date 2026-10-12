@@ -1,5 +1,6 @@
 import {
   Activity,
+  AlertTriangle,
   Bell,
   Bot,
   GitBranch,
@@ -27,6 +28,7 @@ export const navGroups: NavGroup[] = [
       { label: "Dashboard", to: "/dashboard", icon: LayoutDashboard },
       { label: "Services", to: "/services", icon: Server },
       { label: "Dependency graph", to: "/dependency-graph", icon: GitBranch },
+      { to: "/anomalies", label: "Anomalies", icon: AlertTriangle },
     ],
   },
   {

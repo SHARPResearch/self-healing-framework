@@ -176,16 +176,26 @@ Key design decisions, each motivated by a measured failure (Section 6 has the ev
 |---|---|---|
 | FR1 automatic drift detection | Met | `ScoreDriftMonitor` (ADWIN δ=0.002 default, Page-Hinkley, KSWIN) |
 | FR2 three simultaneous triggers | Met | drift (ADWIN), time (`scheduled_every`), event (`ChangeEvent`, K8s watcher) |
-| FR3 rollback within one scoring cycle | Met | sparse snapshot restore ~37 ms, local registry read, `transition_max_ms` in results |
+| FR3 rollback within one scoring cycle | Partly | rollback itself ~37 ms and rare; closing a quarantine (challenger fit) blocks scoring for a median 1.3 s, max 8.7 s. Needs a background task, not implemented |
 | FR4 every transition logged with context | Met | `TransitionRecord` (step, wall time, reason, evidence) → JSONL + MLflow `transitions/*.json` |
 | FR5 multi-replica without shared memory | Met (mechanism) | `MLflowRegistry.sync_production()` + `materialize/apply`; not load-tested across real replicas |
-| FR6 ≤ 5 ms added per-event latency | See results | `latency_p99_ms` per policy; transitions are reported separately |
+| FR6 ≤ 5 ms added per-event latency | Met | CADAL mean 0.73 ms, worst-entity p99 3.8 ms (transitions excluded, see FR3) |
 | FR7 F1 ≥ 0.65 throughout | **Not achievable as stated** | Component 1's HST tops out at F1 0.38 to 0.57 on its best entity *before* any drift (`ml-pipeline/RESULTS.md`). Lifecycle management cannot exceed the detector's ceiling. Restate it as a relative goal (dynamic ≥ static, and recovery after drift). |
 | NAB > 0.55 | Deferred | NAB scorer exists on `feat/research-validation` (not merged); add once merged |
 
 ## 6. Results
 
-See `ml-pipeline/RESULTS_COMPONENT2.md` (filled in from `outputs/component2/summary.md`).
+Full tables: `ml-pipeline/RESULTS_COMPONENT2.md` (896 runs, 28 entities, held-out split reported).
+Honest summary:
+
+- **Not supported:** CADAL does not beat the *static* baseline on F1 or MCC (deploy 0.155 vs 0.145,
+  p > 0.12; silent and none are equal within noise). The proposal's hypothesis as written fails.
+- **Supported:** after drift, CADAL cuts the false-alarm rate on normal points from 0.51 to 0.17
+  (p < 0.0001) at the cost of recall (0.68 to 0.39), so F1 is a wash. It beats the original
+  rollback design (F1 +0.066, p = 0.038) and the change-event prior helps on announced
+  deployments (+0.019 F1, p = 0.008) without hurting on no-op deployments.
+- A paper built on this should be framed as an *error-profile and lifecycle-safety* contribution
+  plus the negative results, not as "higher accuracy than a static model".
 
 ## 7. Threats to validity (put these in the paper)
 

@@ -89,6 +89,10 @@ class LifecycleConfig:
     attribution: AttributionConfig = field(default_factory=AttributionConfig)
     null_windows: int = 8                   # training windows per quarantine length (0 disables)
     null_quantile: float = 0.9              # normal windows pass the stationarity test this often
+    # Re-baselining (cadal): a metric whose robust median moved by more than this many of its
+    # reference robust standard deviations is shifted back onto the champion's baseline.
+    rebaseline: bool = True
+    rebaseline_k: float = 3.0
 
     def __post_init__(self):
         if self.policy not in POLICIES:
@@ -144,6 +148,35 @@ class StepResult:
 
 def _clamp(x: float) -> float:
     return float(min(max(x, 0.0), 1.0))
+
+
+def robust_stats(rows: list[dict]) -> dict[str, tuple[float, float]]:
+    """Per-feature (median, robust standard deviation = 1.4826 MAD, falling back to std)."""
+    keys = list(rows[0])
+    values = np.array([[r[k] for k in keys] for r in rows], dtype=float)
+    med = np.median(values, axis=0)
+    mad = 1.4826 * np.median(np.abs(values - med), axis=0)
+    scale = np.where(mad > 1e-9, mad, values.std(axis=0))
+    return {k: (float(m), float(max(sc, 1e-6))) for k, m, sc in zip(keys, med, scale)}
+
+
+def fit_rebaseline(ref: dict, rows: list[dict], k: float) -> dict[str, float]:
+    """
+    Level shifts that map `rows` back onto the reference baseline: for every feature whose median
+    moved by more than k reference robust standard deviations, the offset to subtract.
+    """
+    new = robust_stats(rows)
+    return {
+        f: round(new[f][0] - m, 6)
+        for f, (m, sc) in ref.items()
+        if f in new and abs(new[f][0] - m) > k * sc
+    }
+
+
+def rebaselined(x: dict, shifts: dict[str, float]) -> dict:
+    if not shifts:
+        return x
+    return {f: (v - shifts[f] if f in shifts else v) for f, v in x.items()}
 
 
 def prepare_calibration(model, fit_rows: list[dict], calib_rows: list[dict]) -> None:
@@ -245,6 +278,10 @@ class DynamicModelManager:
 
         self.decisions: list[dict] = []
         self.attribution_null: dict[int, dict[str, float]] = {}
+        # Re-baselining state, versioned with the model (HSTState.meta): the robust stats of the
+        # data the served model was fitted on, and the per-metric shifts currently applied.
+        self.ref_stats: Optional[dict[str, tuple[float, float]]] = None
+        self.shifts: dict[str, float] = {}
         self.transition_ms: list[float] = []
 
     # ── warm-up ──────────────────────────────────────────────────────────────
@@ -268,12 +305,14 @@ class DynamicModelManager:
         freeze_scaler(self.model)
         calib_scores = prequential if self.cfg.learns_while_serving else frozen
         null = attribution_null(self, rows) if self.cfg.policy == "cadal" else {}
-        self.start_from(None, calib_scores, rows[-self.cfg.periodic_window:], null)
+        self.start_from(None, calib_scores, rows[-self.cfg.periodic_window:], null,
+                        ref_stats=robust_stats(rows[:split]))
         duration = time.perf_counter() - start
         return {"events": len(rows), "duration_s": round(duration, 2), "threshold": self.threshold}
 
     def start_from(self, state: Optional[HSTState], calib_scores: list[float],
-                   recent_rows: list[dict], null: Optional[dict] = None) -> None:
+                   recent_rows: list[dict], null: Optional[dict] = None,
+                   ref_stats: Optional[dict] = None) -> None:
         """
         Begin serving from an already warmed-up state (None = the model as it is now).
 
@@ -283,10 +322,12 @@ class DynamicModelManager:
         if state is not None:
             apply(self.model, state)
         self.attribution_null = dict(null or {})
+        self.ref_stats = dict(ref_stats) if ref_stats else None
+        self.shifts = {}
         self.threshold, self.learn_gate = self._calibrate(calib_scores)
         self._recent_rows.extend(recent_rows)
         version = self.registry.register(
-            capture(self.model), self.threshold, self.cfg.target_rate,
+            self._snapshot(), self.threshold, self.cfg.target_rate,
             step=0, reason="calibrated warm-up on training split",
             tags={"kind": "warm_up", "learn_gate": self.learn_gate},
         )
@@ -302,7 +343,8 @@ class DynamicModelManager:
         for evt in self.changes.poll(self.step):
             decision = self._on_change_event(evt) or decision
 
-        score = _clamp(self.model.score_one(x))
+        v = rebaselined(x, self.shifts)
+        score = _clamp(self.model.score_one(v))
         alarm = score >= self.threshold
         self._recent_alarms.append(alarm)
         self._recent_rows.append(x)
@@ -310,17 +352,17 @@ class DynamicModelManager:
 
         policy = self.cfg.policy
         if policy == "online":
-            self.model.learn_one(x)
+            self.model.learn_one(v)
         elif policy == "gated":
             if not alarm:
-                self.model.learn_one(x)
+                self.model.learn_one(v)
         elif policy == "naive_rollback":
             decision = self._naive_rollback_step(x, score) or decision
         elif policy == "periodic":
             if self.step % self.cfg.scheduled_every == 0:
                 decision = self._periodic_retrain()
         elif policy == "cadal":
-            decision = self._cadal_step(x, score, alarm) or decision
+            decision = self._cadal_step(x, v, score, alarm) or decision
 
         return StepResult(
             step=self.step, score=score, alarm=alarm, severity=classify_severity(score),
@@ -344,7 +386,7 @@ class DynamicModelManager:
             return None
         t = time.perf_counter()
         target = self.registry.production()
-        apply(self.model, target.state)
+        self._restore(target.state)
         self.registry.set_production(
             target.version, step=self.step, transition="rollback",
             reason=f"ADWIN drift ({signal.direction}) triggers unconditional rollback",
@@ -395,7 +437,7 @@ class DynamicModelManager:
 
     def _checkpoint(self, reason: str) -> None:
         t = time.perf_counter()
-        self.registry.checkpoint(capture(self.model), self.threshold, self.cfg.target_rate,
+        self.registry.checkpoint(self._snapshot(), self.threshold, self.cfg.target_rate,
                                  step=self.step, reason=reason,
                                  tags={"kind": "stable_checkpoint", "learn_gate": self.learn_gate})
         self.transition_ms.append((time.perf_counter() - t) * 1000)
@@ -408,7 +450,7 @@ class DynamicModelManager:
         self.threshold, self.learn_gate = self._fit_challenger(rows[:split], rows[split:])
         for r in rows[split:]:
             self.model.learn_one(r)
-        version = self.registry.register(capture(self.model), self.threshold, self.cfg.target_rate,
+        version = self.registry.register(self._snapshot(), self.threshold, self.cfg.target_rate,
                                          step=self.step, reason="scheduled retrain on recent window")
         self.registry.set_production(version, step=self.step, transition="promote",
                                      reason="scheduled retrain (unconditional)")
@@ -450,9 +492,9 @@ class DynamicModelManager:
                                           "trigger": trigger, "step": self.step,
                                           "length": self._q_target_len})
 
-    def _cadal_step(self, x: dict, score: float, alarm: bool) -> Optional[dict]:
+    def _cadal_step(self, x: dict, v: dict, score: float, alarm: bool) -> Optional[dict]:
         if score < self.learn_gate:
-            self.model.learn_one(x)                 # gated learning: only clearly typical events teach
+            self.model.learn_one(v)                 # gated learning: only clearly typical events teach
 
         if self.phase == "quarantine":
             self._q_rows.append(x)
@@ -485,11 +527,25 @@ class DynamicModelManager:
 
         champion_state = capture(self.model)
         champion_threshold, champion_gate = self.threshold, self.learn_gate
+        tail_rows = rows[tail]
+
+        # Repair 1, re-baselining: keep the champion, shift the metrics whose level moved back
+        # onto its baseline (estimated on the fit slice), and see whether it then finds the tail
+        # normal again with its own threshold. Measured before the challenger touches the model.
+        new_shifts, rebaseline_tail = {}, None
+        if self.cfg.policy == "cadal" and self.cfg.rebaseline and self.ref_stats:
+            new_shifts = fit_rebaseline(self.ref_stats, rows[:n_fit], self.cfg.rebaseline_k)
+            if new_shifts:
+                rebaseline_tail = sum(
+                    _clamp(self.model.score_one(rebaselined(r, new_shifts))) >= champion_threshold
+                    for r in tail_rows
+                ) / len(tail_rows)
+
+        # Repair 2, retraining: a challenger fitted on the new regime alone.
         challenger_threshold, challenger_gate = self._fit_challenger(rows[:n_fit], rows[n_fit:n_fit + n_calib])
         # Learnability is a stationarity test, so it is measured frozen: fitted on the start of
         # the buffer, calibrated on the middle, does the model still find the tail normal? A new
         # steady regime passes; a trend or an escalating incident drifts away from the fit.
-        tail_rows = rows[tail]
         challenger_tail = (
             sum(_clamp(self.model.score_one(r)) >= challenger_threshold for r in tail_rows) / len(tail_rows)
         )
@@ -505,6 +561,7 @@ class DynamicModelManager:
             tail_out_of_support_rate=out_of_support_rate(rows[:n_fit], tail_rows),
             learnable_floor=self.attribution_null.get(n, {}).get("learnable"),
             moving_floor=self.attribution_null.get(n, {}).get("moving"),
+            rebaseline_tail_alarm_rate=rebaseline_tail,
         )
         result: Attribution = attribute(evidence, self.cfg.attribution)
 
@@ -524,7 +581,24 @@ class DynamicModelManager:
                     result.evidence,
                 )
 
-        if result.action is Action.PROMOTE:
+        if result.action is Action.PROMOTE and result.evidence.get("repair") == "rebaseline":
+            # The champion is served again, unchanged, behind the new input shifts.
+            apply(self.model, champion_state)
+            self.threshold, self.learn_gate = champion_threshold, champion_gate
+            self.shifts = new_shifts
+            result.evidence["rebaselined"] = new_shifts
+            version = self.registry.register(
+                self._snapshot(), self.threshold, self.cfg.target_rate, step=self.step,
+                reason=result.reason, tags={"kind": "rebaseline", "verdict": result.verdict.value,
+                                            "learn_gate": self.learn_gate,
+                                            "n_rebaselined": len(new_shifts)},
+            )
+            self.registry.set_production(version, step=self.step, transition="promote",
+                                         reason=result.reason, evidence=result.evidence)
+        elif result.action is Action.PROMOTE:
+            # The challenger now defines "normal": its own fit data is the new reference.
+            self.shifts = {}
+            self.ref_stats = robust_stats(rows[:n_fit])
             if self.cfg.learns_while_serving:
                 # A learning model is served with a threshold calibrated the way it will run
                 # (score each remaining buffered event, then learn it), not on the frozen
@@ -534,7 +608,7 @@ class DynamicModelManager:
             # fitted on the fit slice with the threshold from frozen scores of the calib slice.
             self.threshold, self.learn_gate = challenger_threshold, challenger_gate
             version = self.registry.register(
-                capture(self.model), self.threshold, self.cfg.target_rate, step=self.step,
+                self._snapshot(), self.threshold, self.cfg.target_rate, step=self.step,
                 reason=result.reason, tags={"kind": "challenger", "verdict": result.verdict.value,
                                             "learn_gate": self.learn_gate},
             )
@@ -542,7 +616,7 @@ class DynamicModelManager:
                                          reason=result.reason, evidence=result.evidence)
         elif result.action is Action.ROLLBACK:
             target = rollback_target
-            apply(self.model, target.state)
+            self._restore(target.state)
             self.threshold = target.threshold
             self.learn_gate = target.tags.get("learn_gate", target.threshold)
             self.registry.set_production(target.version, step=self.step, transition="rollback",
@@ -559,11 +633,26 @@ class DynamicModelManager:
                              "trigger": self._q_trigger, "reason": result.reason,
                              "evidence": result.evidence})
 
+    def _snapshot(self) -> HSTState:
+        return capture(self.model, meta={
+            "shifts": self.shifts,
+            "ref_stats": {k: list(v) for k, v in self.ref_stats.items()} if self.ref_stats else None,
+        })
+
+    def _restore(self, state: HSTState) -> None:
+        """Serve a registered version: model state plus its re-baselining state."""
+        apply(self.model, state)
+        self.shifts = dict(state.meta.get("shifts") or {})
+        ref = state.meta.get("ref_stats")
+        self.ref_stats = {k: tuple(v) for k, v in ref.items()} if ref else None
+
     def _alarm_rate_of(self, version, rows: list[dict]) -> float:
         """Alarm rate a registered version would produce on `rows` (model restored afterwards)."""
         current = capture(self.model)
         apply(self.model, version.state)
-        rate = sum(_clamp(self.model.score_one(r)) >= version.threshold for r in rows) / len(rows)
+        shifts = version.state.meta.get("shifts") or {}
+        rate = sum(_clamp(self.model.score_one(rebaselined(r, shifts))) >= version.threshold
+                   for r in rows) / len(rows)
         apply(self.model, current)
         return rate
 

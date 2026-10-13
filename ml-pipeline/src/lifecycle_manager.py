@@ -47,7 +47,7 @@ from src.drift_attribution import (
     Action, Attribution, AttributionConfig, QuarantineEvidence, Verdict, attribute,
 )
 from src.drift_detectors import ScoreDriftMonitor
-from src.hst_model import build_model, classify_severity
+from src.hst_model import build_model, classify_severity, freeze_scaler
 from src.hst_state import HSTState, apply, capture, reset
 from src.mlflow_lifecycle import InMemoryRegistry
 from src.publishers import EventPublisher, NullPublisher
@@ -144,6 +144,12 @@ class StepResult:
 
 def _clamp(x: float) -> float:
     return float(min(max(x, 0.0), 1.0))
+
+
+def prepare_calibration(model, fit_rows: list[dict], calib_rows: list[dict]) -> None:
+    """Let a wrapper detector (src/ensemble.py) fit its calibration state; no-op for plain HST."""
+    if hasattr(model, "prepare_calibration"):
+        model.prepare_calibration(fit_rows, calib_rows)
 
 
 def hst_window_for_sampling(samples_per_day: float, base_window: int = 250) -> int:
@@ -256,8 +262,10 @@ class DynamicModelManager:
         split = int(len(rows) * (1 - calib_frac))
         for r in rows[:split]:
             self.model.learn_one(r)
+        prepare_calibration(self.model, rows[:split], rows[split:])
         frozen = [_clamp(self.model.score_one(r)) for r in rows[split:]]
         prequential = self._prequential(rows[split:])
+        freeze_scaler(self.model)
         calib_scores = prequential if self.cfg.learns_while_serving else frozen
         null = attribution_null(self, rows) if self.cfg.policy == "cadal" else {}
         self.start_from(None, calib_scores, rows[-self.cfg.periodic_window:], null)
@@ -382,6 +390,7 @@ class DynamicModelManager:
         reset(self.model, keep_scaler=True)
         for r in rows:
             self.model.learn_one(r)
+        prepare_calibration(self.model, rows, calib_rows)
         return self._calibrate([_clamp(self.model.score_one(r)) for r in calib_rows])
 
     def _checkpoint(self, reason: str) -> None:

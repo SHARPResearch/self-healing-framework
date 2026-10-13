@@ -339,3 +339,19 @@ def test_for_sampling_rescales_every_length_to_the_same_wall_clock_time():
     assert smd.for_sampling(1440) == smd
     window = hst_window_for_sampling(288)
     assert window == 50 and int(nab.quarantine_silent * nab.fit_frac) >= window
+
+
+@pytest.mark.parametrize("combine", ["mean", "max"])
+def test_cadal_runs_end_to_end_on_the_lazy_ensemble_detector(combine):
+    from dataclasses import replace as dc_replace
+    hst = dc_replace(HST, lazy=True, range_margin=0.25, ensemble=combine)
+    mgr = DynamicModelManager("svc", _cfg(), hst,
+                              change_source=ReplayChangeEventSource([ChangeEvent("svc", "deployment", step=301)]))
+    rng = random.Random(0)
+    mgr.warm_up([_normal(rng) for _ in range(600)])
+    assert mgr.model.dev is not None  # calibrated at warm-up
+    results = _run(mgr, _shifted_stream())
+    assert any(d["action"] == "promote" for d in mgr.decisions)
+    assert sum(r.alarm for r in results[-300:]) / 300 < 0.2
+    # The promoted version carries the ensemble state.
+    assert mgr.registry.production().state.extra is not None

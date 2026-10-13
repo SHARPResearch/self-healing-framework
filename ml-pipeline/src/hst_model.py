@@ -18,6 +18,7 @@ from river.anomaly import HalfSpaceTrees
 from river.drift import ADWIN
 
 from src.config import ADWIN_CFG, HST_CFG, ADWINConfig, HSTConfig
+from src.ensemble import RankEnsembleDetector
 from src.lazy_hst import LazyHalfSpaceTrees
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,7 @@ class FreezableMinMaxScaler(preprocessing.MinMaxScaler):
 
 def freeze_scaler(model) -> None:
     """Freeze the model's scaler if it has a freezable one (no-op otherwise)."""
+    model = getattr(model, "hst_model", model)
     if isinstance(model, compose.Pipeline):
         scaler = list(model.steps.values())[0]
         if isinstance(scaler, FreezableMinMaxScaler):
@@ -78,11 +80,12 @@ def build_model(cfg: Optional[HSTConfig] = None, with_scaler: bool = True) -> Un
     to prevent disparate metric scales from distorting tree partitions. `cfg.lazy` and
     `cfg.range_margin` select the Component 1 v2 detector (see HSTConfig).
     """
-    if with_scaler:
-        return build_pipeline(cfg)
     if cfg is None:
         cfg = HST_CFG
-    return _make_hst(cfg)
+    model = build_pipeline(cfg) if with_scaler else _make_hst(cfg)
+    if cfg.ensemble:
+        return RankEnsembleDetector(model, combine=cfg.ensemble)
+    return model
 
 
 @dataclass

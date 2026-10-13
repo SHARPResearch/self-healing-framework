@@ -85,6 +85,12 @@ class AttributionConfig:
     # this share of recent events (e.g. the pre-deployment model on a new normal) is not restored.
     rollback_max_alarm_rate: float = 0.5
     moving_feature_rate: float = 0.5        # a feature out of fitted support this often is trending
+    # Only an exogenous change licenses *replacing* the model. Without one, a persistent shift
+    # that only a freshly retrained challenger explains is held as a probable incident: on SMD a
+    # day-long incident is self-consistent enough to pass the learnability test, and retraining
+    # on it silenced the detector for the rest of the incident (machine-1-1, recall 0.87 -> 0.08).
+    # Re-baselining stays allowed without a change, since it keeps everything the champion knew.
+    retrain_requires_change: bool = True
 
 
 @dataclass(frozen=True)
@@ -184,6 +190,13 @@ def attribute(ev: QuarantineEvidence, cfg: AttributionConfig = AttributionConfig
             Verdict.CONCEPT_DRIFT,
             f"{stale} and re-baselining the shifted metrics restores it (tail rate "
             f"{ev.rebaseline_tail_alarm_rate:.4f} <= {learnable_line:.4f}) {why}",
+        )
+    if ev.challenger_tail_alarm_rate <= learnable_line and cfg.retrain_requires_change and not has_change:
+        return done(
+            Verdict.INCIDENT,
+            f"{stale}; only a retrained challenger explains the new regime (tail rate "
+            f"{ev.challenger_tail_alarm_rate:.4f}) and no change event explains it, so it is held as a "
+            f"probable incident: replacing the model needs a deployment or config change",
         )
     if ev.challenger_tail_alarm_rate <= learnable_line:
         evidence["repair"] = "retrain"

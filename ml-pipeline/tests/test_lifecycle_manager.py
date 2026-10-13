@@ -355,3 +355,36 @@ def test_cadal_runs_end_to_end_on_the_lazy_ensemble_detector(combine):
     assert sum(r.alarm for r in results[-300:]) / 300 < 0.2
     # The promoted version carries the ensemble state.
     assert mgr.registry.production().state.extra is not None
+
+
+def test_level_shift_is_repaired_by_rebaselining_and_keeps_the_champion():
+    mgr = _manager(_cfg(), events=[ChangeEvent("svc", "deployment", step=301)])
+    v1_masses = mgr.registry.get(1).state.masses
+    results = _run(mgr, _shifted_stream())
+    promote = next(d for d in mgr.decisions if d["action"] == "promote")
+    assert promote["evidence"]["repair"] == "rebaseline"
+    assert set(promote["evidence"]["rebaselined"]) == {"a", "b"}
+    assert all(0.25 < s < 0.45 for s in promote["evidence"]["rebaselined"].values())
+    # Same model as warm-up, only the inputs are shifted.
+    assert capture(mgr.model).masses == v1_masses
+    assert sum(r.alarm for r in results[-300:]) / 300 < 0.15
+
+
+def test_rebaselining_can_be_disabled_to_retrain_instead():
+    mgr = _manager(_cfg(rebaseline=False), events=[ChangeEvent("svc", "deployment", step=301)])
+    _run(mgr, _shifted_stream())
+    promote = next(d for d in mgr.decisions if d["action"] == "promote")
+    assert promote["evidence"]["repair"] == "retrain"
+    assert mgr.shifts == {}
+
+
+def test_rollback_restores_the_target_versions_shifts():
+    from src.lifecycle_manager import robust_stats
+    mgr = _manager(_cfg(), events=[ChangeEvent("svc", "deployment", step=301)])
+    _run(mgr, _shifted_stream())
+    assert mgr.shifts
+    v1 = mgr.registry.get(1)
+    mgr._restore(v1.state)
+    assert mgr.shifts == {}
+    assert mgr.ref_stats is not None and set(mgr.ref_stats) == set(FEATURES)
+    assert robust_stats([_normal(random.Random(0))] * 3)["a"][1] == 1e-6  # flat floor

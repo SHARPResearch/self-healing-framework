@@ -11,6 +11,7 @@ Policy variants:
   cadal                                              proposed method
   cadal_no_events                                    ablation: cadal without the change prior
   cadal_online                                       ablation: cadal with gated continuous learning
+  cadal_retrain_only                                 ablation: cadal without re-baselining
   cadal_page_hinkley, cadal_kswin                    ablation: score drift detector (not in the default
                                                      sweep, run with --variants)
 
@@ -47,7 +48,7 @@ from src.evaluate import load_labels  # noqa: E402
 from src.hst_state import capture  # noqa: E402
 from src.hst_model import DETECTOR_PRESETS, build_model, detector_config, freeze_scaler  # noqa: E402
 from src.lifecycle_manager import (  # noqa: E402
-    DynamicModelManager, LifecycleConfig, attribution_null, prepare_calibration,
+    DynamicModelManager, LifecycleConfig, attribution_null, prepare_calibration, robust_stats,
 )
 
 logger = logging.getLogger("evaluate_dynamic")
@@ -62,6 +63,7 @@ VARIANTS = {
     "cadal": replace(BASE, policy="cadal"),
     "cadal_no_events": replace(BASE, policy="cadal", use_change_events=False),
     "cadal_online": replace(BASE, policy="cadal", learn_gate_percentile=75.0),
+    "cadal_retrain_only": replace(BASE, policy="cadal", rebaseline=False),
 }
 DETECTOR_VARIANTS = {
     "cadal_page_hinkley": replace(BASE, policy="cadal", detector="page_hinkley"),
@@ -112,16 +114,18 @@ def warm_up_entity(entity_id: str, hst_cfg=HST_CFG):
     # DynamicModelManager.warm_up): frozen policies on frozen scores, learning ones prequentially.
     # The attribution null depends only on the quarantine lengths, so cadal variants share it.
     null = attribution_null(DynamicModelManager(entity_id, BASE, hst_cfg, model=model), train)
-    return model, capture(model), {"frozen": frozen, "prequential": prequential}, train[-BASE.periodic_window:], null
+    ref = robust_stats(train[:split])
+    return (model, capture(model), {"frozen": frozen, "prequential": prequential},
+            train[-BASE.periodic_window:], null, ref)
 
 
 def run_one(entity_id, model, warm_state, calib, recent, null, rows, labels, injections, cfg,
-            hst_cfg=HST_CFG, trace: dict | None = None):
+            hst_cfg=HST_CFG, trace: dict | None = None, ref: dict | None = None):
     events = change_events_for(injections, entity_id)
     mgr = DynamicModelManager(entity_id, cfg, hst_cfg, model=model,
                               change_source=ReplayChangeEventSource(events))
     mgr.start_from(warm_state, calib["prequential" if cfg.learns_while_serving else "frozen"], recent,
-                   null if cfg.policy == "cadal" else None)
+                   null if cfg.policy == "cadal" else None, ref_stats=ref)
     alarms, latency, scores, versions, thresholds = [], [], [], [], []
     t0 = time.perf_counter()
     for x in rows:
@@ -184,7 +188,7 @@ def main() -> None:
         if not todo:
             continue
         t = time.perf_counter()
-        model, warm_state, calib, recent, null = warm_up_entity(entity_id, hst_cfg)
+        model, warm_state, calib, recent, null, ref = warm_up_entity(entity_id, hst_cfg)
         logger.info("[%s] warm-up %.0fs, %d runs to do", entity_id, time.perf_counter() - t, len(todo))
         test_df = pd.read_parquet(preprocess_entity(entity_id, split="test"))
         labels = load_labels(entity_id)
@@ -198,7 +202,7 @@ def main() -> None:
                 trace = {} if args.trace else None
                 summary, curve, decisions = run_one(
                     entity_id, model, warm_state, calib, recent, null, rows, labels, injections,
-                    ALL_VARIANTS[variant], hst_cfg, trace)
+                    ALL_VARIANTS[variant], hst_cfg, trace, ref)
                 if trace:
                     (out / "traces").mkdir(exist_ok=True)
                     np.savez_compressed(out / "traces" / f"{entity_id}_{scenario}_{variant}.npz", **trace)

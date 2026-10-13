@@ -36,7 +36,7 @@ state (~40 ms). See src/hst_state.py.
 import logging
 import time
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Iterable, Optional
 
 import numpy as np
@@ -94,6 +94,29 @@ class LifecycleConfig:
         if self.policy not in POLICIES:
             raise ValueError(f"Unknown policy {self.policy!r}, expected one of {POLICIES}")
 
+    def for_sampling(self, samples_per_day: float) -> "LifecycleConfig":
+        """
+        The same lifecycle at a different sampling rate.
+
+        Every length above is defined for SMD's one sample per minute (1440 per day). This
+        rescales them all by samples_per_day / 1440 so that "a day of evidence" still means a day
+        on, say, NAB's five-minute series, without per-dataset tuning. Pair with
+        hst_window_for_sampling() so the challenger's fit slice still covers an HST window.
+        """
+        k = samples_per_day / 1440.0
+        scale = lambda n: max(1, int(round(n * k)))  # noqa: E731
+        return replace(
+            self,
+            quarantine_with_change=scale(self.quarantine_with_change),
+            quarantine_silent=scale(self.quarantine_silent),
+            change_horizon=scale(self.change_horizon),
+            cooldown=scale(self.cooldown),
+            scheduled_every=scale(self.scheduled_every),
+            scheduled_window=scale(self.scheduled_window),
+            periodic_window=scale(self.periodic_window),
+            naive_stable_every=scale(self.naive_stable_every),
+        )
+
     @property
     def learns_while_serving(self) -> bool:
         """Whether the served model keeps learning between versions (decides how to calibrate)."""
@@ -121,6 +144,11 @@ class StepResult:
 
 def _clamp(x: float) -> float:
     return float(min(max(x, 0.0), 1.0))
+
+
+def hst_window_for_sampling(samples_per_day: float, base_window: int = 250) -> int:
+    """HST window scaled like LifecycleConfig.for_sampling (250 events at 1440 per day)."""
+    return max(25, int(round(base_window * samples_per_day / 1440.0)))
 
 
 def attribution_null(mgr: "DynamicModelManager", train_rows: list[dict]) -> dict[int, dict[str, float]]:

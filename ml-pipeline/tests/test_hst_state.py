@@ -106,3 +106,49 @@ def test_materialize_builds_identical_structure_without_data():
 def test_capture_requires_a_built_model():
     with pytest.raises(ValueError):
         capture(build_model(CFG))
+
+
+LAZY = HSTConfig(n_trees=5, height=6, window_size=20, seed=7, lazy=True, range_margin=0.25)
+
+
+def test_lazy_snapshot_restores_exact_scores_and_rebuilds_unvisited_nodes():
+    from src.hst_model import freeze_scaler
+
+    model = build_model(LAZY)
+    for r in _rows(70):
+        model.learn_one(r)
+    freeze_scaler(model)
+    reference = copy.deepcopy(model)
+    state = HSTState.from_bytes(capture(model).to_bytes())
+
+    # A replica that has never seen data: only roots exist, apply must create the rest.
+    replica = build_model(LAZY)
+    materialize(replica, feature_names(model))
+    apply(replica, state)
+    probe = _rows(30, seed=2) + _rows(10, seed=3, shift=0.6)
+    assert [replica.score_one(r) for r in probe] == [reference.score_one(r) for r in probe]
+    # The frozen scaler travels with the snapshot.
+    assert list(replica.steps.values())[0].frozen is True
+
+
+def test_lazy_reset_drops_to_bare_roots():
+    model = build_model(LAZY)
+    for r in _rows(60):
+        model.learn_one(r)
+    reset(model, keep_scaler=True)
+    hst = list(model.steps.values())[-1]
+    assert hst.n_nodes() == LAZY.n_trees
+    assert capture(model).n_massive_nodes == 0
+
+
+def test_frozen_scaler_stops_widening_its_range():
+    from src.hst_model import freeze_scaler
+
+    model = build_model(LAZY)
+    for r in _rows(40):
+        model.learn_one(r)
+    scaler = list(model.steps.values())[0]
+    before = scaler.max["a"].get()
+    freeze_scaler(model)
+    model.learn_one({"a": 9.0, "b": 0.1})
+    assert scaler.max["a"].get() == before

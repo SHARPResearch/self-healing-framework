@@ -18,38 +18,71 @@ from river.anomaly import HalfSpaceTrees
 from river.drift import ADWIN
 
 from src.config import ADWIN_CFG, HST_CFG, ADWINConfig, HSTConfig
+from src.lazy_hst import LazyHalfSpaceTrees
 
 logger = logging.getLogger(__name__)
 
 
-def build_pipeline(cfg: Optional[HSTConfig] = None) -> compose.Pipeline:
-    """Construct a river.compose.Pipeline combining MinMaxScaler and HalfSpaceTrees."""
-    if cfg is None:
-        cfg = HST_CFG
-    hst = HalfSpaceTrees(
-        n_trees=cfg.n_trees,
-        height=cfg.height,
-        window_size=cfg.window_size,
-        seed=cfg.seed,
-    )
-    return compose.Pipeline(preprocessing.MinMaxScaler(), hst)
+class FreezableMinMaxScaler(preprocessing.MinMaxScaler):
+    """
+    river's MinMaxScaler that stops learning once frozen.
+
+    An online min-max scaler widens its range as soon as it sees a larger value, which moves every
+    point to a different tree cell and lets a runaway metric pull "normal" along with it. Frozen
+    after warm-up, the representation stays fixed and out-of-range values map outside [0, 1].
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.frozen = False
+
+    def learn_one(self, x):
+        if not self.frozen:
+            super().learn_one(x)
 
 
-def build_model(cfg: Optional[HSTConfig] = None, with_scaler: bool = True) -> Union[compose.Pipeline, HalfSpaceTrees]:
-    """
-    Construct model instance. By default wraps MinMaxScaler and HalfSpaceTrees in a river.compose.Pipeline
-    to prevent disparate metric scales from distorting tree partitions.
-    """
-    if with_scaler:
-        return build_pipeline(cfg)
-    if cfg is None:
-        cfg = HST_CFG
+def freeze_scaler(model) -> None:
+    """Freeze the model's scaler if it has a freezable one (no-op otherwise)."""
+    if isinstance(model, compose.Pipeline):
+        scaler = list(model.steps.values())[0]
+        if isinstance(scaler, FreezableMinMaxScaler):
+            scaler.frozen = True
+
+
+def _make_hst(cfg: HSTConfig):
+    if cfg.lazy:
+        m = cfg.range_margin
+        return LazyHalfSpaceTrees(
+            n_trees=cfg.n_trees, height=cfg.height, window_size=cfg.window_size, seed=cfg.seed,
+            default_limits=(-m, 1.0 + m),
+        )
     return HalfSpaceTrees(
         n_trees=cfg.n_trees,
         height=cfg.height,
         window_size=cfg.window_size,
         seed=cfg.seed,
     )
+
+
+def build_pipeline(cfg: Optional[HSTConfig] = None) -> compose.Pipeline:
+    """Construct a river.compose.Pipeline combining a min-max scaler and Half-Space Trees."""
+    if cfg is None:
+        cfg = HST_CFG
+    scaler = FreezableMinMaxScaler() if cfg.range_margin > 0 else preprocessing.MinMaxScaler()
+    return compose.Pipeline(scaler, _make_hst(cfg))
+
+
+def build_model(cfg: Optional[HSTConfig] = None, with_scaler: bool = True) -> Union[compose.Pipeline, HalfSpaceTrees]:
+    """
+    Construct model instance. By default wraps MinMaxScaler and HalfSpaceTrees in a river.compose.Pipeline
+    to prevent disparate metric scales from distorting tree partitions. `cfg.lazy` and
+    `cfg.range_margin` select the Component 1 v2 detector (see HSTConfig).
+    """
+    if with_scaler:
+        return build_pipeline(cfg)
+    if cfg is None:
+        cfg = HST_CFG
+    return _make_hst(cfg)
 
 
 @dataclass

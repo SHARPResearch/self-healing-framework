@@ -69,6 +69,12 @@ class HSTConfig:
     height: int = int(os.getenv("HST_HEIGHT", "15"))
     window_size: int = int(os.getenv("HST_WINDOW_SIZE", "250"))
     seed: int = int(os.getenv("HST_SEED", "42"))
+    # Component 1 v2 (see compare_detectors.py / RESULTS.md "Detector v2"):
+    # lazy=True builds trees on demand (src/lazy_hst.py: ~0.1 MB instead of ~370 MB per model);
+    # range_margin > 0 widens the trees' feature limits to [-m, 1 + m] and freezes the min-max
+    # scaler after warm-up, so values beyond the training range are no longer invisible.
+    lazy: bool = os.getenv("HST_LAZY", "false").lower() == "true"
+    range_margin: float = float(os.getenv("HST_RANGE_MARGIN", "0.0"))
 
 
 @dataclass(frozen=True)

@@ -75,6 +75,8 @@ class HSTConfig:
     # scaler after warm-up, so values beyond the training range are no longer invisible.
     lazy: bool = os.getenv("HST_LAZY", "false").lower() == "true"
     range_margin: float = float(os.getenv("HST_RANGE_MARGIN", "0.0"))
+    # "mean" or "max" wraps the model in src/ensemble.RankEnsembleDetector; "" = HST alone.
+    ensemble: str = os.getenv("HST_ENSEMBLE", "")
 
 
 @dataclass(frozen=True)

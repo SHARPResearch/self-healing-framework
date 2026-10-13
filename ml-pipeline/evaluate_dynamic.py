@@ -44,9 +44,11 @@ from src.config import HST_CFG  # noqa: E402
 from src.data_pipeline import SCENARIOS, apply_injections, change_events_for, make_scenario  # noqa: E402
 from src.dynamic_eval import stream_metrics  # noqa: E402
 from src.evaluate import load_labels  # noqa: E402
-from src.hst_model import build_model  # noqa: E402
 from src.hst_state import capture  # noqa: E402
-from src.lifecycle_manager import DynamicModelManager, LifecycleConfig, attribution_null  # noqa: E402
+from src.hst_model import build_model, freeze_scaler  # noqa: E402
+from src.lifecycle_manager import (  # noqa: E402
+    DynamicModelManager, LifecycleConfig, attribution_null, prepare_calibration,
+)
 
 logger = logging.getLogger("evaluate_dynamic")
 
@@ -98,12 +100,14 @@ def warm_up_entity(entity_id: str):
     split = int(len(train) * 0.8)
     for r in train[:split]:
         model.learn_one(r)
+    prepare_calibration(model, train[:split], train[split:])
     clamp = lambda v: float(min(max(v, 0.0), 1.0))  # noqa: E731
     frozen = [clamp(model.score_one(r)) for r in train[split:]]
     prequential = []
     for r in train[split:]:
         prequential.append(clamp(model.score_one(r)))
         model.learn_one(r)
+    freeze_scaler(model)
     # Same warm state for every policy; each is calibrated the way it serves (see
     # DynamicModelManager.warm_up): frozen policies on frozen scores, learning ones prequentially.
     # The attribution null depends only on the quarantine lengths, so cadal variants share it.

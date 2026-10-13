@@ -30,7 +30,6 @@ import csv
 import logging
 import sys
 import time
-from dataclasses import replace
 from pathlib import Path
 
 import pandas as pd
@@ -39,28 +38,20 @@ from sklearn.metrics import matthews_corrcoef
 sys.path.insert(0, str(Path(__file__).parent.parent / "datasets" / "smd"))
 from preprocess import discover_entities, preprocess_entity  # noqa: E402
 
-from src.config import HST_CFG  # noqa: E402
 from src.evaluate import evaluate, load_labels, oracle_best_f1, percentile_threshold, pr_auc  # noqa: E402
-from src.ensemble import RankEnsembleDetector  # noqa: E402
-from src.hst_model import build_model, freeze_scaler  # noqa: E402
+from src.hst_model import DETECTOR_PRESETS, build_model, detector_config, freeze_scaler  # noqa: E402
 
 logger = logging.getLogger("compare_detectors")
 
-CANDIDATES = {
-    "river": replace(HST_CFG, lazy=False, range_margin=0.0),
-    "lazy": replace(HST_CFG, lazy=True, range_margin=0.0),
-    "lazy_range": replace(HST_CFG, lazy=True, range_margin=0.25),
-    "lazy_range_ens": replace(HST_CFG, lazy=True, range_margin=0.25),
-    "lazy_range_ensmax": replace(HST_CFG, lazy=True, range_margin=0.25),
-}
+CANDIDATES = {name: detector_config(name) for name in DETECTOR_PRESETS}
 FIELDS = ["entity", "split", "candidate", "pr_auc", "f1", "precision", "recall", "mcc",
           "informedness", "oracle_f1", "warm_up_s", "score_eps", "n_nodes"]
 
 
 def run_candidate(name: str, train: list[dict], test: list[dict], labels: list[int]) -> dict:
     cfg = CANDIDATES[name]
-    combine = "max" if name.endswith("_ensmax") else "mean" if name.endswith("_ens") else None
-    model = RankEnsembleDetector(build_model(cfg), combine) if combine else build_model(cfg)
+    combine = cfg.ensemble
+    model = build_model(cfg)
     clamp = lambda v: float(min(max(v, 0.0), 1.0))  # noqa: E731
     split = int(len(train) * 0.8)
 

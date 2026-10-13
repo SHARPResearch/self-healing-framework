@@ -66,6 +66,24 @@ def _make_hst(cfg: HSTConfig):
     )
 
 
+DETECTOR_PRESETS = {
+    # name: (lazy, range_margin, ensemble) on top of the tuned n_trees / height / window / seed
+    "river": (False, 0.0, ""),           # Component 1 as shipped
+    "lazy": (True, 0.0, ""),             # same algorithm, built on demand
+    "lazy_range": (True, 0.25, ""),      # + wider limits, frozen scaler
+    "lazy_range_ens": (True, 0.25, "mean"),
+    "lazy_range_ensmax": (True, 0.25, "max"),
+}
+
+
+def detector_config(name: str, base: Optional[HSTConfig] = None) -> HSTConfig:
+    """HSTConfig for a named detector preset (see compare_detectors.py for how they compare)."""
+    from dataclasses import replace
+
+    lazy, margin, ensemble = DETECTOR_PRESETS[name]
+    return replace(base or HST_CFG, lazy=lazy, range_margin=margin, ensemble=ensemble)
+
+
 def build_pipeline(cfg: Optional[HSTConfig] = None) -> compose.Pipeline:
     """Construct a river.compose.Pipeline combining a min-max scaler and Half-Space Trees."""
     if cfg is None:

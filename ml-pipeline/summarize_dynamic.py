@@ -32,8 +32,22 @@ def to_markdown(df: pd.DataFrame, index: bool = True) -> str:
     return "\n".join([header, sep] + ["| " + " | ".join(r) + " |" for r in cells])
 
 
-MEAN_COLS = ["f1", "mcc", "precision", "recall", "event_recall", "fa_rate",
-             "post_drift_f1", "post_drift_mcc", "post_drift_fa_rate", "recovery_steps"]
+MEAN_COLS = ["f1", "mcc", "informedness", "precision", "recall", "event_recall", "fa_rate",
+             "post_drift_f1", "post_drift_mcc", "post_drift_informedness", "post_drift_fa_rate",
+             "recovery_steps"]
+
+
+def add_informedness(runs: pd.DataFrame) -> pd.DataFrame:
+    """
+    Informedness (Youden's J) = recall - false-alarm rate on normal points: detection skill above
+    chance. A detector that alarms on a random fraction q of events scores J = 0 whatever q is,
+    so unlike F1 it cannot be raised by flagging everything after a drift.
+    """
+    runs = runs.copy()
+    runs["informedness"] = (runs["recall"] - runs["fa_rate"]).round(4)
+    if "post_drift_recall" in runs:
+        runs["post_drift_informedness"] = (runs["post_drift_recall"] - runs["post_drift_fa_rate"]).round(4)
+    return runs
 
 
 def mean_table(runs: pd.DataFrame) -> pd.DataFrame:
@@ -89,17 +103,23 @@ def main() -> None:
     parser.add_argument("--out-dir", default="outputs/component2")
     parser.add_argument("--target", default="cadal")
     parser.add_argument("--metric", default="f1")
+    parser.add_argument("--exclude", nargs="*", default=[],
+                        help="entities to leave out, e.g. the development entity for a held-out view")
     args = parser.parse_args()
 
     out = Path(args.out_dir)
-    runs = pd.read_csv(out / "runs.csv")
+    runs = add_informedness(pd.concat(
+        [pd.read_csv(p) for p in sorted(out.glob("**/runs.csv"))], ignore_index=True))
+    # Shards and a merged copy may sit side by side: keep one row per run.
+    runs = runs.drop_duplicates(subset=["entity", "scenario", "variant"])
+    runs = runs[~runs["entity"].isin(args.exclude)]
     parts = [
         f"# Component 2 results ({runs['entity'].nunique()} entities, {len(runs)} runs)\n",
         "## Mean metrics per scenario and policy\n", to_markdown(mean_table(runs)), "",
         f"## Paired comparison: {args.target} vs each policy on {args.metric}\n",
         to_markdown(paired_table(runs, args.target, args.metric), index=False), "",
     ]
-    for extra in ("mcc", "post_drift_f1", "post_drift_mcc"):
+    for extra in ("mcc", "informedness", "post_drift_f1", "post_drift_mcc", "post_drift_informedness"):
         if extra == args.metric or extra not in runs:
             continue
         subset = runs[runs["scenario"].isin(["deploy", "silent"])] if extra.startswith("post") else runs
@@ -108,7 +128,8 @@ def main() -> None:
                       to_markdown(paired_table(subset, args.target, extra), index=False), ""]
     parts += ["## Latency (FR6) and lifecycle activity\n", to_markdown(ops_table(runs)), ""]
     text = "\n".join(parts)
-    (out / "summary.md").write_text(text)
+    name = "summary.md" if not args.exclude else "summary_heldout.md"
+    (out / name).write_text(text)
     print(text)
 
 

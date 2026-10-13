@@ -45,7 +45,7 @@ from src.data_pipeline import SCENARIOS, apply_injections, change_events_for, ma
 from src.dynamic_eval import stream_metrics  # noqa: E402
 from src.evaluate import load_labels  # noqa: E402
 from src.hst_state import capture  # noqa: E402
-from src.hst_model import build_model, freeze_scaler  # noqa: E402
+from src.hst_model import DETECTOR_PRESETS, build_model, detector_config, freeze_scaler  # noqa: E402
 from src.lifecycle_manager import (  # noqa: E402
     DynamicModelManager, LifecycleConfig, attribution_null, prepare_calibration,
 )
@@ -93,10 +93,10 @@ def _append(path: Path, fields: list[str], row: dict) -> None:
         w.writerow(row)
 
 
-def warm_up_entity(entity_id: str):
+def warm_up_entity(entity_id: str, hst_cfg=HST_CFG):
     """One calibrated warm-up (same 80/20 split as DynamicModelManager.warm_up)."""
     train = pd.read_parquet(preprocess_entity(entity_id, split="train")).to_dict(orient="records")
-    model = build_model(HST_CFG)
+    model = build_model(hst_cfg)
     split = int(len(train) * 0.8)
     for r in train[:split]:
         model.learn_one(r)
@@ -111,22 +111,30 @@ def warm_up_entity(entity_id: str):
     # Same warm state for every policy; each is calibrated the way it serves (see
     # DynamicModelManager.warm_up): frozen policies on frozen scores, learning ones prequentially.
     # The attribution null depends only on the quarantine lengths, so cadal variants share it.
-    null = attribution_null(DynamicModelManager(entity_id, BASE, HST_CFG, model=model), train)
+    null = attribution_null(DynamicModelManager(entity_id, BASE, hst_cfg, model=model), train)
     return model, capture(model), {"frozen": frozen, "prequential": prequential}, train[-BASE.periodic_window:], null
 
 
-def run_one(entity_id, model, warm_state, calib, recent, null, rows, labels, injections, cfg):
+def run_one(entity_id, model, warm_state, calib, recent, null, rows, labels, injections, cfg,
+            hst_cfg=HST_CFG, trace: dict | None = None):
     events = change_events_for(injections, entity_id)
-    mgr = DynamicModelManager(entity_id, cfg, HST_CFG, model=model,
+    mgr = DynamicModelManager(entity_id, cfg, hst_cfg, model=model,
                               change_source=ReplayChangeEventSource(events))
     mgr.start_from(warm_state, calib["prequential" if cfg.learns_while_serving else "frozen"], recent,
                    null if cfg.policy == "cadal" else None)
-    alarms, latency = [], []
+    alarms, latency, scores, versions, thresholds = [], [], [], [], []
     t0 = time.perf_counter()
     for x in rows:
         res = mgr.process(x)
         alarms.append(res.alarm)
         latency.append(res.latency_ms)
+        if trace is not None:
+            scores.append(res.score)
+            versions.append(res.version)
+            thresholds.append(res.threshold)
+    if trace is not None:
+        trace.update(alarm=np.array(alarms), score=np.array(scores), version=np.array(versions),
+                     threshold=np.array(thresholds), label=np.array(labels))
     duration = time.perf_counter() - t0
     drift_start = injections[0].start if injections else None
     metrics = stream_metrics(alarms, labels, drift_start, cfg.target_rate)
@@ -154,6 +162,10 @@ def main() -> None:
     parser.add_argument("--out-dir", default="outputs/component2")
     parser.add_argument("--seed", type=int, default=0, help="drift injection seed")
     parser.add_argument("--shard", default="0/1", help="i/n: run every n-th entity starting at i (parallel workers)")
+    parser.add_argument("--detector", default="river", choices=list(DETECTOR_PRESETS),
+                        help="Component 1 detector preset (src/hst_model.DETECTOR_PRESETS)")
+    parser.add_argument("--trace", action="store_true",
+                        help="save per-step score / alarm / version / threshold to <out-dir>/traces/")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -162,6 +174,7 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
     runs_csv, curves_csv, decisions_path = out / "runs.csv", out / "f1_curves.csv", out / "decisions.jsonl"
     done = _done_keys(runs_csv)
+    hst_cfg = detector_config(args.detector)
     entities = args.entities or discover_entities("train")
     shard, n_shards = (int(v) for v in args.shard.split("/"))
     entities = entities[shard::n_shards]
@@ -171,7 +184,7 @@ def main() -> None:
         if not todo:
             continue
         t = time.perf_counter()
-        model, warm_state, calib, recent, null = warm_up_entity(entity_id)
+        model, warm_state, calib, recent, null = warm_up_entity(entity_id, hst_cfg)
         logger.info("[%s] warm-up %.0fs, %d runs to do", entity_id, time.perf_counter() - t, len(todo))
         test_df = pd.read_parquet(preprocess_entity(entity_id, split="test"))
         labels = load_labels(entity_id)
@@ -182,8 +195,13 @@ def main() -> None:
             for variant in args.variants:
                 if (entity_id, scenario, variant) in done:
                     continue
+                trace = {} if args.trace else None
                 summary, curve, decisions = run_one(
-                    entity_id, model, warm_state, calib, recent, null, rows, labels, injections, ALL_VARIANTS[variant])
+                    entity_id, model, warm_state, calib, recent, null, rows, labels, injections,
+                    ALL_VARIANTS[variant], hst_cfg, trace)
+                if trace:
+                    (out / "traces").mkdir(exist_ok=True)
+                    np.savez_compressed(out / "traces" / f"{entity_id}_{scenario}_{variant}.npz", **trace)
                 key = {"entity": entity_id, "scenario": scenario, "variant": variant}
                 _append(runs_csv, RUN_FIELDS, {**key, **summary})
                 for i, f1 in enumerate(curve):

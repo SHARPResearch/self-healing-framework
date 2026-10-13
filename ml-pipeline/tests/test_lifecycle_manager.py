@@ -388,3 +388,36 @@ def test_rollback_restores_the_target_versions_shifts():
     assert mgr.shifts == {}
     assert mgr.ref_stats is not None and set(mgr.ref_stats) == set(FEATURES)
     assert robust_stats([_normal(random.Random(0))] * 3)["a"][1] == 1e-6  # flat floor
+
+
+LAZY_HST = HSTConfig(n_trees=15, height=6, window_size=50, seed=11, lazy=True, range_margin=0.25)
+
+
+def _lazy_manager(**cfg_kw):
+    mgr = DynamicModelManager("svc", _cfg(**cfg_kw), LAZY_HST,
+                              change_source=ReplayChangeEventSource([ChangeEvent("svc", "deployment", step=301)]))
+    rng = random.Random(0)
+    mgr.warm_up([_normal(rng) for _ in range(600)])
+    return mgr
+
+
+def test_async_decisions_match_sync_when_awaited():
+    sync, asyn = _lazy_manager(), _lazy_manager(async_decisions=True)
+    sync_alarms, async_alarms = [], []
+    for x in _shifted_stream():
+        sync_alarms.append(sync.process(x).alarm)
+        async_alarms.append(asyn.process(x).alarm)
+        if asyn.phase == "deciding":
+            asyn.wait_for_decision(timeout=60)
+    assert async_alarms == sync_alarms
+    assert [d["verdict"] for d in asyn.decisions] == [d["verdict"] for d in sync.decisions]
+
+
+def test_async_decisions_keep_serving_while_the_challenger_is_evaluated():
+    mgr = _lazy_manager(async_decisions=True)
+    for x in _shifted_stream():
+        mgr.process(x)
+    mgr.wait_for_decision(timeout=60)
+    assert mgr.decisions and mgr.decisions[0]["action"] == "promote"
+    # The serving loop only paid for the swap, not for evaluating the challenger.
+    assert max(mgr.transition_ms) < max(mgr.decision_ms)

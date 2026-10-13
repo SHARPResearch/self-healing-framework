@@ -33,8 +33,10 @@ capture champion state (~30 ms), reset, fit, and either keep the result or re-ap
 state (~40 ms). See src/hst_state.py.
 """
 
+import copy
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from collections import deque
 from dataclasses import dataclass, field, replace
 from typing import Iterable, Optional
@@ -93,6 +95,10 @@ class LifecycleConfig:
     # reference robust standard deviations is shifted back onto the champion's baseline.
     rebaseline: bool = True
     rebaseline_k: float = 3.0
+    # Evaluate closed quarantines on a copy of the champion in a background thread while the
+    # champion keeps scoring (FR3). Off by default so evaluation runs are deterministic. Copying
+    # is cheap only for lazy trees (HST_LAZY); river's eager trees copy ~1.6M nodes.
+    async_decisions: bool = False
 
     def __post_init__(self):
         if self.policy not in POLICIES:
@@ -282,7 +288,11 @@ class DynamicModelManager:
         # data the served model was fitted on, and the per-metric shifts currently applied.
         self.ref_stats: Optional[dict[str, tuple[float, float]]] = None
         self.shifts: dict[str, float] = {}
-        self.transition_ms: list[float] = []
+        self.transition_ms: list[float] = []   # time the serving loop was blocked by a transition
+        self.decision_ms: list[float] = []     # time spent evaluating quarantines (any thread)
+        self._executor: Optional[ThreadPoolExecutor] = None
+        self._pending = None
+        self._deferred_change = False
 
     # ── warm-up ──────────────────────────────────────────────────────────────
     def warm_up(self, rows: list[dict], calib_frac: float = 0.2) -> dict:
@@ -339,6 +349,10 @@ class DynamicModelManager:
         t0 = time.perf_counter()
         self.step += 1
         decision = None
+
+        if self._pending is not None and self._pending.done():
+            out, self._pending = self._pending.result(), None
+            decision = self._apply_outcome(out)
 
         for evt in self.changes.poll(self.step):
             decision = self._on_change_event(evt) or decision
@@ -403,12 +417,13 @@ class DynamicModelManager:
         gate = float(np.percentile(calib_scores, gate_pct)) if gate_pct > 0 else -1.0
         return threshold, min(gate, threshold)
 
-    def _prequential(self, rows: list[dict]) -> list[float]:
+    def _prequential(self, rows: list[dict], model=None) -> list[float]:
         """Score each row, then learn it: the way a serving model sees the stream."""
+        model = self.model if model is None else model
         scores = []
         for r in rows:
-            scores.append(_clamp(self.model.score_one(r)))
-            self.model.learn_one(r)
+            scores.append(_clamp(model.score_one(r)))
+            model.learn_one(r)
         return scores
 
     def stationarity_test(self, rows: list[dict]) -> tuple[float, float]:
@@ -424,16 +439,17 @@ class DynamicModelManager:
         rate = sum(_clamp(self.model.score_one(r)) >= threshold for r in tail) / len(tail)
         return rate, out_of_support_rate(rows[:n_fit], tail)
 
-    def _fit_challenger(self, rows: list[dict], calib_rows: list[dict]) -> tuple[float, float]:
+    def _fit_challenger(self, rows: list[dict], calib_rows: list[dict], model=None) -> tuple[float, float]:
         """
         Reset the model in place, learn `rows`, return (threshold, gate) calibrated on frozen
         scores of `calib_rows`. The caller decides whether the model then learns `calib_rows`.
         """
-        reset(self.model, keep_scaler=True)
+        model = self.model if model is None else model
+        reset(model, keep_scaler=True)
         for r in rows:
-            self.model.learn_one(r)
-        prepare_calibration(self.model, rows, calib_rows)
-        return self._calibrate([_clamp(self.model.score_one(r)) for r in calib_rows])
+            model.learn_one(r)
+        prepare_calibration(model, rows, calib_rows)
+        return self._calibrate([_clamp(model.score_one(r)) for r in calib_rows])
 
     def _checkpoint(self, reason: str) -> None:
         t = time.perf_counter()
@@ -477,7 +493,11 @@ class DynamicModelManager:
         self.publisher.publish_lifecycle({"service_id": self.service_id, "event": "change_observed",
                                           "change_event_id": evt.event_id, "step": self.step})
         # Evidence about the post-change regime has to come from after the change, so a change
-        # during an open quarantine restarts it rather than reusing the pre-change buffer.
+        # during an open quarantine restarts it rather than reusing the pre-change buffer. While
+        # an asynchronous decision is in flight, the new quarantine opens once it is applied.
+        if self.phase == "deciding":
+            self._deferred_change = True
+            return None
         self._open_quarantine("change_event")
         return None
 
@@ -496,6 +516,8 @@ class DynamicModelManager:
         if score < self.learn_gate:
             self.model.learn_one(v)                 # gated learning: only clearly typical events teach
 
+        if self.phase == "deciding":  # an asynchronous decision is in flight: just keep serving
+            return None
         if self.phase == "quarantine":
             self._q_rows.append(x)
             self._q_alarms.append(alarm)
@@ -517,50 +539,65 @@ class DynamicModelManager:
                 self._checkpoint(f"scheduled validity check passed (alarm rate {rate:.4f})")
         return None
 
-    def _close_quarantine(self) -> dict:
-        t = time.perf_counter()
-        rows, alarms = self._q_rows, self._q_alarms
+    def _quarantine_context(self) -> dict:
+        """Everything the quarantine decision needs, frozen at the moment the quarantine closes."""
+        n = len(self._q_rows)
+        return {
+            "rows": list(self._q_rows), "alarms": list(self._q_alarms), "trigger": self._q_trigger,
+            "change_event_id": self._change_in_horizon(since=self._q_start),
+            "champion_state": capture(self.model),
+            "champion_threshold": self.threshold, "champion_gate": self.learn_gate,
+            "ref_stats": self.ref_stats, "null": self.attribution_null.get(n, {}),
+        }
+
+    def _evaluate_quarantine(self, model, ctx: dict) -> dict:
+        """
+        Decide what the quarantine observed, using `model` as scratch space.
+
+        `model` starts as the champion and may be left holding the challenger. Nothing here
+        touches the served model, writes the registry or publishes, so it can run on a copy of the
+        champion in a background thread (async_decisions) while scoring continues.
+        """
+        t0 = time.perf_counter()
+        rows, alarms = ctx["rows"], ctx["alarms"]
         n = len(rows)
         n_fit = int(n * self.cfg.fit_frac)
         n_calib = int(n * self.cfg.calib_frac)
-        tail = slice(n_fit + n_calib, n)
-
-        champion_state = capture(self.model)
-        champion_threshold, champion_gate = self.threshold, self.learn_gate
-        tail_rows = rows[tail]
+        tail_rows, tail_alarms = rows[n_fit + n_calib:], alarms[n_fit + n_calib:]
+        champion_threshold = ctx["champion_threshold"]
 
         # Repair 1, re-baselining: keep the champion, shift the metrics whose level moved back
         # onto its baseline (estimated on the fit slice), and see whether it then finds the tail
         # normal again with its own threshold. Measured before the challenger touches the model.
         new_shifts, rebaseline_tail = {}, None
-        if self.cfg.policy == "cadal" and self.cfg.rebaseline and self.ref_stats:
-            new_shifts = fit_rebaseline(self.ref_stats, rows[:n_fit], self.cfg.rebaseline_k)
+        if self.cfg.policy == "cadal" and self.cfg.rebaseline and ctx["ref_stats"]:
+            new_shifts = fit_rebaseline(ctx["ref_stats"], rows[:n_fit], self.cfg.rebaseline_k)
             if new_shifts:
                 rebaseline_tail = sum(
-                    _clamp(self.model.score_one(rebaselined(r, new_shifts))) >= champion_threshold
+                    _clamp(model.score_one(rebaselined(r, new_shifts))) >= champion_threshold
                     for r in tail_rows
                 ) / len(tail_rows)
 
-        # Repair 2, retraining: a challenger fitted on the new regime alone.
-        challenger_threshold, challenger_gate = self._fit_challenger(rows[:n_fit], rows[n_fit:n_fit + n_calib])
-        # Learnability is a stationarity test, so it is measured frozen: fitted on the start of
-        # the buffer, calibrated on the middle, does the model still find the tail normal? A new
-        # steady regime passes; a trend or an escalating incident drifts away from the fit.
+        # Repair 2, retraining: a challenger fitted on the new regime alone. Learnability is a
+        # stationarity test, so it is measured frozen: fitted on the start of the buffer,
+        # calibrated on the middle, does the model still find the tail normal? A new steady
+        # regime passes; a trend or an escalating incident drifts away from the fit.
+        challenger_threshold, challenger_gate = self._fit_challenger(
+            rows[:n_fit], rows[n_fit:n_fit + n_calib], model)
         challenger_tail = (
-            sum(_clamp(self.model.score_one(r)) >= challenger_threshold for r in tail_rows) / len(tail_rows)
+            sum(_clamp(model.score_one(r)) >= challenger_threshold for r in tail_rows) / len(tail_rows)
         )
-        tail_alarms = alarms[tail]
         evidence = QuarantineEvidence(
-            trigger=self._q_trigger,
+            trigger=ctx["trigger"],
             target_rate=self.cfg.target_rate,
             champion_alarm_rate=sum(alarms) / n,
             champion_tail_alarm_rate=sum(tail_alarms) / len(tail_alarms),
             challenger_tail_alarm_rate=challenger_tail,
-            change_event_id=self._change_in_horizon(since=self._q_start),
+            change_event_id=ctx["change_event_id"],
             n_tail=len(tail_rows),
             tail_out_of_support_rate=out_of_support_rate(rows[:n_fit], tail_rows),
-            learnable_floor=self.attribution_null.get(n, {}).get("learnable"),
-            moving_floor=self.attribution_null.get(n, {}).get("moving"),
+            learnable_floor=ctx["null"].get("learnable"),
+            moving_floor=ctx["null"].get("moving"),
             rebaseline_tail_alarm_rate=rebaseline_tail,
         )
         result: Attribution = attribute(evidence, self.cfg.attribution)
@@ -568,7 +605,7 @@ class DynamicModelManager:
         rollback_target = None
         if result.action is Action.ROLLBACK:
             rollback_target = self.registry.previous_production() or self.registry.production()
-            target_rate = self._alarm_rate_of(rollback_target, rows[tail])
+            target_rate = self._alarm_rate_of(rollback_target, tail_rows, model)
             healthy = (self.cfg.attribution.decay_factor * self.cfg.target_rate <= target_rate
                        < self.cfg.attribution.rollback_max_alarm_rate)
             result.evidence["rollback_target_version"] = rollback_target.version
@@ -581,32 +618,49 @@ class DynamicModelManager:
                     result.evidence,
                 )
 
+        challenger_state = None
+        if result.action is Action.PROMOTE and result.evidence.get("repair") != "rebaseline":
+            if self.cfg.learns_while_serving:
+                # A learning model is served with a threshold calibrated the way it will run
+                # (score each remaining buffered event, then learn it), not on the frozen
+                # stationarity test.
+                challenger_threshold, challenger_gate = self._calibrate(
+                    self._prequential(rows[n_fit:], model))
+            # A frozen-serving promotion serves exactly what was validated: the challenger
+            # fitted on the fit slice with the threshold from frozen scores of the calib slice.
+            challenger_state = capture(model)
+        return {
+            **ctx,
+            "result": result, "new_shifts": new_shifts, "rollback_target": rollback_target,
+            "challenger_state": challenger_state, "challenger_threshold": challenger_threshold,
+            "challenger_gate": challenger_gate, "new_ref_stats": robust_stats(rows[:n_fit]),
+            "eval_ms": (time.perf_counter() - t0) * 1000,
+        }
+
+    def _apply_outcome(self, out: dict) -> dict:
+        """Serve what the evaluation decided. Runs on the serving thread, in milliseconds."""
+        t = time.perf_counter()
+        result = out["result"]
         if result.action is Action.PROMOTE and result.evidence.get("repair") == "rebaseline":
             # The champion is served again, unchanged, behind the new input shifts.
-            apply(self.model, champion_state)
-            self.threshold, self.learn_gate = champion_threshold, champion_gate
-            self.shifts = new_shifts
-            result.evidence["rebaselined"] = new_shifts
+            apply(self.model, out["champion_state"])
+            self.threshold, self.learn_gate = out["champion_threshold"], out["champion_gate"]
+            self.shifts = out["new_shifts"]
+            result.evidence["rebaselined"] = out["new_shifts"]
             version = self.registry.register(
                 self._snapshot(), self.threshold, self.cfg.target_rate, step=self.step,
                 reason=result.reason, tags={"kind": "rebaseline", "verdict": result.verdict.value,
                                             "learn_gate": self.learn_gate,
-                                            "n_rebaselined": len(new_shifts)},
+                                            "n_rebaselined": len(out["new_shifts"])},
             )
             self.registry.set_production(version, step=self.step, transition="promote",
                                          reason=result.reason, evidence=result.evidence)
         elif result.action is Action.PROMOTE:
             # The challenger now defines "normal": its own fit data is the new reference.
+            apply(self.model, out["challenger_state"])
             self.shifts = {}
-            self.ref_stats = robust_stats(rows[:n_fit])
-            if self.cfg.learns_while_serving:
-                # A learning model is served with a threshold calibrated the way it will run
-                # (score each remaining buffered event, then learn it), not on the frozen
-                # stationarity test.
-                challenger_threshold, challenger_gate = self._calibrate(self._prequential(rows[n_fit:]))
-            # A frozen-serving promotion serves exactly what was validated: the challenger
-            # fitted on the fit slice with the threshold from frozen scores of the calib slice.
-            self.threshold, self.learn_gate = challenger_threshold, challenger_gate
+            self.ref_stats = out["new_ref_stats"]
+            self.threshold, self.learn_gate = out["challenger_threshold"], out["challenger_gate"]
             version = self.registry.register(
                 self._snapshot(), self.threshold, self.cfg.target_rate, step=self.step,
                 reason=result.reason, tags={"kind": "challenger", "verdict": result.verdict.value,
@@ -615,23 +669,49 @@ class DynamicModelManager:
             self.registry.set_production(version, step=self.step, transition="promote",
                                          reason=result.reason, evidence=result.evidence)
         elif result.action is Action.ROLLBACK:
-            target = rollback_target
+            target = out["rollback_target"]
             self._restore(target.state)
             self.threshold = target.threshold
             self.learn_gate = target.tags.get("learn_gate", target.threshold)
             self.registry.set_production(target.version, step=self.step, transition="rollback",
                                          reason=result.reason, evidence=result.evidence)
         else:  # HOLD or RESUME: the champion stays, exactly as it was
-            apply(self.model, champion_state)
-            self.threshold, self.learn_gate = champion_threshold, champion_gate
+            apply(self.model, out["champion_state"])
+            self.threshold, self.learn_gate = out["champion_threshold"], out["champion_gate"]
 
         self.monitor.reset()
         self.phase = "stable"
         self._cooldown_until = self.step + self.cfg.cooldown
-        self.transition_ms.append((time.perf_counter() - t) * 1000)
-        return self._decide({"action": result.action.value, "verdict": result.verdict.value,
-                             "trigger": self._q_trigger, "reason": result.reason,
-                             "evidence": result.evidence})
+        self.transition_ms.append(out.get("blocked_ms", 0.0) + (time.perf_counter() - t) * 1000)
+        self.decision_ms.append(out["eval_ms"])
+        decision = self._decide({"action": result.action.value, "verdict": result.verdict.value,
+                                 "trigger": out["trigger"], "reason": result.reason,
+                                 "evidence": result.evidence})
+        if self._deferred_change:
+            self._deferred_change = False
+            self._open_quarantine("change_event")
+        return decision
+
+    def _close_quarantine(self) -> Optional[dict]:
+        ctx = self._quarantine_context()
+        if not self.cfg.async_decisions:
+            out = self._evaluate_quarantine(self.model, ctx)
+            out["blocked_ms"] = out["eval_ms"]  # synchronous: scoring waited for the evaluation
+            return self._apply_outcome(out)
+        # Asynchronous: evaluate on a copy of the champion in the background, keep serving the
+        # champion meanwhile, and swap in the outcome on the first event after it is ready.
+        if self._executor is None:
+            self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"cadal-{self.service_id}")
+        self.phase = "deciding"
+        self._pending = self._executor.submit(self._evaluate_quarantine, copy.deepcopy(self.model), ctx)
+        return None
+
+    def wait_for_decision(self, timeout: Optional[float] = None) -> Optional[dict]:
+        """Block until a pending asynchronous decision is ready and apply it (tests, shutdown)."""
+        if self._pending is None:
+            return None
+        out, self._pending = self._pending.result(timeout=timeout), None
+        return self._apply_outcome(out)
 
     def _snapshot(self) -> HSTState:
         return capture(self.model, meta={
@@ -646,14 +726,15 @@ class DynamicModelManager:
         ref = state.meta.get("ref_stats")
         self.ref_stats = {k: tuple(v) for k, v in ref.items()} if ref else None
 
-    def _alarm_rate_of(self, version, rows: list[dict]) -> float:
+    def _alarm_rate_of(self, version, rows: list[dict], model=None) -> float:
         """Alarm rate a registered version would produce on `rows` (model restored afterwards)."""
-        current = capture(self.model)
-        apply(self.model, version.state)
+        model = self.model if model is None else model
+        current = capture(model)
+        apply(model, version.state)
         shifts = version.state.meta.get("shifts") or {}
-        rate = sum(_clamp(self.model.score_one(rebaselined(r, shifts))) >= version.threshold
+        rate = sum(_clamp(model.score_one(rebaselined(r, shifts))) >= version.threshold
                    for r in rows) / len(rows)
-        apply(self.model, current)
+        apply(model, current)
         return rate
 
     def _decide(self, decision: dict) -> dict:

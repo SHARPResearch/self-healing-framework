@@ -1,0 +1,1 @@
+# Pydantic models for Component 2 event payloads

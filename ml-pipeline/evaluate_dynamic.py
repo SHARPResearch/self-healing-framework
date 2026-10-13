@@ -12,6 +12,7 @@ Policy variants:
   cadal_no_events                                    ablation: cadal without the change prior
   cadal_online                                       ablation: cadal with gated continuous learning
   cadal_retrain_only                                 ablation: cadal without re-baselining
+  cadal_retrain_free                                 ablation: cadal may retrain without a change event
   cadal_page_hinkley, cadal_kswin                    ablation: score drift detector (not in the default
                                                      sweep, run with --variants)
 
@@ -42,6 +43,7 @@ from preprocess import discover_entities, preprocess_entity  # noqa: E402
 
 from src.change_events import ReplayChangeEventSource  # noqa: E402
 from src.config import HST_CFG  # noqa: E402
+from src.drift_attribution import AttributionConfig  # noqa: E402
 from src.data_pipeline import SCENARIOS, apply_injections, change_events_for, make_scenario  # noqa: E402
 from src.dynamic_eval import stream_metrics  # noqa: E402
 from src.evaluate import load_labels  # noqa: E402
@@ -64,6 +66,7 @@ VARIANTS = {
     "cadal_no_events": replace(BASE, policy="cadal", use_change_events=False),
     "cadal_online": replace(BASE, policy="cadal", learn_gate_percentile=75.0),
     "cadal_retrain_only": replace(BASE, policy="cadal", rebaseline=False),
+    "cadal_retrain_free": replace(BASE, policy="cadal", attribution=AttributionConfig(retrain_requires_change=False)),
 }
 DETECTOR_VARIANTS = {
     "cadal_page_hinkley": replace(BASE, policy="cadal", detector="page_hinkley"),

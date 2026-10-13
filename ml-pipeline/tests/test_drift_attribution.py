@@ -12,11 +12,24 @@ def _ev(**kw):
     return QuarantineEvidence(**base)
 
 
-def test_persistent_learnable_shift_is_concept_drift_and_promotes():
-    a = attribute(_ev())
+def test_persistent_learnable_shift_after_a_change_is_concept_drift_and_promotes():
+    a = attribute(_ev(change_event_id="svc:deployment@1"))
     assert a.verdict is Verdict.CONCEPT_DRIFT
     assert a.action is Action.PROMOTE
-    assert "no explaining change event" in a.reason
+    assert "svc:deployment@1" in a.reason
+
+
+def test_without_a_change_only_rebaselining_may_promote():
+    # Learnable only by retraining and nothing explains it: held as a probable incident.
+    unexplained = attribute(_ev())
+    assert unexplained.verdict is Verdict.INCIDENT and "needs a deployment" in unexplained.reason
+    # Re-baselining is still allowed without a change.
+    rb = attribute(_ev(rebaseline_tail_alarm_rate=0.02))
+    assert rb.verdict is Verdict.CONCEPT_DRIFT and rb.evidence["repair"] == "rebaseline"
+    # The rule can be switched off for the ablation.
+    from src.drift_attribution import AttributionConfig
+    off = attribute(_ev(), AttributionConfig(retrain_requires_change=False))
+    assert off.verdict is Verdict.CONCEPT_DRIFT and off.evidence["repair"] == "retrain"
 
 
 def test_persistent_but_unlearnable_shift_is_an_incident_and_holds():
@@ -66,7 +79,7 @@ def test_evidence_is_recorded_for_the_audit_trail():
 
 def test_small_tails_get_binomial_slack_on_the_learnable_line():
     # 0.11 on a 40 event tail is 4 or 5 alarms vs an expected ~1: noise, not a failed regime.
-    noisy = _ev(challenger_tail_alarm_rate=0.11, n_tail=40)
+    noisy = _ev(challenger_tail_alarm_rate=0.11, n_tail=40, change_event_id="chg")
     assert attribute(noisy).verdict is Verdict.CONCEPT_DRIFT
     assert attribute(_ev(challenger_tail_alarm_rate=0.11)).verdict is Verdict.INCIDENT
     # The slack shrinks with more evidence.
@@ -77,7 +90,8 @@ def test_tail_leaving_the_fitted_support_is_an_incident_even_if_challenger_score
     a = attribute(_ev(challenger_tail_alarm_rate=0.01, tail_out_of_support_rate=0.6, n_tail=200))
     assert a.verdict is Verdict.INCIDENT
     assert "outside the range" in a.reason
-    ok = attribute(_ev(challenger_tail_alarm_rate=0.01, tail_out_of_support_rate=0.02, n_tail=200))
+    ok = attribute(_ev(challenger_tail_alarm_rate=0.01, tail_out_of_support_rate=0.02, n_tail=200,
+                       change_event_id="chg"))
     assert ok.verdict is Verdict.CONCEPT_DRIFT
 
 
@@ -86,7 +100,7 @@ def test_entity_null_floors_raise_the_stationarity_lines():
     # of 0.2 is ordinary, not evidence of an incident.
     ev = dict(challenger_tail_alarm_rate=0.2, tail_out_of_support_rate=0.7, n_tail=144)
     assert attribute(_ev(**ev)).verdict is Verdict.INCIDENT
-    floored = attribute(_ev(**ev, learnable_floor=0.3, moving_floor=0.8))
+    floored = attribute(_ev(**ev, learnable_floor=0.3, moving_floor=0.8, change_event_id="chg"))
     assert floored.verdict is Verdict.CONCEPT_DRIFT
     assert floored.evidence["learnable_line"] == 0.3 and floored.evidence["moving_line"] == 0.8
 
@@ -94,7 +108,8 @@ def test_entity_null_floors_raise_the_stationarity_lines():
 def test_rebaselining_is_preferred_when_it_restores_the_champion():
     both = attribute(_ev(challenger_tail_alarm_rate=0.01, rebaseline_tail_alarm_rate=0.02, n_tail=200))
     assert both.verdict is Verdict.CONCEPT_DRIFT and both.evidence["repair"] == "rebaseline"
-    only_retrain = attribute(_ev(challenger_tail_alarm_rate=0.01, rebaseline_tail_alarm_rate=0.5, n_tail=200))
+    only_retrain = attribute(_ev(challenger_tail_alarm_rate=0.01, rebaseline_tail_alarm_rate=0.5, n_tail=200,
+                                 change_event_id="chg"))
     assert only_retrain.evidence["repair"] == "retrain"
     neither = attribute(_ev(challenger_tail_alarm_rate=0.5, rebaseline_tail_alarm_rate=0.5, n_tail=200))
     assert neither.verdict is Verdict.INCIDENT and "repair" not in neither.evidence

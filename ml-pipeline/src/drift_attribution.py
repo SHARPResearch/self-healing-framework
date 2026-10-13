@@ -29,6 +29,11 @@ alerting continues) to pick the response:
                  new steady regime does; a trend keeps leaving it. Needed because tree models
                  (HST included) put every value beyond the fitted range into the same edge cell,
                  so a runaway metric looks "learnable" to the challenger itself.
+  repair         two candidate repairs are tested the same way: *re-baselining* (keep the
+                 champion and everything it learned, shift the inputs of the metrics whose
+                 level moved back onto its baseline) and *retraining* (a challenger fitted only on
+                 the new regime). Re-baselining is preferred when it passes: a challenger fitted
+                 on a day of data forgets the weeks of normal variation the champion knew.
   change prior   did an exogenous change (deployment, config) precede the shift? If so, less
                  persistence is required before accepting it as a new normal.
   direction      scores shifting down instead of up points at decay, not drift.
@@ -97,6 +102,9 @@ class QuarantineEvidence:
     # floors so natural non-stationarity (daily cycles, spiky features) is not read as "moving".
     learnable_floor: Optional[float] = None
     moving_floor: Optional[float] = None
+    # Tail alarm rate of the champion after re-baselining the shifted metrics (None: no metric
+    # moved enough to re-baseline, or re-baselining not available).
+    rebaseline_tail_alarm_rate: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -129,6 +137,9 @@ def attribute(ev: QuarantineEvidence, cfg: AttributionConfig = AttributionConfig
         ),
         "change_event_id": ev.change_event_id,
         "n_tail": ev.n_tail,
+        "rebaseline_tail_alarm_rate": (
+            None if ev.rebaseline_tail_alarm_rate is None else round(ev.rebaseline_tail_alarm_rate, 4)
+        ),
         "tail_out_of_support_rate": (
             None if ev.tail_out_of_support_rate is None else round(ev.tail_out_of_support_rate, 4)
         ),
@@ -165,12 +176,20 @@ def attribute(ev: QuarantineEvidence, cfg: AttributionConfig = AttributionConfig
             f"the behaviour is still moving, not a new steady state",
         )
 
-    if ev.challenger_tail_alarm_rate <= learnable_line:
-        why = f"after change {ev.change_event_id}" if has_change else "with no explaining change event"
+    why = f"after change {ev.change_event_id}" if has_change else "with no explaining change event"
+    stale = (f"champion stale (tail alarm rate {ev.champion_tail_alarm_rate:.4f} >= {stale_line:.4f})")
+    if ev.rebaseline_tail_alarm_rate is not None and ev.rebaseline_tail_alarm_rate <= learnable_line:
+        evidence["repair"] = "rebaseline"
         return done(
             Verdict.CONCEPT_DRIFT,
-            f"champion stale (tail alarm rate {ev.champion_tail_alarm_rate:.4f} >= {stale_line:.4f}) "
-            f"and the new regime is learnable (challenger tail rate "
+            f"{stale} and re-baselining the shifted metrics restores it (tail rate "
+            f"{ev.rebaseline_tail_alarm_rate:.4f} <= {learnable_line:.4f}) {why}",
+        )
+    if ev.challenger_tail_alarm_rate <= learnable_line:
+        evidence["repair"] = "retrain"
+        return done(
+            Verdict.CONCEPT_DRIFT,
+            f"{stale} and the new regime is learnable (challenger tail rate "
             f"{ev.challenger_tail_alarm_rate:.4f} <= {learnable_line:.4f}) {why}",
         )
 

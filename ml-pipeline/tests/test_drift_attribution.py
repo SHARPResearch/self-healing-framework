@@ -89,3 +89,12 @@ def test_entity_null_floors_raise_the_stationarity_lines():
     floored = attribute(_ev(**ev, learnable_floor=0.3, moving_floor=0.8))
     assert floored.verdict is Verdict.CONCEPT_DRIFT
     assert floored.evidence["learnable_line"] == 0.3 and floored.evidence["moving_line"] == 0.8
+
+
+def test_rebaselining_is_preferred_when_it_restores_the_champion():
+    both = attribute(_ev(challenger_tail_alarm_rate=0.01, rebaseline_tail_alarm_rate=0.02, n_tail=200))
+    assert both.verdict is Verdict.CONCEPT_DRIFT and both.evidence["repair"] == "rebaseline"
+    only_retrain = attribute(_ev(challenger_tail_alarm_rate=0.01, rebaseline_tail_alarm_rate=0.5, n_tail=200))
+    assert only_retrain.evidence["repair"] == "retrain"
+    neither = attribute(_ev(challenger_tail_alarm_rate=0.5, rebaseline_tail_alarm_rate=0.5, n_tail=200))
+    assert neither.verdict is Verdict.INCIDENT and "repair" not in neither.evidence

@@ -10,7 +10,9 @@ Candidates:
   river           river HalfSpaceTrees + online MinMaxScaler (Component 1 as shipped)
   lazy            src/lazy_hst.py, same algorithm built on demand (scalability)
   lazy_range      lazy + limits widened to [-0.25, 1.25] + scaler frozen after warm-up
-  lazy_range_ens  lazy_range rank-averaged with a robust per-feature deviation scorer
+  lazy_range_ens  lazy_range rank-averaged (mean of percentiles) with a robust per-feature
+                  deviation scorer (src/ensemble.py)
+  lazy_range_ensmax  the same, combined by max of percentiles
 
 Selection rule, fixed before looking at results: choose on the dev entities (machine-1-*) by
 mean PR-AUC, the threshold-free ranking quality; break ties (< 0.005) in favour of the simpler
@@ -24,7 +26,6 @@ Usage:
 """
 
 import argparse
-import bisect
 import csv
 import logging
 import sys
@@ -32,7 +33,6 @@ import time
 from dataclasses import replace
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 from sklearn.metrics import matthews_corrcoef
 
@@ -41,6 +41,7 @@ from preprocess import discover_entities, preprocess_entity  # noqa: E402
 
 from src.config import HST_CFG  # noqa: E402
 from src.evaluate import evaluate, load_labels, oracle_best_f1, percentile_threshold, pr_auc  # noqa: E402
+from src.ensemble import RankEnsembleDetector  # noqa: E402
 from src.hst_model import build_model, freeze_scaler  # noqa: E402
 
 logger = logging.getLogger("compare_detectors")
@@ -50,68 +51,40 @@ CANDIDATES = {
     "lazy": replace(HST_CFG, lazy=True, range_margin=0.0),
     "lazy_range": replace(HST_CFG, lazy=True, range_margin=0.25),
     "lazy_range_ens": replace(HST_CFG, lazy=True, range_margin=0.25),
+    "lazy_range_ensmax": replace(HST_CFG, lazy=True, range_margin=0.25),
 }
 FIELDS = ["entity", "split", "candidate", "pr_auc", "f1", "precision", "recall", "mcc",
           "informedness", "oracle_f1", "warm_up_s", "score_eps", "n_nodes"]
 
 
-class RobustDeviationScorer:
-    """Max over features of |x - median| / MAD, with median and MAD fixed from warm-up data."""
-
-    def fit(self, rows: list[dict]) -> "RobustDeviationScorer":
-        keys = list(rows[0])
-        values = np.array([[r[k] for k in keys] for r in rows], dtype=float)
-        self.keys = keys
-        self.median = np.median(values, axis=0)
-        mad = np.median(np.abs(values - self.median), axis=0)
-        self.scale = np.where(mad > 1e-9, 1.4826 * mad, values.std(axis=0) + 1e-6)
-        return self
-
-    def score(self, row: dict) -> float:
-        x = np.array([row[k] for k in self.keys], dtype=float)
-        return float(np.max(np.abs(x - self.median) / self.scale))
-
-
-def _ecdf(reference: list[float]):
-    ref = sorted(reference)
-    n = len(ref)
-    return lambda v: bisect.bisect_right(ref, v) / n
-
-
 def run_candidate(name: str, train: list[dict], test: list[dict], labels: list[int]) -> dict:
     cfg = CANDIDATES[name]
-    model = build_model(cfg)
+    combine = "max" if name.endswith("_ensmax") else "mean" if name.endswith("_ens") else None
+    model = RankEnsembleDetector(build_model(cfg), combine) if combine else build_model(cfg)
     clamp = lambda v: float(min(max(v, 0.0), 1.0))  # noqa: E731
     split = int(len(train) * 0.8)
 
     t0 = time.perf_counter()
     for r in train[:split]:
         model.learn_one(r)
+    if combine:
+        model.prepare_calibration(train[:split], train[split:])
     calib = [clamp(model.score_one(r)) for r in train[split:]]
     for r in train[split:]:
         model.learn_one(r)
     if cfg.range_margin > 0:
-        freeze_scaler(model)
+        freeze_scaler(getattr(model, "hst_model", model))
     warm_s = time.perf_counter() - t0
 
     t0 = time.perf_counter()
     scores = [clamp(model.score_one(r)) for r in test]
     score_eps = len(test) / (time.perf_counter() - t0)
 
-    if name.endswith("_ens"):
-        # Rank-average: map both scorers to their percentile within their own calibration
-        # scores, so neither scale dominates, then calibrate the combined score the same way.
-        dev = RobustDeviationScorer().fit(train[:split])
-        dev_calib = [dev.score(r) for r in train[split:]]
-        hst_cdf, dev_cdf = _ecdf(calib), _ecdf(dev_calib)
-        calib = [(hst_cdf(a) + dev_cdf(b)) / 2 for a, b in zip(calib, dev_calib)]
-        scores = [(hst_cdf(a) + dev_cdf(dev.score(r))) / 2 for a, r in zip(scores, test)]
-
     threshold = percentile_threshold(calib, 97)
     m = evaluate(scores, labels, threshold=threshold)
     pred = [int(s >= threshold) for s in scores]
     normal = [p for p, y in zip(pred, labels) if not y]
-    hst = list(model.steps.values())[-1]
+    hst = list(getattr(model, "hst_model", model).steps.values())[-1]
     return {
         "candidate": name,
         "pr_auc": pr_auc(scores, labels),

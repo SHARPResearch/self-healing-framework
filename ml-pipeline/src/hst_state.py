@@ -39,7 +39,11 @@ from src.lazy_hst import LazyHalfSpaceTrees
 
 
 def _split(model: Any) -> tuple[Any, HalfSpaceTrees]:
-    """Return (scaler_or_None, hst) for either a bare HST or a Pipeline(scaler, HST)."""
+    """
+    Return (scaler_or_None, hst) for a bare HST, a Pipeline(scaler, HST), or a detector wrapping
+    one of those in `hst_model` (src/ensemble.RankEnsembleDetector).
+    """
+    model = getattr(model, "hst_model", model)
     if isinstance(model, compose.Pipeline):
         steps = list(model.steps.values())
         return (steps[0] if len(steps) > 1 else None), steps[-1]
@@ -128,6 +132,7 @@ class HSTState:
     masses: list[list[tuple[int, int, int]]]  # per tree: (heap_idx, l_mass, r_mass)
     scaler_bytes: bytes | None = None
     meta: dict = field(default_factory=dict)
+    extra: dict | None = None  # wrapper state, e.g. the ensemble's deviation scorer + references
 
     @property
     def n_massive_nodes(self) -> int:
@@ -141,6 +146,7 @@ class HSTState:
             "masses": self.masses,
             "scaler": self.scaler_bytes.hex() if self.scaler_bytes is not None else None,
             "meta": self.meta,
+            "extra": self.extra,
         }
         return zlib.compress(json.dumps(body).encode())
 
@@ -154,6 +160,7 @@ class HSTState:
             masses=[[tuple(e) for e in tree] for tree in body["masses"]],
             scaler_bytes=bytes.fromhex(body["scaler"]) if body["scaler"] is not None else None,
             meta=body.get("meta", {}),
+            extra=body.get("extra"),
         )
 
 
@@ -173,6 +180,7 @@ def capture(model: Any, meta: dict | None = None) -> HSTState:
         masses=masses,
         scaler_bytes=pickle.dumps(scaler) if scaler is not None else None,
         meta=dict(meta or {}),
+        extra=model.extra_state() if hasattr(model, "extra_state") else None,
     )
 
 
@@ -211,6 +219,8 @@ def apply(model: Any, state: HSTState) -> None:
     hst._first_window = state.first_window
     if scaler is not None and state.scaler_bytes is not None:
         scaler.__dict__.update(pickle.loads(state.scaler_bytes).__dict__)
+    if hasattr(model, "set_extra_state"):
+        model.set_extra_state(state.extra)
 
 
 def materialize(model: Any, feature_names: list[str]) -> None:
@@ -259,3 +269,5 @@ def reset(model: Any, keep_scaler: bool = False) -> None:
     hst._first_window = True
     if scaler is not None and not keep_scaler:
         scaler.__dict__.update(type(scaler)().__dict__)
+    if hasattr(model, "clear_extra"):
+        model.clear_extra()

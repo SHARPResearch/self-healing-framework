@@ -99,8 +99,17 @@ def _append(path: Path, fields: list[str], row: dict) -> None:
 
 
 def warm_up_entity(entity_id: str, hst_cfg=HST_CFG):
-    """One calibrated warm-up (same 80/20 split as DynamicModelManager.warm_up)."""
+    """One calibrated warm-up on an SMD entity's train split."""
     train = pd.read_parquet(preprocess_entity(entity_id, split="train")).to_dict(orient="records")
+    return warm_up_rows(entity_id, train, hst_cfg, BASE)
+
+
+def warm_up_rows(entity_id: str, train: list[dict], hst_cfg=HST_CFG, base: LifecycleConfig = BASE):
+    """
+    One calibrated warm-up (same 80/20 split as DynamicModelManager.warm_up), shared by every
+    policy run on this stream. `base` sets the quarantine lengths the attribution null is
+    computed for, so it must match the lifecycle configs the runs will use.
+    """
     model = build_model(hst_cfg)
     split = int(len(train) * 0.8)
     for r in train[:split]:
@@ -116,10 +125,10 @@ def warm_up_entity(entity_id: str, hst_cfg=HST_CFG):
     # Same warm state for every policy; each is calibrated the way it serves (see
     # DynamicModelManager.warm_up): frozen policies on frozen scores, learning ones prequentially.
     # The attribution null depends only on the quarantine lengths, so cadal variants share it.
-    null = attribution_null(DynamicModelManager(entity_id, BASE, hst_cfg, model=model), train)
+    null = attribution_null(DynamicModelManager(entity_id, base, hst_cfg, model=model), train)
     ref = robust_stats(train[:split])
     return (model, capture(model), {"frozen": frozen, "prequential": prequential},
-            train[-BASE.periodic_window:], null, ref)
+            train[-base.periodic_window:], null, ref)
 
 
 def run_one(entity_id, model, warm_state, calib, recent, null, rows, labels, injections, cfg,

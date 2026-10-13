@@ -1,0 +1,1 @@
+# Receives notifications from Component - 02

@@ -1,0 +1,1 @@
+# Settings (DB URLs, LLM API keys, Component 2 URL)

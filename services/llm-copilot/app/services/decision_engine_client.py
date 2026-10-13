@@ -1,0 +1,1 @@
+# Fetches data from Component 2

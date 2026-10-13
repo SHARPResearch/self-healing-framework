@@ -1,0 +1,1 @@
+# Embeds telemetry for RAG (Retrieval-Augmented Generation)

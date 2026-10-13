@@ -328,3 +328,14 @@ def test_the_change_that_opened_a_long_quarantine_still_explains_it_at_close():
     assert first["trigger"] == "change_event"
     assert first["evidence"]["change_event_id"] == "svc:deployment@301"
     assert first["evidence"]["stale_line"] == round(2.0 * cfg.target_rate, 4)
+
+
+def test_for_sampling_rescales_every_length_to_the_same_wall_clock_time():
+    from src.lifecycle_manager import hst_window_for_sampling
+    smd = LifecycleConfig()
+    nab = smd.for_sampling(288)  # five-minute samples
+    assert nab.quarantine_silent == 288 and nab.scheduled_every == 576
+    assert nab.periodic_window == 288 and nab.cooldown == 50
+    assert smd.for_sampling(1440) == smd
+    window = hst_window_for_sampling(288)
+    assert window == 50 and int(nab.quarantine_silent * nab.fit_frac) >= window

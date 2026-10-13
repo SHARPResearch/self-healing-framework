@@ -15,6 +15,10 @@ telemetry a few hundred nodes out of ~1.6M carry mass. Capturing just those, add
 heap index (root=1, left=2i, right=2i+1), gives a snapshot that is thousands of times smaller and
 can be captured or applied in milliseconds onto any model with the same structure.
 
+Works for river's HalfSpaceTrees and for src.lazy_hst.LazyHalfSpaceTrees (Component 1 v2), whose
+nodes only exist where data has been: there, "zeroing" a model is dropping back to bare roots and
+applying a snapshot re-creates exactly the nodes it names, with the same deterministic splits.
+
 Correctness relies on one invariant of river's HST: every learn_one() increments l_mass on every
 node along its path, and the window pivot copies l_mass into r_mass, so a node with zero mass on
 both counters can never have a descendant with non-zero mass. That lets every traversal here
@@ -30,6 +34,8 @@ from typing import Any
 
 from river import compose
 from river.anomaly import HalfSpaceTrees
+
+from src.lazy_hst import LazyHalfSpaceTrees
 
 
 def _split(model: Any) -> tuple[Any, HalfSpaceTrees]:
@@ -51,14 +57,26 @@ def _iter_massive(root) -> list[tuple[int, Any]]:
         out.append((idx, node))
         children = getattr(node, "children", None)
         if children:
-            stack.append((2 * idx, children[0]))
-            stack.append((2 * idx + 1, children[1]))
+            for offset, child in enumerate(children):
+                if child is not None:  # lazy trees: never-visited children do not exist
+                    stack.append((2 * idx + offset, child))
     return out
 
 
-def _node_at(root, heap_idx: int):
-    """Walk from the root to the node at heap_idx (bits after the leading 1 are left/right)."""
-    node = root
+def _node_at(hst, tree: int, heap_idx: int):
+    """
+    Walk from a tree's root to the node at heap_idx (bits after the leading 1 are left/right),
+    creating it, with its deterministic split, if the model is lazy and has not visited it yet.
+    """
+    node = hst.trees[tree]
+    if isinstance(hst, LazyHalfSpaceTrees):
+        idx, path = 1, []
+        for bit in bin(heap_idx)[3:]:
+            right = bit == "1"
+            child = hst._child(tree, node, idx, right, path, create=True)
+            path.append((node, right))
+            node, idx = child, 2 * idx + int(right)
+        return node
     for bit in bin(heap_idx)[3:]:
         node = node.children[int(bit)]
     return node
@@ -75,6 +93,15 @@ def structure_fingerprint(model: Any) -> str:
     _, hst = _split(model)
     if not hst.trees:
         return "unbuilt"
+    if isinstance(hst, LazyHalfSpaceTrees):
+        # Lazy splits are a pure function of these, no need to look at any node.
+        payload = json.dumps({
+            "kind": "lazy", "n_trees": hst.n_trees, "height": hst.height,
+            "window_size": hst.window_size, "seed": hst.seed, "features": list(hst.features),
+            "limits": {k: list(v) for k, v in sorted(hst.limits.items())},
+            "default_limits": list(hst.default_limits),
+        }, sort_keys=True)
+        return hashlib.sha256(payload.encode()).hexdigest()[:16]
     first_tree_splits = []
     stack = [hst.trees[0]]
     while stack and len(first_tree_splits) < 64:
@@ -150,6 +177,10 @@ def capture(model: Any, meta: dict | None = None) -> HSTState:
 
 
 def _zero_masses(hst: HalfSpaceTrees) -> None:
+    if isinstance(hst, LazyHalfSpaceTrees):
+        root_region = {f: hst._limits_of(f) for f in hst.features}
+        hst.trees = [hst._make_node(t, 1, root_region, 0) for t in range(hst.n_trees)]
+        return
     for tree in hst.trees:
         for _, node in _iter_massive(tree):
             node.l_mass = 0
@@ -171,17 +202,15 @@ def apply(model: Any, state: HSTState) -> None:
         )
     scaler, hst = _split(model)
     _zero_masses(hst)
-    for tree, entries in zip(hst.trees, state.masses):
-        for idx, l_mass, r_mass in entries:
-            node = _node_at(tree, idx)
+    for t, entries in enumerate(state.masses):
+        for idx, l_mass, r_mass in sorted(entries):  # parents before children
+            node = _node_at(hst, t, idx)
             node.l_mass = l_mass
             node.r_mass = r_mass
     hst.counter = state.counter
     hst._first_window = state.first_window
     if scaler is not None and state.scaler_bytes is not None:
-        restored = pickle.loads(state.scaler_bytes)
-        scaler.min = restored.min
-        scaler.max = restored.max
+        scaler.__dict__.update(pickle.loads(state.scaler_bytes).__dict__)
 
 
 def materialize(model: Any, feature_names: list[str]) -> None:
@@ -192,7 +221,9 @@ def materialize(model: Any, feature_names: list[str]) -> None:
     resets. Used when a replica or an MLflow pyfunc loads a snapshot without any telemetry yet.
     """
     _, hst = _split(model)
-    if not hst.trees:
+    if isinstance(hst, LazyHalfSpaceTrees):
+        hst._ensure_trees({name: 0.0 for name in feature_names})  # roots only, no learning
+    elif not hst.trees:
         model.learn_one({name: 0.0 for name in feature_names})
     reset(model)
 
@@ -206,6 +237,8 @@ def feature_names(model: Any) -> list[str]:
     the structure through the random draws.
     """
     _, hst = _split(model)
+    if isinstance(hst, LazyHalfSpaceTrees):
+        return list(hst.features)
     return sorted(hst.limits)
 
 
@@ -225,6 +258,4 @@ def reset(model: Any, keep_scaler: bool = False) -> None:
     hst.counter = 0
     hst._first_window = True
     if scaler is not None and not keep_scaler:
-        fresh = type(scaler)()
-        scaler.min = fresh.min
-        scaler.max = fresh.max
+        scaler.__dict__.update(type(scaler)().__dict__)

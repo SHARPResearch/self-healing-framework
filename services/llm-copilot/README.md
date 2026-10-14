@@ -1,6 +1,6 @@
 # LLM-Driven Observability Copilot & Automated Post-Mortem Engine
 
-## 📌 Overview
+## Overview
 This component is part of the **Self-Healing AI-Driven Failure Prediction and Automated Recovery Framework for Microservices**. It acts as the semantic translation gateway, bridging the technical complexity of microservice telemetry with cross-functional organizational stakeholders. 
 
 It utilizes a **Multi-Agent System** to:
@@ -8,7 +8,7 @@ It utilizes a **Multi-Agent System** to:
 2. Automatically generate structured Root Cause Analysis (RCA) and Post-Mortem reports upon recovery (Reporting Agent).
 3. Enforce strict, real-time data privacy by scrubbing PII, internal IPs, and tokens before any data reaches the LLM (Security Agent).
 
-## 🎯 Progress Presentation 1 (PP1) Scope
+## Progress Presentation 1 (PP1) Scope
 To demonstrate 50% completion of this component, this module currently implements and exposes **2 core functions** with strict input/output contracts:
 
 ### Function 1: Systemic Masking Guardrail (Security Agent)
@@ -21,20 +21,20 @@ To demonstrate 50% completion of this component, this module currently implement
 - **Mandatory Input**: `recovery_event_payload` (JSON/Dict from Component 2 containing: `service_name`, `anomaly_score`, `root_cause`, `actions_taken`, `start_time`, `end_time`).
 - **Mandatory Output**: `markdown_report` (A structured, formatted Markdown string containing the Root Cause Analysis, timeline, and resolution steps).
 
-## 🏗️ Multi-Agent Architecture
+## Multi-Agent Architecture
 - **Orchestrator Agent**: Routes incoming requests (user queries vs. system events) to the appropriate specialized agent.
 - **Conversational Agent (RAG)**: Translates natural language to PromQL/SQL and retrieves context from the vector store.
 - **Reporting Agent**: Listens asynchronously for recovery triggers and orchestrates post-mortem generation.
 - **RCA Agent**: Analyzes dependency graphs and telemetry to pinpoint the root cause before report generation.
 - **Security Agent**: Applies Named Entity Recognition (NER) and Regex-based masking guardrails.
 
-## 🔗 Integration with Component 2 (Decision Engine)
+## Integration with Component 2 (Decision Engine)
 This component does not operate in isolation. It integrates with **Component 2 (Context-Aware & Dependency-Driven Rule-Based Decision Engine)** via:
 1. **Webhook/API Trigger**: Component 2 sends a `recovery_event_payload` to our `/api/webhooks/recovery` endpoint upon executing or simulating (Shadow Mode) a recovery action.
 2. **Data Fetching**: Our backend uses a dedicated client to fetch extended telemetry history from Component 2's database if needed.
 3. **Dashboard Sync**: Generated post-mortems and chat insights are pushed to the shared React frontend via REST/WebSocket.
 
-## 🛠️ Tech Stack (100% Free & Open Source)
+## Tech Stack (100% Free & Open Source)
 - **Backend**: Python, FastAPI
 - **Agent Orchestration**: LangChain / LlamaIndex
 - **Vector Database**: ChromaDB or FAISS (Local)
@@ -43,7 +43,7 @@ This component does not operate in isolation. It integrates with **Component 2 (
 - **Database**: PostgreSQL (for storing generated reports and chat history)
 - **Frontend**: React, Vite, Tailwind CSS (Shared monorepo)
 
-## 📂 Project Structure
+## Project Structure
 ```text
 services/llm-copilot/
 ┣ app/

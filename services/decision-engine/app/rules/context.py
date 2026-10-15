@@ -36,9 +36,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from app.core.graph_store import GraphStore
-from app.core.centrality import CentralityCalculator
-from app.core.blast_radius import BlastRadiusAnalyzer
+from app.core.graph_store import GraphStore # Get graph from GraphStore().graph()
+from app.core.centrality import CentralityCalculator #Get centrality from CentralityCalculator(graph).compute()
+from app.core.blast_radius import BlastRadiusAnalyzer #Get blast radius from BlastRadiusAnalyzer(graph).size(sid), .factor(sid), .reverse_reachable(sid)
 
 log = logging.getLogger(__name__)
 
@@ -62,6 +62,22 @@ def normalize_health(raw: str | None) -> str:
     if not raw:
         return "healthy"
     return _HEALTH_ALIASES.get(str(raw).lower(), "healthy")
+
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+#  Input — Before Flatten 
+#  {    "cpu": {        "usage_pct": 95    },    "memory": {        "pct": 82    },    "uptime_seconds": 3600}
+
+
+#          |
+
+#  _flatten_infra(infra)
+
+#          |
+        
+#  Output — After Flatten 
+#  {    "cpu.usage_pct": 95,    "memory.pct": 82,    "uptime_seconds": 3600}
+# ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
 # ─────────────────────────────────────────────────────────────────────

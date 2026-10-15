@@ -178,6 +178,7 @@ class AnomalyContext:
         Resolve a dotted path like 'anomaly.score' or 'infra.cpu.usage_pct'
         or 'graph.downstream' into an actual value.
 
+        -> Any
         Returns None if any segment is missing.
         """
         root, _, rest = path.partition(".")

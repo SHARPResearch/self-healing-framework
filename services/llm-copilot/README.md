@@ -43,6 +43,14 @@ This component does not operate in isolation. It integrates with **Component 2 (
 - **Database**: PostgreSQL (for storing generated reports and chat history)
 - **Frontend**: React, Vite, Tailwind CSS (Shared monorepo)
 
+## Windows
+- python -m venv venv
+- venv\Scripts\activate
+
+## Server Runnig
+- uvicorn app.main:app --reload --port 8004
+- http://localhost:8004/docs
+
 ## Project Structure
 ```text
 services/llm-copilot/

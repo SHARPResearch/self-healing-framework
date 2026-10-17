@@ -122,7 +122,8 @@ class PostMortemGenerator:
     ) -> str:
         """Generate the full Markdown post-mortem via LLM."""
         # Mask all inputs before sending to LLM
-        masked_event = masking_agent.process(event.model_dump())["sanitized_data"]
+        # masked_event = masking_agent.process(event.model_dump())["sanitized_data"]
+        masked_event = masking_agent.process(event.model_dump(mode='json'))["sanitized_data"]
         masked_rca = masking_agent.process(rca_result)["sanitized_data"]
         masked_telemetry = masking_agent.process(telemetry_context)["sanitized_data"]
 

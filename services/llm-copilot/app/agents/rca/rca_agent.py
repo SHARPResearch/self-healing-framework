@@ -37,7 +37,8 @@ class RCAAgent:
             Dict with RCA analysis
         """
         # Step 1: Mask sensitive data BEFORE sending to LLM
-        masked_event = masking_agent.process(event.model_dump())["sanitized_data"]
+        # masked_event = masking_agent.process(event.model_dump())["sanitized_data"]
+        masked_event = masking_agent.process(event.model_dump(mode='json'))["sanitized_data"]
         masked_telemetry = masking_agent.process(telemetry_context)["sanitized_data"]
 
         # Step 2: Build RCA prompt

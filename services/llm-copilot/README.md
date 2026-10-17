@@ -47,6 +47,10 @@ This component does not operate in isolation. It integrates with **Component 2 (
 - python -m venv venv
 - venv\Scripts\activate
 
+## Download Ollama  for generate postmortem report
+- Upgrade ollama 3.2
+- Open Command Prompt and type this (ollama pull llama3.2)
+
 ## Server Runnig
 - uvicorn app.main:app --reload --port 8004
 - http://localhost:8004/docs

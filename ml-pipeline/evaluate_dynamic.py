@@ -67,6 +67,8 @@ VARIANTS = {
     "cadal_online": replace(BASE, policy="cadal", learn_gate_percentile=75.0),
     "cadal_retrain_only": replace(BASE, policy="cadal", rebaseline=False),
     "cadal_retrain_free": replace(BASE, policy="cadal", attribution=AttributionConfig(retrain_requires_change=False)),
+    "cadal_hitl": replace(BASE, policy="cadal", operator_queries=True),
+    "cadal_hitl_noisy": replace(BASE, policy="cadal", operator_queries=True),
 }
 DETECTOR_VARIANTS = {
     "cadal_page_hinkley": replace(BASE, policy="cadal", detector="page_hinkley"),
@@ -74,11 +76,61 @@ DETECTOR_VARIANTS = {
 }
 ALL_VARIANTS = {**VARIANTS, **DETECTOR_VARIANTS}
 
+# Simulated operator for the CADAL-HITL variants: how often it answers wrongly.
+OPERATOR_ERROR = {"cadal_hitl": 0.0, "cadal_hitl_noisy": 0.2}
+OPERATOR_DELAY = 60          # events between a query and its answer (an hour at SMD's rate)
+OPERATOR_INCIDENT_SHARE = 0.1
+
+
+class SimulatedOperator:
+    """
+    Stands in for the on-call engineer answering CADAL's "new normal or incident?" queries.
+
+    Looks only at the ground-truth labels of the quarantine tail the query was raised on (the
+    events the engineer would be looking at) and answers "incident" if at least 10% of them are
+    labelled anomalous, else "new_normal"; flips its answer with probability `error_rate`. Labels
+    are used for nothing else, and every query is counted, so the evaluation measures detection
+    gained per question asked.
+    """
+
+    def __init__(self, labels: list[int], error_rate: float = 0.0, delay: int = OPERATOR_DELAY,
+                 seed: int = 0):
+        import random as _random
+        self.labels, self.error_rate, self.delay = labels, error_rate, delay
+        self.rng = _random.Random(seed)
+        self.scheduled: dict[str, int] = {}
+        self.asked = self.answered = self.said_new_normal = 0
+
+    def step(self, mgr) -> None:
+        for q in mgr.open_queries:
+            if q["query_id"] not in self.scheduled:
+                self.scheduled[q["query_id"]] = mgr.step + self.delay
+                self.asked += 1
+        for query_id, due in list(self.scheduled.items()):
+            q = mgr.queries.get(query_id)
+            if q is None or q["status"] != "open":
+                self.scheduled.pop(query_id)
+                continue
+            if mgr.step >= due and mgr._pending is None:
+                n_tail = q["evidence"].get("n_tail") or 100
+                end = q["created_step"]                      # steps are 1-based row indices
+                tail = self.labels[max(0, end - n_tail):end]
+                incident = (sum(tail) / max(1, len(tail))) >= OPERATOR_INCIDENT_SHARE
+                if self.rng.random() < self.error_rate:
+                    incident = not incident
+                answer = "incident" if incident else "new_normal"
+                self.said_new_normal += answer == "new_normal"
+                mgr.answer_query(query_id, answer, operator="simulated")
+                self.answered += 1
+                self.scheduled.pop(query_id)
+
+
 RUN_FIELDS = [
     "entity", "scenario", "variant", "precision", "recall", "f1", "mcc", "event_recall", "fa_rate",
     "post_drift_precision", "post_drift_recall", "post_drift_f1", "post_drift_mcc", "post_drift_fa_rate",
     "recovery_steps", "n_promote", "n_rollback", "n_hold", "n_resume", "n_versions",
     "latency_mean_ms", "latency_p50_ms", "latency_p99_ms", "transition_max_ms", "duration_s",
+    "n_queries", "n_answered_new_normal",
 ]
 
 
@@ -132,16 +184,21 @@ def warm_up_rows(entity_id: str, train: list[dict], hst_cfg=HST_CFG, base: Lifec
 
 
 def run_one(entity_id, model, warm_state, calib, recent, null, rows, labels, injections, cfg,
-            hst_cfg=HST_CFG, trace: dict | None = None, ref: dict | None = None):
+            hst_cfg=HST_CFG, trace: dict | None = None, ref: dict | None = None,
+            operator_error: float | None = None):
     events = change_events_for(injections, entity_id)
     mgr = DynamicModelManager(entity_id, cfg, hst_cfg, model=model,
                               change_source=ReplayChangeEventSource(events))
     mgr.start_from(warm_state, calib["prequential" if cfg.learns_while_serving else "frozen"], recent,
                    null if cfg.policy == "cadal" else None, ref_stats=ref)
     alarms, latency, scores, versions, thresholds = [], [], [], [], []
+    operator = (SimulatedOperator(labels, operator_error)
+                if cfg.operator_queries and operator_error is not None else None)
     t0 = time.perf_counter()
     for x in rows:
         res = mgr.process(x)
+        if operator is not None:
+            operator.step(mgr)
         alarms.append(res.alarm)
         latency.append(res.latency_ms)
         if trace is not None:
@@ -161,6 +218,8 @@ def run_one(entity_id, model, warm_state, calib, recent, null, rows, labels, inj
         "n_promote": actions.count("promote"), "n_rollback": actions.count("rollback"),
         "n_hold": actions.count("hold"), "n_resume": actions.count("resume"),
         "n_versions": len(mgr.registry.versions),
+        "n_queries": operator.asked if operator else 0,
+        "n_answered_new_normal": operator.said_new_normal if operator else 0,
         "latency_mean_ms": round(float(lat.mean()), 4),
         "latency_p50_ms": round(float(np.percentile(lat, 50)), 4),
         "latency_p99_ms": round(float(np.percentile(lat, 99)), 4),
@@ -217,7 +276,8 @@ def main() -> None:
                 trace = {} if args.trace else None
                 summary, curve, decisions = run_one(
                     entity_id, model, warm_state, calib, recent, null, rows, labels, injections,
-                    replace(ALL_VARIANTS[variant], threshold_method=args.threshold), hst_cfg, trace, ref)
+                    replace(ALL_VARIANTS[variant], threshold_method=args.threshold), hst_cfg, trace, ref,
+                    OPERATOR_ERROR.get(variant))
                 if trace:
                     (out / "traces").mkdir(exist_ok=True)
                     np.savez_compressed(out / "traces" / f"{entity_id}_{scenario}_{variant}.npz", **trace)

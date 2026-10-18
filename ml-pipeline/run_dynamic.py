@@ -16,7 +16,7 @@ import argparse
 import logging
 import sys
 import time
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import mlflow
@@ -26,7 +26,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "datasets" / "smd"))
 from preprocess import preprocess_entity  # noqa: E402
 
 from src.change_events import ReplayChangeEventSource  # noqa: E402
-from src.config import HST_CFG, PIPELINE_CFG  # noqa: E402
+from src.config import PIPELINE_CFG  # noqa: E402
+from src.hst_model import DETECTOR_PRESETS, detector_config  # noqa: E402
 from src.data_pipeline import SCENARIOS, apply_injections, change_events_for, make_scenario  # noqa: E402
 from src.dynamic_eval import stream_metrics  # noqa: E402
 from src.evaluate import load_labels  # noqa: E402
@@ -45,10 +46,15 @@ def main() -> None:
     parser.add_argument("--scenario", default="deploy", choices=SCENARIOS)
     parser.add_argument("--policy", default="cadal", choices=POLICIES)
     parser.add_argument("--no-change-events", action="store_true", help="ablate the change prior")
+    parser.add_argument("--detector", default="pca_s5", choices=list(DETECTOR_PRESETS),
+                        help="Component 1 detector (default: the final configuration, RESULTS.md)")
+    parser.add_argument("--threshold", default="pot", choices=["percentile", "pot"])
     parser.add_argument("--audit", default=None, help="JSONL audit path (default outputs/component2/audit_<entity>.jsonl)")
     args = parser.parse_args()
 
-    cfg = replace(LifecycleConfig(), policy=args.policy, use_change_events=not args.no_change_events)
+    cfg = replace(LifecycleConfig(), policy=args.policy, use_change_events=not args.no_change_events,
+                  threshold_method=args.threshold)
+    hst_cfg = detector_config(args.detector)
     entity = args.entity
     audit = Path(args.audit or f"outputs/component2/audit_{entity}.jsonl")
 
@@ -64,8 +70,9 @@ def main() -> None:
         mlflow.set_tags({"component": "2", "policy": args.policy, "scenario": args.scenario,
                          "entity_id": entity, "drift_detector": cfg.detector})
         mlflow.log_params({
-            "n_trees": HST_CFG.n_trees, "height": HST_CFG.height, "window_size": HST_CFG.window_size,
-            "seed": HST_CFG.seed, "calib_percentile": cfg.calib_percentile,
+            "detector": args.detector, "threshold_method": cfg.threshold_method,
+            "n_trees": hst_cfg.n_trees, "height": hst_cfg.height, "window_size": hst_cfg.window_size,
+            "seed": hst_cfg.seed, "calib_percentile": cfg.calib_percentile,
             "learn_gate_percentile": cfg.learn_gate_percentile, "adwin_delta": cfg.adwin_delta,
             "quarantine_with_change": cfg.quarantine_with_change,
             "quarantine_silent": cfg.quarantine_silent, "scheduled_every": cfg.scheduled_every,
@@ -76,13 +83,12 @@ def main() -> None:
 
         # The tree structure exists only after the first learn_one, so the MLflow registry gets
         # the feature names once warm-up has built it.
-        mgr = DynamicModelManager(entity, cfg, HST_CFG,
+        mgr = DynamicModelManager(entity, cfg, hst_cfg,
                                   change_source=ReplayChangeEventSource(change_events_for(injections, entity)))
         mgr.model.learn_one(train[0])
         mgr.registry = MLflowRegistry(
             entity, PIPELINE_CFG.mlflow_tracking_uri, audit_path=audit,
-            hst_params={"n_trees": HST_CFG.n_trees, "height": HST_CFG.height,
-                        "window_size": HST_CFG.window_size, "seed": HST_CFG.seed},
+            hst_params=asdict(hst_cfg),
             feature_names=feature_names(mgr.model),
         )
         warm = mgr.warm_up(train[1:])

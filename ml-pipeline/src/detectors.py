@@ -92,6 +92,12 @@ class PCADetector:
         """
         return e / (1.0 + e)
 
+    @staticmethod
+    def unsquash(s: float) -> float:
+        """Inverse of squash, so tail fits (POT thresholds) see the real error scale."""
+        s = min(s, 1.0 - 1e-12)
+        return s / (1.0 - s)
+
     def score_one(self, x) -> float:
         return self.squash(self.spe(x))
 
@@ -143,6 +149,12 @@ class SmoothedDetector:
         s = float(raw(x) if raw else self.base.score_one(x))
         self.level = s if self.level is None else self.alpha * s + (1 - self.alpha) * self.level
         return self.base.squash(self.level) if raw else self.level
+
+    def squash(self, v: float) -> float:
+        return self.base.squash(v) if hasattr(self.base, "squash") else v
+
+    def unsquash(self, s: float) -> float:
+        return self.base.unsquash(s) if hasattr(self.base, "unsquash") else s
 
     def prepare_calibration(self, fit_rows: list[dict], calib_rows: list[dict]) -> None:
         if hasattr(self.base, "prepare_calibration"):

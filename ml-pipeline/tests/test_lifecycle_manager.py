@@ -435,3 +435,20 @@ def test_cadal_runs_end_to_end_on_the_smoothed_pca_detector():
     assert promote, mgr.decisions
     assert sum(r.alarm for r in results[-300:]) / 300 < 0.2
     assert mgr.registry.production().state.extra["inner"]["axes"]
+
+
+def test_pot_threshold_method_sets_r0_and_fits_the_raw_error_tail():
+    from dataclasses import replace as dc_replace
+    from src.hst_model import detector_config
+    from src.lifecycle_manager import calibrated_threshold
+
+    cfg = _cfg(threshold_method="pot", pot_q=0.01)
+    assert cfg.target_rate == 0.01
+    mgr = DynamicModelManager("svc", cfg, detector_config("pca_s5"))
+    rng = random.Random(0)
+    mgr.warm_up([_normal(rng) for _ in range(1200)])
+    assert 0.0 < mgr.threshold < 1.0
+    calib = [mgr.model.score_one(_normal(rng)) for _ in range(500)]
+    pct = calibrated_threshold(mgr.model, calib, dc_replace(cfg, threshold_method="percentile"))
+    pot = calibrated_threshold(mgr.model, calib, cfg)
+    assert pot != pct and 0.0 < pot < 1.0

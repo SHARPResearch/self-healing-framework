@@ -49,6 +49,7 @@ from src.drift_attribution import (
     Action, Attribution, AttributionConfig, QuarantineEvidence, Verdict, attribute,
 )
 from src.drift_detectors import ScoreDriftMonitor
+from src.evaluate import pot_threshold
 from src.hst_model import build_model, classify_severity, freeze_scaler
 from src.hst_state import HSTState, apply, capture, reset
 from src.mlflow_lifecycle import InMemoryRegistry
@@ -64,6 +65,11 @@ class LifecycleConfig:
     policy: str = "cadal"
     use_change_events: bool = True          # False = cadal ablation without the change prior
     calib_percentile: float = 97.0          # per-version threshold, see ml-pipeline/RESULTS.md
+    # "percentile": threshold = calib_percentile of held-out scores. "pot": Peaks-Over-Threshold
+    # extreme value fit at risk pot_q (src/evaluate.pot_threshold), selected on the SMD dev
+    # entities for the PCA detector, where the percentile cut-off over-alarmed (RESULTS.md).
+    threshold_method: str = "percentile"
+    pot_q: float = 0.01
     # cadal learns only events scoring below this percentile of calibration scores. 0 (default)
     # disables continuous learning: the served model changes only through versioned, attributed,
     # validated transitions. On SMD every continuously learning variant lost recall, because
@@ -136,6 +142,9 @@ class LifecycleConfig:
 
     @property
     def target_rate(self) -> float:
+        """Alarm rate the threshold is designed to produce on normal data (r0 in attribution)."""
+        if self.threshold_method == "pot":
+            return self.pot_q
         return 1.0 - self.calib_percentile / 100.0
 
 
@@ -183,6 +192,20 @@ def rebaselined(x: dict, shifts: dict[str, float]) -> dict:
     if not shifts:
         return x
     return {f: (v - shifts[f] if f in shifts else v) for f, v in x.items()}
+
+
+def calibrated_threshold(model, calib_scores: list[float], cfg: "LifecycleConfig") -> float:
+    """
+    Alarm threshold for one model version from its held-out calibration scores. POT fits the tail
+    on the detector's raw scale when it has one (PCA's unbounded error), then maps back.
+    """
+    if cfg.threshold_method == "pot":
+        unsquash = getattr(model, "unsquash", None)
+        squash = getattr(model, "squash", None)
+        raw = [unsquash(s) for s in calib_scores] if unsquash else list(calib_scores)
+        t = pot_threshold(raw, cfg.pot_q)
+        return float(squash(t)) if squash else float(t)
+    return float(np.percentile(calib_scores, cfg.calib_percentile))
 
 
 def prepare_calibration(model, fit_rows: list[dict], calib_rows: list[dict]) -> None:
@@ -412,7 +435,7 @@ class DynamicModelManager:
 
     def _calibrate(self, calib_scores: list[float]) -> tuple[float, float]:
         """(alarm threshold, learning gate) from held-out scores of one model version."""
-        threshold = float(np.percentile(calib_scores, self.cfg.calib_percentile))
+        threshold = calibrated_threshold(self.model, calib_scores, self.cfg)
         gate_pct = self.cfg.learn_gate_percentile
         gate = float(np.percentile(calib_scores, gate_pct)) if gate_pct > 0 else -1.0
         return threshold, min(gate, threshold)

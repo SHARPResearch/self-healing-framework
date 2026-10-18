@@ -131,6 +131,11 @@ def attribute(ev: QuarantineEvidence, cfg: AttributionConfig = AttributionConfig
     # allow for binomial sampling noise so a learnable regime is not rejected on noise alone.
     slack = cfg.z * math.sqrt(r0 * (1 - r0) / ev.n_tail) if ev.n_tail else 0.0
     learnable_line = max(cfg.learnable_factor * r0 + slack, ev.learnable_floor or 0.0)
+    # Re-baselining keeps the champion and its calibrated threshold, so it is held to the target
+    # rate plus sampling slack only. The per-entity floor measures how noisy a *freshly retrained*
+    # challenger is on normal windows and does not apply to it: with a PCA detector that floor
+    # reached ~0.6 and let re-baselining through at a 55% tail alarm rate (machine-1-6).
+    rebaseline_line = cfg.learnable_factor * r0 + slack
     moving_line = max(cfg.moving_feature_rate, ev.moving_floor or 0.0)
 
     evidence = {
@@ -152,6 +157,7 @@ def attribute(ev: QuarantineEvidence, cfg: AttributionConfig = AttributionConfig
         "moving_line": round(moving_line, 4),
         "stale_line": round(stale_line, 4),
         "learnable_line": round(learnable_line, 4),
+        "rebaseline_line": round(rebaseline_line, 4),
     }
 
     def done(verdict: Verdict, reason: str) -> Attribution:
@@ -184,12 +190,12 @@ def attribute(ev: QuarantineEvidence, cfg: AttributionConfig = AttributionConfig
 
     why = f"after change {ev.change_event_id}" if has_change else "with no explaining change event"
     stale = (f"champion stale (tail alarm rate {ev.champion_tail_alarm_rate:.4f} >= {stale_line:.4f})")
-    if ev.rebaseline_tail_alarm_rate is not None and ev.rebaseline_tail_alarm_rate <= learnable_line:
+    if ev.rebaseline_tail_alarm_rate is not None and ev.rebaseline_tail_alarm_rate <= rebaseline_line:
         evidence["repair"] = "rebaseline"
         return done(
             Verdict.CONCEPT_DRIFT,
             f"{stale} and re-baselining the shifted metrics restores it (tail rate "
-            f"{ev.rebaseline_tail_alarm_rate:.4f} <= {learnable_line:.4f}) {why}",
+            f"{ev.rebaseline_tail_alarm_rate:.4f} <= {rebaseline_line:.4f}) {why}",
         )
     if ev.challenger_tail_alarm_rate <= learnable_line and cfg.retrain_requires_change and not has_change:
         return done(

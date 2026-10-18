@@ -18,6 +18,7 @@ from river.anomaly import HalfSpaceTrees
 from river.drift import ADWIN
 
 from src.config import ADWIN_CFG, HST_CFG, ADWINConfig, HSTConfig
+from src.detectors import PCADetector, SmoothedDetector
 from src.ensemble import RankEnsembleDetector
 from src.lazy_hst import LazyHalfSpaceTrees
 
@@ -67,12 +68,14 @@ def _make_hst(cfg: HSTConfig):
 
 
 DETECTOR_PRESETS = {
-    # name: (lazy, range_margin, ensemble) on top of the tuned n_trees / height / window / seed
-    "river": (False, 0.0, ""),           # Component 1 as shipped
-    "lazy": (True, 0.0, ""),             # same algorithm, built on demand
-    "lazy_range": (True, 0.25, ""),      # + wider limits, frozen scaler
-    "lazy_range_ens": (True, 0.25, "mean"),
-    "lazy_range_ensmax": (True, 0.25, "max"),
+    # name: overrides on top of the tuned HST n_trees / height / window / seed
+    "river": dict(lazy=False, range_margin=0.0, ensemble=""),      # Component 1 as shipped
+    "lazy": dict(lazy=True, range_margin=0.0, ensemble=""),        # same algorithm, built on demand
+    "lazy_range": dict(lazy=True, range_margin=0.25, ensemble=""), # + wider limits, frozen scaler
+    "lazy_range_ens": dict(lazy=True, range_margin=0.25, ensemble="mean"),
+    "lazy_range_ensmax": dict(lazy=True, range_margin=0.25, ensemble="max"),
+    "pca": dict(detector="pca"),                                   # Component 1 v3
+    "pca_s5": dict(detector="pca", smooth_span=5),                 # selected on SMD dev entities
 }
 
 
@@ -80,8 +83,8 @@ def detector_config(name: str, base: Optional[HSTConfig] = None) -> HSTConfig:
     """HSTConfig for a named detector preset (see compare_detectors.py for how they compare)."""
     from dataclasses import replace
 
-    lazy, margin, ensemble = DETECTOR_PRESETS[name]
-    return replace(base or HST_CFG, lazy=lazy, range_margin=margin, ensemble=ensemble)
+    defaults = dict(lazy=False, range_margin=0.0, ensemble="", detector="hst", smooth_span=0)
+    return replace(base or HST_CFG, **{**defaults, **DETECTOR_PRESETS[name]})
 
 
 def build_pipeline(cfg: Optional[HSTConfig] = None) -> compose.Pipeline:
@@ -100,9 +103,14 @@ def build_model(cfg: Optional[HSTConfig] = None, with_scaler: bool = True) -> Un
     """
     if cfg is None:
         cfg = HST_CFG
-    model = build_pipeline(cfg) if with_scaler else _make_hst(cfg)
-    if cfg.ensemble:
-        return RankEnsembleDetector(model, combine=cfg.ensemble)
+    if cfg.detector == "pca":
+        model = PCADetector()
+    else:
+        model = build_pipeline(cfg) if with_scaler else _make_hst(cfg)
+        if cfg.ensemble:
+            model = RankEnsembleDetector(model, combine=cfg.ensemble)
+    if cfg.smooth_span:
+        model = SmoothedDetector(model, span=cfg.smooth_span)
     return model
 
 

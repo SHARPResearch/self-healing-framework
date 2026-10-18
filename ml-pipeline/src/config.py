@@ -77,6 +77,10 @@ class HSTConfig:
     range_margin: float = float(os.getenv("HST_RANGE_MARGIN", "0.0"))
     # "mean" or "max" wraps the model in src/ensemble.RankEnsembleDetector; "" = HST alone.
     ensemble: str = os.getenv("HST_ENSEMBLE", "")
+    # Component 1 v3: "hst" (Half-Space Trees, configured above) or "pca" (src/detectors.py, a
+    # reconstruction-error detector), and an EWMA span for score smoothing (0 = none).
+    detector: str = os.getenv("DETECTOR", "hst")
+    smooth_span: int = int(os.getenv("SMOOTH_SPAN", "0"))
 
 
 @dataclass(frozen=True)

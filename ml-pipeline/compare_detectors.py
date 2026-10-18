@@ -13,6 +13,8 @@ Candidates:
   lazy_range_ens  lazy_range rank-averaged (mean of percentiles) with a robust per-feature
                   deviation scorer (src/ensemble.py)
   lazy_range_ensmax  the same, combined by max of percentiles
+  pca             PCA reconstruction error (src/detectors.py), fitted once at warm-up
+  pca_s5          pca with an EWMA (span 5) of the score
 
 Selection rule, fixed before looking at results: choose on the dev entities (machine-1-*) by
 mean PR-AUC, the threshold-free ranking quality; break ties (< 0.005) in favour of the simpler
@@ -39,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "datasets" / "smd"))
 from preprocess import discover_entities, preprocess_entity  # noqa: E402
 
 from src.evaluate import evaluate, load_labels, oracle_best_f1, percentile_threshold, pr_auc  # noqa: E402
+from src.lifecycle_manager import prepare_calibration  # noqa: E402
 from src.hst_model import DETECTOR_PRESETS, build_model, detector_config, freeze_scaler  # noqa: E402
 
 logger = logging.getLogger("compare_detectors")
@@ -50,7 +53,6 @@ FIELDS = ["entity", "split", "candidate", "pr_auc", "f1", "precision", "recall",
 
 def run_candidate(name: str, train: list[dict], test: list[dict], labels: list[int]) -> dict:
     cfg = CANDIDATES[name]
-    combine = cfg.ensemble
     model = build_model(cfg)
     clamp = lambda v: float(min(max(v, 0.0), 1.0))  # noqa: E731
     split = int(len(train) * 0.8)
@@ -58,8 +60,7 @@ def run_candidate(name: str, train: list[dict], test: list[dict], labels: list[i
     t0 = time.perf_counter()
     for r in train[:split]:
         model.learn_one(r)
-    if combine:
-        model.prepare_calibration(train[:split], train[split:])
+    prepare_calibration(model, train[:split], train[split:])
     calib = [clamp(model.score_one(r)) for r in train[split:]]
     for r in train[split:]:
         model.learn_one(r)
@@ -75,7 +76,8 @@ def run_candidate(name: str, train: list[dict], test: list[dict], labels: list[i
     m = evaluate(scores, labels, threshold=threshold)
     pred = [int(s >= threshold) for s in scores]
     normal = [p for p, y in zip(pred, labels) if not y]
-    hst = list(getattr(model, "hst_model", model).steps.values())[-1]
+    inner = getattr(model, "hst_model", model)
+    hst = list(inner.steps.values())[-1] if inner is not None else None
     return {
         "candidate": name,
         "pr_auc": pr_auc(scores, labels),
@@ -84,7 +86,10 @@ def run_candidate(name: str, train: list[dict], test: list[dict], labels: list[i
         "informedness": round(m["recall"] - sum(normal) / max(1, len(normal)), 4),
         "oracle_f1": oracle_best_f1(scores, labels)["f1"],
         "warm_up_s": round(warm_s, 1), "score_eps": round(score_eps),
-        "n_nodes": hst.n_nodes() if hasattr(hst, "n_nodes") else cfg.n_trees * (2 ** (cfg.height + 1) - 1),
+        # Size of the learned state: tree nodes for HST, numbers in the snapshot for PCA.
+        "n_nodes": (hst.n_nodes() if hasattr(hst, "n_nodes")
+                    else cfg.n_trees * (2 ** (cfg.height + 1) - 1) if hst is not None
+                    else len(str(model.extra_state()))),
     }
 
 

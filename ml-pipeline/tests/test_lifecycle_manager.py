@@ -421,3 +421,17 @@ def test_async_decisions_keep_serving_while_the_challenger_is_evaluated():
     assert mgr.decisions and mgr.decisions[0]["action"] == "promote"
     # The serving loop only paid for the swap, not for evaluating the challenger.
     assert max(mgr.transition_ms) < max(mgr.decision_ms)
+
+
+def test_cadal_runs_end_to_end_on_the_smoothed_pca_detector():
+    from src.hst_model import detector_config
+    mgr = DynamicModelManager("svc", _cfg(), detector_config("pca_s5"),
+                              change_source=ReplayChangeEventSource([ChangeEvent("svc", "deployment", step=301)]))
+    rng = random.Random(0)
+    mgr.warm_up([_normal(rng) for _ in range(600)])
+    assert mgr.model.base.axes is not None
+    results = _run(mgr, _shifted_stream())
+    promote = [d for d in mgr.decisions if d["action"] == "promote"]
+    assert promote, mgr.decisions
+    assert sum(r.alarm for r in results[-300:]) / 300 < 0.2
+    assert mgr.registry.production().state.extra["inner"]["axes"]

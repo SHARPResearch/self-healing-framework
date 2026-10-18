@@ -64,8 +64,9 @@ class Bus:
             data = json.dumps(message, default=str)
             try:
                 await self.redis.publish(BROADCAST_CHANNEL, data)
-                await self.redis.xadd(ANOMALY_STREAM, {"type": message["type"], "payload": data},
-                                      maxlen=STREAM_MAXLEN, approximate=True)
+                if message["type"] != "log":      # log lines are for the UI, not the Decision Engine
+                    await self.redis.xadd(ANOMALY_STREAM, {"type": message["type"], "payload": data},
+                                          maxlen=STREAM_MAXLEN, approximate=True)
                 return
             except Exception as exc:  # noqa: BLE001
                 logger.warning("bus: Redis publish failed (%s), switching to in-process fan-out", exc)

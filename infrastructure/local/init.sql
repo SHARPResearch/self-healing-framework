@@ -80,3 +80,21 @@ CREATE TABLE IF NOT EXISTS change_events (
     kind        TEXT        NOT NULL,
     detail      JSONB
 );
+
+-- Platform log stream for the Logs page: container output (TimescaleDB, Redis), the backend's own
+-- logging, and one line per notable lifecycle event of each monitored service. `id` is a content
+-- hash, so replaying `docker logs --since` after a restart cannot create duplicates.
+CREATE TABLE IF NOT EXISTS service_logs (
+    time        TIMESTAMPTZ NOT NULL,
+    id          TEXT        NOT NULL,
+    service     TEXT        NOT NULL,
+    service_id  TEXT,
+    source      TEXT        NOT NULL,
+    level       TEXT        NOT NULL,
+    message     TEXT        NOT NULL,
+    attrs       JSONB,
+    PRIMARY KEY (id, time)
+);
+SELECT create_hypertable('service_logs', 'time', if_not_exists => TRUE);
+CREATE INDEX IF NOT EXISTS service_logs_service_time ON service_logs (service, time DESC);
+CREATE INDEX IF NOT EXISTS service_logs_level_time ON service_logs (level, time DESC);

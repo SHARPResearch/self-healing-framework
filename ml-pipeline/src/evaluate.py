@@ -64,6 +64,31 @@ def percentile_threshold(scores: list[float], percentile: float) -> float:
     return float(np.percentile(scores, percentile))
 
 
+def pot_threshold(scores: list[float], q: float = 0.01, level: float = 0.98) -> float:
+    """
+    Peaks-Over-Threshold threshold (Siffer et al., "Anomaly Detection in Streams with Extreme Value
+    Theory", KDD 2017; the thresholding OmniAnomaly uses on SMD).
+
+    Fits a generalised Pareto distribution to the exceedances of `scores` over their `level`
+    quantile and returns the score whose exceedance probability under that fit is `q`. Unlike a
+    raw percentile it extrapolates from the shape of the tail, so a short or heavy-tailed
+    calibration sample does not pin the threshold to whatever its largest few values were. Falls
+    back to the (1 - q) percentile when there are fewer than 10 exceedances to fit.
+    """
+    from scipy.stats import genpareto
+
+    arr = np.asarray(scores, dtype=float)
+    t = float(np.quantile(arr, level))
+    exceed = arr[arr > t] - t
+    if len(exceed) < 10:
+        return float(np.quantile(arr, 1 - q))
+    shape, _, scale = genpareto.fit(exceed, floc=0)
+    ratio = q * len(arr) / len(exceed)
+    if abs(shape) < 1e-6:
+        return t - scale * float(np.log(ratio))
+    return t + scale / shape * (ratio ** (-shape) - 1)
+
+
 def oracle_best_f1(scores: list[float], labels: list[int]) -> OracleResult:
     """
     Best F1 achievable on this data, diagnostic upper bound only, NOT deployable.

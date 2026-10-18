@@ -39,6 +39,7 @@ from app.persistence.neo4j import neo4j_store
 from app.persistence.migrate import run_migrations
 from app.ingestion.telemetry_puller import start_telemetry_puller, pull_once
 from app.ingestion.anomaly_sink import start_anomaly_sink, resume_pending_snapshots
+from app.decision.job import start_decision_pipeline
 from app.api.routes import (
     graph, health, mock_data, anomaly_evidence, telemetry_history,
     rules, decisions,                            
@@ -104,9 +105,11 @@ async def lifespan(app: FastAPI):
     scheduler.start()
     start_telemetry_puller(scheduler)
     start_anomaly_sink(scheduler)
+    start_decision_pipeline(scheduler)
+    
     await resume_pending_snapshots(scheduler)   
     await pull_once()
-
+    
     log.info("✅ Decision Engine startup complete")
 
     yield

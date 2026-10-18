@@ -29,23 +29,32 @@ logs a warning, so the UI keeps working.
 
 ## What runs
 
-Six demo services, each replaying one SMD machine's test split after warming up on its train split:
+Six demo services. Each warms up on its SMD machine's train split, then replays a 6000-row window of
+that machine's test split, forward and then backward, so the replay can run indefinitely:
 
-| Service | SMD entity |
-|---|---|
-| service-a-auth | machine-1-6 |
-| service-b-orders | machine-1-3 |
-| service-c-inventory | machine-2-2 |
-| service-d-shipping | machine-2-5 |
-| service-e-payments | machine-3-3 |
-| service-f-search | machine-2-9 |
+| Service | SMD entity, window start | Best scenario to show |
+|---|---|---|
+| service-a-auth | machine-2-9, row 0 | deploy → promote |
+| service-b-orders | machine-3-10, row 15250 | deploy → promote; a silent change is repaired by re-baselining |
+| service-c-inventory | machine-1-2, row 9250 | silent change → ask the operator |
+| service-d-shipping | machine-2-8, row 0 | silent change → ask; incident → resume |
+| service-e-payments | machine-2-2, row 0 | incident → resume |
+| service-f-search | machine-1-5, row 0 | incident → resume |
 
-These entities were chosen by rehearsing all 28 SMD machines offline. On each of them all three
-demo injections lead to the intended lifecycle outcome, and none raise alarms before an injection.
+How the windows were chosen:
+- Each one is the label-free stretch of its machine's test split where the warm-up model alarms at
+  about its POT target (0.1% to 3%). A service therefore stays calm until the presenter injects
+  something.
+- The mapping comes from rehearsing every candidate offline. Each scenario was run to its decision,
+  and the model's alarm rate was then checked over the next two days of data. After every promotion
+  in the table it stayed between 0% and 1.5%.
+- Other scenarios still run on every service and show real behaviour. For example, a deploy on
+  Payments is held, because some of its metrics keep trending ("still moving") and CADAL won't learn
+  a regime that hasn't settled.
 
-**Demo pacing:** one lifecycle "day" is `DEMO_SAMPLES_PER_DAY=960` events, and the replay runs at
-`REPLAY_EVENTS_PER_SEC=40`, so a quarantine closes in about 24 s. This is presentation pacing, not
-the evaluated configuration (see `ml-pipeline/RESULTS_COMPONENT2.md`).
+**Pacing:** `DEMO_SAMPLES_PER_DAY=1440` is SMD's own one sample a minute, so the lifecycle runs with
+the evaluated lengths. The replay runs at 60 events/s, 60x real time, so a one-day quarantine closes
+in about 24 s on stage.
 
 Demo injections (`POST /api/demo/{service}/{kind}`):
 
@@ -53,7 +62,7 @@ Demo injections (`POST /api/demo/{service}/{kind}`):
 |---|---|---|
 | `deploy` | Persistent level shift on some metrics, plus a deployment change event | `concept_drift` → **promote** (learned) |
 | `silent_change` | Persistent level and spread change with no change event | `ambiguous` → **ask** the operator |
-| `incident` | 20 s spike on ~1/8 of the metrics | `incident` → **hold**, or `no_change` → **resume**; never learned |
+| `incident` | Spike on ~1/8 of the metrics for a fifth of a day (~5 s) | `no_change` → **resume** or `incident` → **hold**; never learned |
 
 ## Configuration (env or `.env`)
 
@@ -62,9 +71,10 @@ Demo injections (`POST /api/demo/{service}/{kind}`):
 | `DATABASE_URL` | `postgresql://postgres:selfheal@localhost:5433/selfheal` |
 | `REDIS_URL` | `redis://localhost:6380` |
 | `DETECTOR` / `THRESHOLD_METHOD` | `pca_s5` / `pot` |
-| `REPLAY_EVENTS_PER_SEC` | `40` |
-| `DEMO_SAMPLES_PER_DAY` | `960` |
-| `QUERY_TTL_EVENTS` | `12000` (~5 min to answer a query on stage) |
+| `REPLAY_EVENTS_PER_SEC` | `60` |
+| `DEMO_SAMPLES_PER_DAY` | `1440` |
+| `REPLAY_WINDOW_ROWS` | `6000` (`0` replays the whole test split, real anomalies included) |
+| `QUERY_TTL_EVENTS` | `18000` (~5 min to answer a query on stage) |
 | `START_REPLAY` / `USE_BACKING_SERVICES` | `true` / `true` (tests set both false) |
 
 ## REST API (`/api`)
@@ -129,5 +139,5 @@ docker exec selfheal-demo-redis-1 redis-cli XREVRANGE anomaly_events + - COUNT 3
 ## Tests
 
 ```powershell
-uv run pytest      # in-memory fallbacks, one service on machine-1-6, no Docker needed
+uv run pytest      # in-memory fallbacks, two services on the demo's calm windows, no Docker needed
 ```

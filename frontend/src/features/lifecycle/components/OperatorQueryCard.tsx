@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { HelpCircle, Loader2, ShieldAlert, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { api } from "@/lib/api";
+import { api } from "@/lib/mlBackend";
 import { refreshLive } from "@/hooks/useLiveConnection";
 import { useLiveStore } from "@/shared/store/liveStore";
 import type { OperatorQuery, QueryAnswer } from "../types";

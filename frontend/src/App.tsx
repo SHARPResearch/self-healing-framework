@@ -13,6 +13,7 @@ import { SettingsPage } from "@/features/settings/SettingsPage";
 import { NotFoundPage } from "@/shared/components/NotFoundPage";
 import { ProfilePage } from "@/features/profile/ProfilePage";
 import { RouteFallback } from "@/shared/components/RouteFallback";
+import { AnomalyListPage } from "@/features/anomalies/AnomalyListPage";
 
 /**
  * Lazy loaded so their weight stays out of the shared bundle: marketing pulls
@@ -21,7 +22,9 @@ import { RouteFallback } from "@/shared/components/RouteFallback";
  * convention every page in features/ follows.
  */
 const MarketingPage = lazy(() =>
-  import("@/features/marketing/MarketingPage").then((m) => ({ default: m.MarketingPage })),
+  import("@/features/marketing/MarketingPage").then((m) => ({
+    default: m.MarketingPage,
+  })),
 );
 const DependencyGraphPage = lazy(() =>
   import("@/features/dependency-graph/DependencyGraphPage").then((m) => ({
@@ -29,7 +32,9 @@ const DependencyGraphPage = lazy(() =>
   })),
 );
 const CopilotPage = lazy(() =>
-  import("@/features/copilot/CopilotPage").then((m) => ({ default: m.CopilotPage })),
+  import("@/features/copilot/CopilotPage").then((m) => ({
+    default: m.CopilotPage,
+  })),
 );
 
 function App() {
@@ -43,6 +48,7 @@ function App() {
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/services" element={<ServicesPage />} />
         <Route path="/dependency-graph" element={<DependencyGraphPage />} />
+        <Route path="/anomalies" element={<AnomalyListPage />} />
         <Route path="/incidents" element={<IncidentsPage />} />
         <Route path="/models" element={<ModelsPage />} />
         <Route path="/model-lifecycle" element={<ModelLifecyclePage />} />

@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { api, wsUrl } from "@/lib/api";
+import { api, wsUrl } from "@/lib/mlBackend";
 import type { LiveMessage } from "@/features/lifecycle/types";
 import { toDecision, useLiveStore } from "@/shared/store/liveStore";
 import { useNotificationStore } from "@/shared/store/notificationStore";

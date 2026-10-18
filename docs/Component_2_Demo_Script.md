@@ -14,7 +14,7 @@ TimescaleDB and streamed over Redis and a WebSocket.
 2. Start the backend in its own terminal:
    ```powershell
    cd services/ml-backend
-   uv run uvicorn app.main:app --port 8000
+   uv run uvicorn app.main:app --port 8002
    ```
 3. Start the frontend in a second terminal:
    ```powershell

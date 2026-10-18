@@ -40,7 +40,7 @@ export function ModelLifecyclePage() {
             <p className="max-w-md text-xs text-muted-foreground">
               This page shows the live lifecycle only. Start the stack with{" "}
               <span className="font-mono">docker compose -f infrastructure/local/docker-compose.demo.yml up -d</span>{" "}
-              and <span className="font-mono">uv run uvicorn app.main:app --port 8000</span> in{" "}
+              and <span className="font-mono">uv run uvicorn app.main:app --port 8002</span> in{" "}
               <span className="font-mono">services/ml-backend</span>. It reconnects automatically.
             </p>
           </div>

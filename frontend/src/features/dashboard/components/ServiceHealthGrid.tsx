@@ -21,7 +21,8 @@ function ServiceTile({ service }: { service: ServiceHealth | LiveServiceHealth }
     <Card
       className={cn(
         "border-border/60 transition-shadow",
-        isCritical && "border-status-critical/50 shadow-[0_0_0_1px_var(--status-critical)]",
+        isCritical &&
+          "border-status-critical/50 shadow-[0_0_0_1px_var(--status-critical)]",
       )}
     >
       <CardContent className="flex items-start justify-between gap-3 py-4">
@@ -37,13 +38,20 @@ function ServiceTile({ service }: { service: ServiceHealth | LiveServiceHealth }
           )}
         </div>
         <div className="flex flex-col items-end gap-1">
-          <p className={cn("text-lg font-semibold tabular-nums", STATUS_TEXT_CLASS[service.status])}>
+          <p
+            className={cn(
+              "text-lg font-semibold tabular-nums",
+              STATUS_TEXT_CLASS[service.status],
+            )}
+          >
             {service.anomalyScore.toFixed(2)}
           </p>
-          <Sparkline
-            values={service.scoreHistory}
-            className={STATUS_TEXT_CLASS[service.status]}
-          />
+          {service.scoreHistory.length > 1 && (
+            <Sparkline
+              values={service.scoreHistory}
+              className={STATUS_TEXT_CLASS[service.status]}
+            />
+          )}
           {service.driftDetected && (
             <span className="flex items-center gap-1 text-[11px] text-status-warn">
               <AlertTriangle className="size-3" />

@@ -41,7 +41,7 @@ from app.ingestion.telemetry_puller import start_telemetry_puller, pull_once
 from app.ingestion.anomaly_sink import start_anomaly_sink, resume_pending_snapshots
 from app.api.routes import (
     graph, health, mock_data, anomaly_evidence, telemetry_history,
-    rules,                                   
+    rules, decisions,                            
 )
 from app.rules.registry import rule_registry    
 
@@ -136,6 +136,7 @@ app.include_router(mock_data.router)
 app.include_router(anomaly_evidence.router)
 app.include_router(telemetry_history.router)
 app.include_router(rules.router)  
+app.include_router(decisions.router)
 
 @app.get("/api/debug/buffer")
 async def debug_buffer():

@@ -30,6 +30,8 @@ from app.store import MemoryStore, make_store
 
 logger = logging.getLogger(__name__)
 
+TICK_S = 0.05
+
 LIFECYCLE_TYPES = {"quarantine_opened", "change_observed", "lifecycle_decision", "operator_query",
                    "query_answered", "query_expired"}
 
@@ -70,14 +72,22 @@ class Runtime:
 
     # -- the loop ----------------------------------------------------------------------------------
     async def _loop(self) -> None:
+        # Wake every TICK_S and run as many steps as the elapsed time has earned. Sleeping once per
+        # event instead caps the rate on Windows, where timer resolution is ~15 ms.
+        credit, last = 0.0, time.monotonic()
         while True:
-            started = time.monotonic()
-            if not self.paused:
-                await self.step_all()
+            now = time.monotonic()
+            if self.paused:
+                credit = 0.0
+            else:
+                credit = min(credit + (now - last) * self.events_per_sec, self.events_per_sec * 0.5)
+                while credit >= 1.0:
+                    await self.step_all()
+                    credit -= 1.0
+            last = now
             if time.monotonic() - self._last_flush >= 1.0:
                 await self.flush_rows()
-            budget = 1.0 / max(self.events_per_sec, 0.1)
-            await asyncio.sleep(max(0.0, budget - (time.monotonic() - started)))
+            await asyncio.sleep(TICK_S)
 
     async def step_all(self) -> None:
         self.tick += 1

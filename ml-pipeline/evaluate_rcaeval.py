@@ -40,7 +40,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "datasets" / "rcaeval"))
 from rcaeval_preprocess import list_cases, load_case  # noqa: E402
 
 from src.hst_model import DETECTOR_PRESETS, build_model, detector_config, freeze_scaler  # noqa: E402
-from src.lifecycle_manager import prepare_calibration  # noqa: E402
+from src.lifecycle_manager import LifecycleConfig, calibrated_threshold, prepare_calibration  # noqa: E402
 
 logger = logging.getLogger("evaluate_rcaeval")
 
@@ -50,7 +50,7 @@ FIELDS = ["system", "case", "fault", "service", "detector", "n_features", "detec
           "pre_fa_rate", "mcc", "pr_auc", "informedness", "duration_s"]
 
 
-def evaluate_case(case_dir: Path, detector: str) -> dict:
+def evaluate_case(case_dir: Path, detector: str, threshold_method: str = "percentile") -> dict:
     X, y, inject = load_case(case_dir)
     rows = X.to_dict(orient="records")
     n_train = int(inject * TRAIN_SHARE_OF_NORMAL)
@@ -66,7 +66,7 @@ def evaluate_case(case_dir: Path, detector: str) -> dict:
     for r in rows[split:n_train]:
         model.learn_one(r)
     freeze_scaler(model)
-    threshold = float(np.percentile(calib, 97))
+    threshold = calibrated_threshold(model, calib, LifecycleConfig(threshold_method=threshold_method))
 
     scores = np.array([float(min(max(model.score_one(r), 0.0), 1.0)) for r in rows[n_train:]])
     labels = y[n_train:]
@@ -79,7 +79,8 @@ def evaluate_case(case_dir: Path, detector: str) -> dict:
     service, fault = case_dir.parent.name.rsplit("_", 1)
     return {
         "system": case_dir.parent.parent.name, "case": f"{case_dir.parent.name}/{case_dir.name}",
-        "fault": fault, "service": service, "detector": detector, "n_features": X.shape[1],
+        "fault": fault, "service": service,
+        "detector": detector if threshold_method == "percentile" else f"{detector}@{threshold_method}", "n_features": X.shape[1],
         "detected": bool(post_alarms.any()), "delay_s": first,
         "pre_fa_rate": None if pre_fa is None else round(pre_fa, 4),
         "mcc": round(float(matthews_corrcoef(labels, alarms.astype(int))), 4),
@@ -94,6 +95,7 @@ def main() -> None:
     parser.add_argument("--systems", nargs="*", default=["RE1-OB", "RE1-SS"])
     parser.add_argument("--detectors", nargs="*", default=DETECTORS, choices=list(DETECTOR_PRESETS))
     parser.add_argument("--out", default="outputs/rcaeval/rcaeval_runs.csv")
+    parser.add_argument("--threshold", default="percentile", choices=["percentile", "pot"])
     parser.add_argument("--limit", type=int, default=None, help="first N cases per system (smoke tests)")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
@@ -109,9 +111,10 @@ def main() -> None:
         for case_dir in list_cases(system)[:args.limit]:
             key_case = f"{case_dir.parent.name}/{case_dir.name}"
             for detector in args.detectors:
-                if (system, key_case, detector) in done:
+                label = detector if args.threshold == "percentile" else f"{detector}@{args.threshold}"
+                if (system, key_case, label) in done:
                     continue
-                row = evaluate_case(case_dir, detector)
+                row = evaluate_case(case_dir, detector, args.threshold)
                 new = not out.exists()
                 with open(out, "a", newline="") as f:
                     w = csv.DictWriter(f, fieldnames=FIELDS)

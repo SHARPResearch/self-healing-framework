@@ -16,7 +16,7 @@ from app.config import settings
 from app.ingestion.ring_buffer import ring_buffer
 from app.persistence.postgres import postgres_store
 from app.persistence.timescale import timescale_store
-from app.api.routes.mock_data import _anomaly, SERVICES
+from app.api.routes.mock_data import _anomaly, SERVICES, _health
 
 log = logging.getLogger(__name__)
 
@@ -28,42 +28,150 @@ def _parse_ts(s: str) -> datetime:
 # ─────────────────────────────────────────────────────────────────
 # Polling for new anomalies
 # ─────────────────────────────────────────────────────────────────
+# async def poll_anomalies(scheduler: AsyncIOScheduler):
+#     try:
+#         for sid in SERVICES:
+#             a = _anomaly(sid)
+#             if a is None:
+#                 continue
+
+#             detected_at = _parse_ts(a["detected_at"])
+#             inserted = await postgres_store.save_anomaly({
+#                 **a,
+#                 "detected_at": detected_at,
+#             })
+
+#             if not inserted:
+#                 continue
+
+#             log.info("New anomaly saved: %s on %s", a["id"], sid)
+
+#             # PHASE 1 — capture the BEFORE window right now
+#             await _capture_phase1(a["id"], sid, detected_at)
+
+#             # PHASE 2 — schedule the AFTER window for T + AFTER_SEC
+#             run_at = detected_at + timedelta(seconds=settings.SNAPSHOT_AFTER_SEC)
+#             scheduler.add_job(
+#                 _capture_phase2,
+#                 "date",
+#                 run_date=run_at,
+#                 args=[a["id"], sid, detected_at],
+#                 id=f"snap2-{a['id']}",
+#                 replace_existing=True,
+#                 misfire_grace_time=300,
+#             )
+#             log.info("Scheduled phase 2 for %s at %s", a["id"], run_at.isoformat())
+#     except Exception:
+#         log.exception("Anomaly poll failed")
+
 async def poll_anomalies(scheduler: AsyncIOScheduler):
+    """
+    Incident-aware anomaly poller.
+
+    For each service:
+      - If healthy → close any open incident (mark state healthy)
+      - If unhealthy and NO incident open → create a NEW anomaly row,
+        start phase 1, schedule phase 2
+      - If unhealthy and incident OPEN → do nothing (dedupe by incident,
+        NOT by wall clock)
+
+    This is the production behavior: one anomaly per incident, regardless
+    of how many polls happen during that incident.
+    """
     try:
         for sid in SERVICES:
-            a = _anomaly(sid)
-            if a is None:
+            current_health = _health(sid)          # live health (mock for now)
+            state = await postgres_store.get_incident_state(sid)
+            incident_open = bool(state and state.get("incident_start"))
+
+            # ── HEALTHY ─────────────────────────────────────────
+            if current_health == "healthy":
+                if incident_open:
+                    await postgres_store.close_incident(sid)
+                    log.info(
+                        "Incident CLOSED for %s (was %s since %s)",
+                        sid, state["incident_id"], state["incident_start"],
+                    )
                 continue
 
-            detected_at = _parse_ts(a["detected_at"])
-            inserted = await postgres_store.save_anomaly({
-                **a,
-                "detected_at": detected_at,
-            })
+            # ── UNHEALTHY, NO INCIDENT → NEW INCIDENT ──────────
+            if not incident_open:
+                detected_at = datetime.now(timezone.utc)
 
-            if not inserted:
+                # Build anomaly signal from mock (real component 1 later)
+                a = _anomaly(sid)
+                if a is None:
+                    # Service says unhealthy but mock returns no anomaly —
+                    # should not happen, but be defensive
+                    log.warning(
+                        "Health=%s but _anomaly()=None for %s",
+                        current_health, sid,
+                    )
+                    continue
+
+                # Override ID with incident-based ID
+                incident_id = make_incident_id(sid, detected_at)
+                a["id"] = incident_id
+                a["detected_at"] = detected_at.isoformat()
+
+                inserted = await postgres_store.save_anomaly({
+                    **a,
+                    "detected_at": detected_at,
+                })
+                if not inserted:
+                    # Race condition or prior partial state — skip
+                    log.warning("save_anomaly returned False for %s", incident_id)
+                    continue
+
+                # Record incident state
+                await postgres_store.set_incident_state(
+                    sid, current_health, detected_at, incident_id
+                )
+
+                log.info(
+                    "NEW incident STARTED: %s (service=%s, health=%s)",
+                    incident_id, sid, current_health,
+                )
+
+                # Phase 1 — capture BEFORE window
+                await _capture_phase1(incident_id, sid, detected_at)
+
+                # Schedule phase 2 at T + SNAPSHOT_AFTER_SEC
+                run_at = detected_at + timedelta(seconds=settings.SNAPSHOT_AFTER_SEC)
+                scheduler.add_job(
+                    _capture_phase2,
+                    "date",
+                    run_date=run_at,
+                    args=[incident_id, sid, detected_at],
+                    id=f"snap2-{incident_id}",
+                    replace_existing=True,
+                    misfire_grace_time=300,
+                )
+                log.info("Scheduled phase 2 for %s at %s", incident_id, run_at.isoformat())
                 continue
 
-            log.info("New anomaly saved: %s on %s", a["id"], sid)
-
-            # PHASE 1 — capture the BEFORE window right now
-            await _capture_phase1(a["id"], sid, detected_at)
-
-            # PHASE 2 — schedule the AFTER window for T + AFTER_SEC
-            run_at = detected_at + timedelta(seconds=settings.SNAPSHOT_AFTER_SEC)
-            scheduler.add_job(
-                _capture_phase2,
-                "date",
-                run_date=run_at,
-                args=[a["id"], sid, detected_at],
-                id=f"snap2-{a['id']}",
-                replace_existing=True,
-                misfire_grace_time=300,
+            # ── UNHEALTHY, INCIDENT OPEN → DO NOTHING ──────────
+            # Just update last_seen_at for observability
+            await postgres_store.set_incident_state(
+                sid,
+                current_health,
+                state.get("incident_start"),
+                state.get("incident_id"),
             )
-            log.info("Scheduled phase 2 for %s at %s", a["id"], run_at.isoformat())
+
     except Exception:
         log.exception("Anomaly poll failed")
 
+
+def make_incident_id(service_id: str, incident_start: datetime) -> str:
+    """
+    Production-grade anomaly ID.
+    Format: ANM-{service_id}-{YYYYMMDDTHHMMSSZ}
+    Same incident → same ID (deduplication).
+    New incident → new ID.
+    """
+    ts = incident_start.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return f"ANM-{service_id}-{ts}"
 
 # ─────────────────────────────────────────────────────────────────
 # Phase 1 — BEFORE window (immediate)

@@ -203,8 +203,7 @@ def capture(model: Any, meta: dict | None = None) -> HSTState:
 
 def _zero_masses(hst: HalfSpaceTrees) -> None:
     if isinstance(hst, LazyHalfSpaceTrees):
-        root_region = {f: hst._limits_of(f) for f in hst.features}
-        hst.trees = [hst._make_node(t, 1, root_region, 0) for t in range(hst.n_trees)]
+        hst.trees = [hst._make_node(t, 1, hst._root_region(), 0) for t in range(hst.n_trees)]
         return
     for tree in hst.trees:
         for _, node in _iter_massive(tree):

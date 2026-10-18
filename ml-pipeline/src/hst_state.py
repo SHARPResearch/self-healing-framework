@@ -50,6 +50,18 @@ def _split(model: Any) -> tuple[Any, HalfSpaceTrees]:
     return None, model
 
 
+def _tree_free(model: Any) -> bool:
+    """True for detectors with no HST inside (src/detectors.PCADetector, possibly smoothed)."""
+    return getattr(model, "hst_model", model) is None
+
+
+def _feature_owner(model: Any) -> Any:
+    """The innermost wrapped detector, which owns the feature list."""
+    while hasattr(model, "base"):
+        model = model.base
+    return model
+
+
 def _iter_massive(root) -> list[tuple[int, Any]]:
     """(heap_index, node) for every node with non-zero mass, pruning all-zero subtrees."""
     out = []
@@ -94,6 +106,8 @@ def structure_fingerprint(model: Any) -> str:
     applied to the other. Returns an "unbuilt" marker before the first learn_one(), because
     river only builds the trees once it sees the feature names.
     """
+    if _tree_free(model):
+        return model.fingerprint()
     _, hst = _split(model)
     if not hst.trees:
         return "unbuilt"
@@ -166,6 +180,9 @@ class HSTState:
 
 def capture(model: Any, meta: dict | None = None) -> HSTState:
     """Snapshot the learned state of a built model in O(non-zero nodes)."""
+    if _tree_free(model):
+        return HSTState(fingerprint=structure_fingerprint(model), counter=0, first_window=False,
+                        masses=[], meta=dict(meta or {}), extra=model.extra_state())
     scaler, hst = _split(model)
     if not hst.trees:
         raise ValueError("Cannot capture an unbuilt HalfSpaceTrees (call learn_one first).")
@@ -208,6 +225,9 @@ def apply(model: Any, state: HSTState) -> None:
             f"Structure mismatch: model {fp} vs snapshot {state.fingerprint}. "
             "Snapshots only apply to models built with the same seed/config/features."
         )
+    if _tree_free(model):
+        model.set_extra_state(state.extra)
+        return
     scaler, hst = _split(model)
     _zero_masses(hst)
     for t, entries in enumerate(state.masses):
@@ -230,6 +250,10 @@ def materialize(model: Any, feature_names: list[str]) -> None:
     river builds the trees inside the first learn_one(), so this feeds one all-zero row and then
     resets. Used when a replica or an MLflow pyfunc loads a snapshot without any telemetry yet.
     """
+    if _tree_free(model):
+        _feature_owner(model).features = list(feature_names)
+        reset(model)
+        return
     _, hst = _split(model)
     if isinstance(hst, LazyHalfSpaceTrees):
         hst._ensure_trees({name: 0.0 for name in feature_names})  # roots only, no learning
@@ -246,6 +270,8 @@ def feature_names(model: Any) -> list[str]:
     building) rather than from the split nodes: features that never became a split still shaped
     the structure through the random draws.
     """
+    if _tree_free(model):
+        return list(_feature_owner(model).features)
     _, hst = _split(model)
     if isinstance(hst, LazyHalfSpaceTrees):
         return list(hst.features)
@@ -263,6 +289,9 @@ def reset(model: Any, keep_scaler: bool = False) -> None:
     re-learned from a few hundred events has narrow ranges that keep widening afterwards, which
     moves every point to a different tree cell than the one its learned mass sits in.
     """
+    if _tree_free(model):
+        model.clear_extra()
+        return
     scaler, hst = _split(model)
     _zero_masses(hst)
     hst.counter = 0

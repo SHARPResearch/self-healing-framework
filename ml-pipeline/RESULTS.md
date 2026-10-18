@@ -193,3 +193,69 @@ level of sophistication, not a bug, and not something more raw-hyperparameter tu
 3. Even per-entity calibration does not close the full gap to the oracle, and no single
    percentile suits every entity — would need per-entity-adaptive percentile selection or better
    features/model to close further, a genuine follow-up left out of this pass's scope.
+
+## Detector v3: what improved Component 1, and what did not
+
+Follow-up to the ceiling above: rather than tune HST further, try other lightweight detectors,
+chosen on the 8 `machine-1-*` development entities only and reported on the 20 held-out entities,
+on 250 real microservice failures (RCAEval) and, where meaningful, on NAB. Scripts:
+`compare_detectors.py`, `evaluate_rcaeval.py`; data in `outputs/detectors/` and
+`outputs/rcaeval/`. All detectors are calibrated per entity on held-out normal data, as before.
+
+**Research basis.** Audibert et al. (Pattern Recognition 2022, *Do deep neural networks contribute
+to multivariate time series anomaly detection?*) found no family of methods dominates on SMD and
+that conventional methods are competitive; TSB-AD (NeurIPS 2024) keeps PCA among its strong
+statistical baselines. Thresholds follow Peaks-Over-Threshold (Siffer et al., KDD 2017), which
+OmniAnomaly also uses on SMD. Point-adjusted F1 is not used (Kim et al., AAAI 2022).
+
+**Selected: PCA reconstruction error, EWMA-smoothed over 5 events, POT threshold at risk 0.01**
+(`detector_config("pca_s5")`, `LifecycleConfig(threshold_method="pot")`). `src/detectors.py`.
+
+### SMD, 20 held-out entities (paired Wilcoxon against Component 1 as shipped)
+
+| detector | PR-AUC | F1 | MCC | informedness | best possible F1 |
+|---|---|---|---|---|---|
+| river HST, 97th percentile (shipped) | 0.263 | 0.197 | 0.205 | 0.242 | 0.339 |
+| lazy HST + robust-z ensemble | 0.276 | 0.184 | 0.182 | 0.284 | 0.351 |
+| PCA, 97th percentile | 0.338 | 0.166 | 0.172 | 0.360 | 0.415 |
+| **PCA smoothed + POT** | **0.398** | **0.227** | **0.243** | **0.417** | **0.458** |
+
+- Ranking quality and detection skill improve clearly: PR-AUC +51% (16 wins / 4 losses,
+  p = 0.009), informedness +72% (17/3, p = 0.004), best achievable F1 +35% (13/7, p = 0.044).
+- At the operating threshold F1 (+15%) and MCC (+19%) are higher on average but **not
+  significantly** (p = 0.47 and 0.29): the better ranking does not fully turn into a better
+  operating point on SMD, because SMD drifts between its train and test halves and PCA reacts to
+  any change in how metrics move together. That is the case the lifecycle (Component 2) handles.
+- POT matters for PCA (dev MCC 0.285 to 0.352) and not for HST (river with POT: held-out MCC
+  0.201, no better than the percentile).
+- What did not help: temporal-deviation features (dev PR-AUC 0.200 alone, worse in ensembles), a
+  max-of-percentiles ensemble, and longer smoothing. Robust per-feature z-scores with smoothing did
+  well on held-out entities (PR-AUC 0.443) but lost on the dev entities, so by the selection rule
+  they were not chosen.
+
+### RCAEval: 250 real fault injections on Kubernetes (Online Boutique, Sock Shop)
+
+| system | detector | faults detected | median delay | false alarms before the fault | MCC |
+|---|---|---|---|---|---|
+| Online Boutique | HST (lazy) | 95% | 14 s | 0.18 | 0.368 |
+| Online Boutique | HST + robust-z | 95% | 15 s | 0.12 | 0.491 |
+| Online Boutique | **PCA smoothed + POT** | **100%** | **2 s** | 0.33 | **0.700** |
+| Sock Shop | HST (lazy) | 99% | 11 s | 0.10 | 0.338 |
+| Sock Shop | HST + robust-z | 100% | 6 s | 0.14 | 0.420 |
+| Sock Shop | PCA smoothed + POT | 100% | 0 s | 0.75 | 0.390 |
+
+- Online Boutique: PCA beats HST on MCC in 96 of 125 cases (p ≈ 5e-12).
+- Sock Shop: PCA ranks the fault period almost perfectly (PR-AUC 0.990 vs 0.924), but its
+  threshold over-alarms: those cases have 242 to 293 metrics and only ~200 normal samples to fit
+  and ~50 to calibrate on, too few for a stable subspace or a tail fit. Limitation: PCA needs
+  clearly more warm-up samples than metrics.
+
+### NAB
+
+Univariate series make PCA degenerate (one feature, no residual), so NAB keeps the HST ensemble.
+
+### Scalability side effect
+
+PCA's learned state is a 38 x k matrix plus robust centring: ~34 KB per service in memory, fitted in
+under a second, scoring ~40,000 events/s on one core, against ~370 MB, ~100 s and ~3,000 events/s
+for river's eager HST. See `RESULTS_COMPONENT2.md` for the scalability benchmark.

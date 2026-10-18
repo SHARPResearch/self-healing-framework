@@ -39,6 +39,13 @@ class Settings(BaseSettings):
     # warm-up model alarms at about its POT target, so a service stays calm until the presenter
     # injects something. 0 replays the whole test split once around, real anomalies included.
     replay_window_rows: int = 6000
+    # Persisted metric rows: every Nth event per service, plus every alarming one. At 60 events/s
+    # across six services, every event would be ~1 GB an hour (and is 60x the real rate anyway).
+    persist_every: int = 10
+    # Length of the demo "incident" injection in events (half a lifecycle day, ~12 s on stage). Shorter
+    # spikes often never trip the drift detector on a quiet service, so nothing visible happens; a
+    # whole day gets learned as a new normal. 0 means a fifth of a day.
+    demo_incident_events: int = 720
     score_push_every: int = 10            # push one anomaly_score message every N events per service
 
     # Logs page: follow these containers' output (service name shown on the page -> container).

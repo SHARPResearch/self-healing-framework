@@ -37,7 +37,7 @@ import pandas as pd
 from sklearn.metrics import average_precision_score, matthews_corrcoef
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "datasets" / "rcaeval"))
-from preprocess import list_cases, load_case  # noqa: E402
+from rcaeval_preprocess import list_cases, load_case  # noqa: E402
 
 from src.hst_model import DETECTOR_PRESETS, build_model, detector_config, freeze_scaler  # noqa: E402
 from src.lifecycle_manager import prepare_calibration  # noqa: E402

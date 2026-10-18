@@ -14,6 +14,8 @@ DynamicModelManager per simulated service (each its own model objects, registry,
   storage    snapshot size per registered version.
   replicas   time for a second registry/model (a replica) to pick up a new production version
              through MLflow (sync_production + apply), the FR5 path.
+  horizontal services partitioned across 1, 2, 4 worker processes by a stable hash of service_id
+             (how ml-backend replicas split the fleet), aggregate events/s per worker count.
 
 Usage:
   uv run python benchmark_scalability.py                       # sizes 1 10 50 100
@@ -169,11 +171,55 @@ def replica_sync(train, hst_cfg, cfg, repeats=5):
                 "replica_sync_ms_max": round(max(timings), 1)}
 
 
+def shard_of(service_id: str, workers: int) -> int:
+    """Stable partition of services across workers (crc32, the same on every replica)."""
+    import zlib
+    return zlib.crc32(service_id.encode()) % workers
+
+
+def _worker(args):
+    """One worker process: build its partition of services and stream through them."""
+    worker, workers, n_services, events, templates, hst_cfg, cfg, test = args
+    ids = [i for i in range(n_services) if shard_of(f"svc-{i}", workers) == worker]
+    services = [make_service(i, templates[i % len(templates)], hst_cfg, cfg, []) for i in ids]
+    offsets = [random.Random(i).randrange(0, len(test) - events) for i in ids]
+    t0 = time.perf_counter()
+    for step in range(events):
+        for svc, off in zip(services, offsets):
+            svc.process(test[off + step])
+    return len(services) * events, time.perf_counter() - t0
+
+
+def horizontal(templates, test, hst_cfg, cfg, n_services, events, worker_counts):
+    import multiprocessing as mp
+    rows = []
+    for workers in worker_counts:
+        # Rows are passed in rather than loaded per worker: preprocess_entity rewrites the parquet
+        # file, and concurrent workers would collide on it.
+        jobs = [(w, workers, n_services, events, templates, hst_cfg, cfg, test) for w in range(workers)]
+        t0 = time.perf_counter()
+        with mp.get_context("spawn").Pool(workers) as pool:
+            results = pool.map(_worker, jobs)
+        wall = time.perf_counter() - t0
+        total = sum(n for n, _ in results)
+        slowest = max(d for _, d in results)
+        rows.append({"workers": workers, "services": n_services, "events": total,
+                     "events_per_s_streaming": round(total / slowest),
+                     "wall_s_including_startup": round(wall, 1)})
+        print("horizontal", rows[-1], flush=True)
+    return rows
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--sizes", nargs="*", type=int, default=[1, 10, 50, 100])
+    parser.add_argument("--sizes", nargs="*", type=int, default=[1, 10, 50, 100],
+                        help="service counts for the serving test (each goes through a quarantine)")
+    parser.add_argument("--memory-sizes", nargs="*", type=int, default=[1, 10, 100, 500, 1000])
+    parser.add_argument("--workers", nargs="*", type=int, default=[1, 2, 4])
+    parser.add_argument("--horizontal-services", type=int, default=200)
+    parser.add_argument("--horizontal-events", type=int, default=600)
     parser.add_argument("--events", type=int, default=2400, help="events per service in the serving test")
-    parser.add_argument("--detector", default="lazy_range_ens")
+    parser.add_argument("--detector", default="pca_s5")
     parser.add_argument("--out", default="outputs/scalability/scalability.json")
     args = parser.parse_args()
 
@@ -186,9 +232,9 @@ def main() -> None:
     templates = warm_templates(train, hst_cfg, sync_cfg)
 
     result = {"detector": args.detector, "entity": ENTITY, "memory": [], "serving_sync": [],
-              "serving_async": []}
+              "serving_async": [], "horizontal": []}
     result["river_bytes_per_model"] = round(river_memory_per_model(train))
-    for n in args.sizes:
+    for n in args.memory_sizes:
         result["memory"].append({"services": n,
                                  "bytes_per_service": round(memory_per_service(n, templates, hst_cfg, sync_cfg))})
         print("memory", result["memory"][-1], flush=True)
@@ -197,6 +243,8 @@ def main() -> None:
             row = serving(n, templates, test, hst_cfg, cfg, args.events, change_at=200)
             result[key].append(row)
             print(key, row, flush=True)
+    result["horizontal"] = horizontal(templates, test, hst_cfg, sync_cfg, args.horizontal_services,
+                                      args.horizontal_events, args.workers)
     result["snapshot_bytes"] = snapshot_bytes(templates)
     result.update(replica_sync(train, hst_cfg, sync_cfg))
     out = Path(args.out)

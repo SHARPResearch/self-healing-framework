@@ -169,6 +169,22 @@ Key design decisions, each motivated by a measured failure (Section 6 has the ev
    capture takes ~27 ms and restore ~37 ms instead of ~3.7 s and ~5.9 s, and challengers reuse
    the champion's structure (reset takes ~4 ms) instead of rebuilding it (~16 s). This is what
    makes proposal FR3 (rollback within one scoring cycle) achievable at all.
+7. **Repair by re-baselining before retraining** (added after the first evaluation). When the
+   level of some metrics moved, the champion is kept and only those metrics are shifted back onto
+   its baseline, using robust medians. This is preferred over a challenger fitted on one day,
+   which forgets weeks of normal variation; on SMD such challengers caught 24% of the anomalies the
+   static model caught 86% of. Re-baselining is held to the target alarm rate.
+8. **Only a change event licenses replacing the model.** Without a deployment or configuration
+   event, a persistent shift that only a retrained model explains is held as a probable incident.
+   On SMD a day-long incident passed the learnability test and retraining on it silenced the
+   detector for the rest of the incident.
+9. **Asynchronous decisions.** A closed quarantine is evaluated on a copy of the champion in a
+   background thread while the champion keeps scoring; the swap blocks serving for ≤ 0.4 ms.
+10. **Component 1 v3** (`src/detectors.py`, `src/lazy_hst.py`):
+    - PCA reconstruction error with EWMA smoothing and Peaks-Over-Threshold calibration replaces
+      Half-Space Trees as the default detector (held-out PR-AUC +51%, `ml-pipeline/RESULTS.md`).
+    - Lazily built trees keep HST available at ~0.1 MB instead of ~370 MB per model.
+    - Memory per monitored service is 34 KB.
 
 ## 5. Mapping to the proposal's requirements
 
@@ -176,26 +192,31 @@ Key design decisions, each motivated by a measured failure (Section 6 has the ev
 |---|---|---|
 | FR1 automatic drift detection | Met | `ScoreDriftMonitor` (ADWIN δ=0.002 default, Page-Hinkley, KSWIN) |
 | FR2 three simultaneous triggers | Met | drift (ADWIN), time (`scheduled_every`), event (`ChangeEvent`, K8s watcher) |
-| FR3 rollback within one scoring cycle | Partly | rollback itself ~37 ms and rare; closing a quarantine (challenger fit) blocks scoring for a median 1.3 s, max 8.7 s. Needs a background task, not implemented |
+| FR3 rollback within one scoring cycle | Met | restoring a version takes milliseconds; asynchronous decisions block serving for ≤ 0.4 ms (was up to 8.7 s before `async_decisions`) |
 | FR4 every transition logged with context | Met | `TransitionRecord` (step, wall time, reason, evidence) → JSONL + MLflow `transitions/*.json` |
 | FR5 multi-replica without shared memory | Met (mechanism) | `MLflowRegistry.sync_production()` + `materialize/apply`; not load-tested across real replicas |
-| FR6 ≤ 5 ms added per-event latency | Met | CADAL mean 0.73 ms, worst-entity p99 3.8 ms (transitions excluded, see FR3) |
+| FR6 ≤ 5 ms added per-event latency | Met | p99 0.07 ms per event with 100 services in one process (`benchmark_scalability.py`) |
 | FR7 F1 ≥ 0.65 throughout | **Not achievable as stated** | Component 1's HST tops out at F1 0.38 to 0.57 on its best entity *before* any drift (`ml-pipeline/RESULTS.md`). Lifecycle management cannot exceed the detector's ceiling. Restate it as a relative goal (dynamic ≥ static, and recovery after drift). |
-| NAB > 0.55 | Deferred | NAB scorer exists on `feat/research-validation` (not merged); add once merged |
+| NAB | Evaluated | 46 real NAB series, `evaluate_nab_dynamic.py`; the simplified NAB-style score is reported, but MCC is the primary metric (`ml-pipeline/RESULTS_COMPONENT2.md` §3) |
 
 ## 6. Results
 
-Full tables: `ml-pipeline/RESULTS_COMPONENT2.md` (896 runs, 28 entities, held-out split reported).
-Honest summary:
+Full tables: `ml-pipeline/RESULTS_COMPONENT2.md`; the panel-facing summary is
+`docs/Component_2_Panel_Response.md`. The first evaluation found CADAL did not beat a static
+model. Diagnosing why produced design items 7 to 10. The final configuration, judged on 20
+held-out SMD entities (MCC, CADAL vs static, same detector):
 
-- **Not supported:** CADAL does not beat the *static* baseline on F1 or MCC (deploy 0.155 vs 0.145,
-  p > 0.12; silent and none are equal within noise). The proposal's hypothesis as written fails.
-- **Supported:** after drift, CADAL cuts the false-alarm rate on normal points from 0.51 to 0.17
-  (p < 0.0001) at the cost of recall (0.68 to 0.39), so F1 is a wash. It beats the original
-  rollback design (F1 +0.066, p = 0.038) and the change-event prior helps on announced
-  deployments (+0.019 F1, p = 0.008) without hurting on no-op deployments.
-- A paper built on this should be framed as an *error-profile and lifecycle-safety* contribution
-  plus the negative results, not as "higher accuracy than a static model".
+- **No harm:** with no injected change CADAL is never worse (0 of 28 entities).
+- **After a deployment that shifts the baseline:** 0.128 vs 0.074 (p = 0.016). Post-shift
+  0.091 vs 0.000, because the static model alarms on 99.5% of normal time.
+- **On SMD's real train-to-test drift**, with a deployment event allowing a model update:
+  0.297 vs 0.243 (p = 0.026).
+- **After an unannounced shift:** not significant. This is the main limitation.
+- **Against other policies:** the original "roll back on drift" design never beats static, and
+  blind periodic retraining loses 40% of the MCC when nothing changes. CADAL has the best mean
+  over all scenarios.
+- **NAB** (46 real series): small, non-significant gain.
+- **RCAEval:** the improved detector catches all Online Boutique faults with MCC 0.700 vs 0.368.
 
 ## 7. Threats to validity (put these in the paper)
 

@@ -113,3 +113,15 @@ def test_rebaselining_is_preferred_when_it_restores_the_champion():
     assert only_retrain.evidence["repair"] == "retrain"
     neither = attribute(_ev(challenger_tail_alarm_rate=0.5, rebaseline_tail_alarm_rate=0.5, n_tail=200))
     assert neither.verdict is Verdict.INCIDENT and "repair" not in neither.evidence
+
+
+def test_the_retrain_noise_floor_does_not_loosen_the_rebaseline_test():
+    # A high floor (noisy retrained challengers on this entity) must not let a re-baselined
+    # champion through at a 55% tail alarm rate: its own threshold targets r0.
+    a = attribute(_ev(challenger_tail_alarm_rate=0.9, rebaseline_tail_alarm_rate=0.55,
+                      learnable_floor=0.6, n_tail=288))
+    assert a.verdict is Verdict.INCIDENT
+    assert a.evidence["rebaseline_line"] < 0.2
+    ok = attribute(_ev(challenger_tail_alarm_rate=0.9, rebaseline_tail_alarm_rate=0.04,
+                       learnable_floor=0.6, n_tail=288))
+    assert ok.evidence["repair"] == "rebaseline"

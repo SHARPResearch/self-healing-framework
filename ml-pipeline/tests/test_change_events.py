@@ -56,3 +56,13 @@ def test_k8s_new_deployment_counts_as_deployment():
 
 def test_event_id_is_stable_and_readable():
     assert ChangeEvent("svc", "deployment", step=42).event_id == "svc:deployment@42"
+
+
+def test_queue_source_releases_pushed_events_once():
+    from src.change_events import QueueChangeEventSource
+    src = QueueChangeEventSource()
+    assert src.poll(1) == []
+    src.push(ChangeEvent("svc", "deployment", step=5))
+    src.push(ChangeEvent("svc", "config", step=6))
+    assert [e.kind for e in src.poll(7)] == ["deployment", "config"]
+    assert src.poll(8) == []

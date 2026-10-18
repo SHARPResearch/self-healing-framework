@@ -69,6 +69,27 @@ class ReplayChangeEventSource:
         return due
 
 
+class QueueChangeEventSource:
+    """
+    Change events pushed in at runtime (an API call, a CI/CD webhook, the demo's Deploy button),
+    released on the next poll. Thread-safe, so the producer can live on another thread.
+    """
+
+    def __init__(self):
+        self._queue: "queue.Queue[ChangeEvent]" = queue.Queue()
+
+    def push(self, event: ChangeEvent) -> None:
+        self._queue.put(event)
+
+    def poll(self, step: int) -> list[ChangeEvent]:
+        out = []
+        while True:
+            try:
+                out.append(self._queue.get_nowait())
+            except queue.Empty:
+                return out
+
+
 def change_event_from_k8s(watch_event: dict, service_label: str = "app") -> Optional[ChangeEvent]:
     """
     Translate one Kubernetes watch event on an apps/v1 Deployment into a ChangeEvent.

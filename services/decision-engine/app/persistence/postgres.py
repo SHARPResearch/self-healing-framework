@@ -104,5 +104,58 @@ class PostgresStore:
         async with self.pool.acquire() as conn:
             await conn.execute(sql, anomaly_id)
 
+        # ── DECISION LOG ────────────────────────────────────────────
+    
+    async def save_decision(self, row: dict) -> bool:
+        """
+        Insert one decision_log row. Returns True if inserted, False if
+        the id already exists (idempotent).
+        """
+        import json
+
+        async with self.pool.acquire() as conn:
+            try:
+                await conn.execute(
+                    """
+                    INSERT INTO decision_log (
+                        id, anomaly_id, service_id, rule_id, rule_version,
+                        action, action_params,
+                        detection_conf, rule_conf, final_conf,
+                        base_risk, blast_factor, centrality, effective_severity,
+                        policy_outcome, policy_reason,
+                        context
+                    ) VALUES (
+                        $1,$2,$3,$4,$5,
+                        $6,$7,
+                        $8,$9,$10,
+                        $11,$12,$13,$14,
+                        $15,$16,
+                        $17
+                    )
+                    ON CONFLICT (id) DO NOTHING
+                    """,
+                    row["id"],
+                    row["anomaly_id"],
+                    row["service_id"],
+                    row.get("rule_id"),
+                    row.get("rule_version"),
+                    row["action"],
+                    json.dumps(row.get("action_params") or {}),
+                    row.get("detection_conf", 0),
+                    row.get("rule_conf", 0),
+                    row.get("final_conf", 0),
+                    row.get("base_risk"),
+                    row.get("blast_factor", 1.0),
+                    row.get("centrality", 1.0),
+                    row.get("effective_severity", 0),
+                    row.get("policy_outcome", "UNVALIDATED"),
+                    row.get("policy_reason"),
+                    json.dumps(row.get("context") or {}),
+                )
+                return True
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).exception("save_decision failed: %s", e)
+                return False
 
 postgres_store = PostgresStore()

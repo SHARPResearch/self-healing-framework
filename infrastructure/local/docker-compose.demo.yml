@@ -1,0 +1,39 @@
+# Local demo stack for the ml-backend: TimescaleDB (Doc1 metric_events hypertable) and Redis 7
+# (Streams + Pub/Sub). Ports are shifted to 5433 / 6380 so they do not clash with a native
+# PostgreSQL or Redis already listening on 5432 / 6379.
+#
+#   docker compose -f infrastructure/local/docker-compose.demo.yml up -d
+#   docker compose -f infrastructure/local/docker-compose.demo.yml down        # keep data
+#   docker compose -f infrastructure/local/docker-compose.demo.yml down -v     # wipe data
+name: selfheal-demo
+services:
+  timescaledb:
+    image: timescale/timescaledb-ha:pg16
+    environment:
+      POSTGRES_PASSWORD: selfheal
+      POSTGRES_DB: selfheal
+    ports:
+      - "5433:5432"
+    volumes:
+      - timescale-data:/home/postgres/pgdata
+      - ./init.sql:/docker-entrypoint-initdb.d/10-selfheal.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d selfheal"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+volumes:
+  timescale-data:
+  redis-data:

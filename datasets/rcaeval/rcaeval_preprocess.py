@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-preprocess.py — Turn one RCAEval RE1 failure case into a labelled metric stream.
+rcaeval_preprocess.py — Turn one RCAEval RE1 failure case into a labelled metric stream.
 
 Each case directory (raw/RE1-OB/<service>_<fault>/<n>/) holds data.csv (one row per second,
 Prometheus/cAdvisor metrics of every service) and inject_time.txt (Unix time the fault was injected).

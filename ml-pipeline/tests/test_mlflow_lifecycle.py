@@ -86,3 +86,22 @@ def test_mlflow_registry_mirrors_versions_aliases_and_loads_as_pyfunc(tmp_path, 
     probe = pd.DataFrame([{"a": 0.1, "b": 0.1}, {"a": 0.9, "b": 0.0}])
     loaded = mlflow.pyfunc.load_model("models:/hst-svc@production")
     assert loaded.predict(probe) == [min(max(m2.score_one(r), 0.0), 1.0) for r in probe.to_dict("records")]
+
+
+def test_pyfunc_applies_a_rebaselined_versions_shifts(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    uri = f"sqlite:///{(tmp_path / 'mlflow.db').as_posix()}"
+    mlflow.set_tracking_uri(uri)
+    mlflow.set_experiment("component2_shift_test")
+    model = _trained()
+    params = {"n_trees": CFG.n_trees, "height": CFG.height, "window_size": CFG.window_size, "seed": CFG.seed}
+    shifts = {"a": 0.3}
+    with mlflow.start_run():
+        reg = MLflowRegistry("svc2", uri, hst_params=params, feature_names=feature_names(model))
+        v = reg.register(capture(model, meta={"shifts": shifts}), 0.4, 0.03, step=0, reason="rebaselined")
+        reg.set_production(v, step=0, transition="promote", reason="rebaselined")
+    shifted = pd.DataFrame([{"a": 0.4, "b": 0.1}, {"a": 0.9, "b": 0.2}])
+    loaded = mlflow.pyfunc.load_model("models:/hst-svc2@production")
+    expected = [min(max(model.score_one({"a": r["a"] - 0.3, "b": r["b"]}), 0.0), 1.0)
+                for r in shifted.to_dict("records")]
+    assert loaded.predict(shifted) == expected

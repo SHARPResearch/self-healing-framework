@@ -13,6 +13,9 @@ dashboard.
 - `docs/Doc3_Execution_Guide.md` — chronological build phases (Phase 0 workstation setup through
   Phase 9 CI/CD). Each phase lists manual tasks before coding tasks; don't start phase N+1 before
   phase N's verification passes.
+- `docs/Component_2_Dynamic_Model_Updating.md` — Component 2's research positioning (gap analysis,
+  related work, novelty claims), design and requirement mapping. Supersedes the guide's Part 5
+  "ADWIN fires → roll back" design, which it shows to be harmful after deployments.
 - `docs/Component_1_2_Technical_Guide.md` — the standalone HST anomaly-detection + drift-detection
   research prototype (now at `ml-pipeline/`), written to be lifted into `services/ml-backend` later.
 - The other files under `docs/` (`CodingStandards.md`, `Services.md`, `Architecture.md`, `API.md`,
@@ -34,14 +37,14 @@ dashboard.
 
 | Path | Component (Doc1 §2) | Tech |
 |---|---|---|
-| `services/ml-backend/` | Telemetry Ingestion API + Streaming ML Engine + Model Registry client | FastAPI, river, MLflow |
+| `services/ml-backend/` | Telemetry Ingestion API + Streaming ML Engine + Model Registry client. Runs the Component 1+2 demo today: SMD replay through ml-pipeline's CADAL, TimescaleDB + Redis, REST + WebSocket (see its README). | FastAPI, asyncpg, Redis, river |
 | `services/decision-engine/` | Decision Engine (policy evaluation, dependency graph, action dispatch) | .NET 8 Worker Service |
 | `services/yarp-gateway/` | Execution Layer (traffic control) | YARP reverse proxy |
 | `services/llm-copilot/` | LLM Copilot / RCA Engine | LangChain, RAG |
 | `services/shared/` | Cross-service shared code | — |
 | `services/target-services/` | Sample microservices for chaos-injection demos | Node/Python/Go |
 | `frontend/` | Observability Dashboard | React 18, Vite, Tailwind |
-| `ml-pipeline/` | Standalone HST warm-up + drift-detection research pipeline (Component 1-2). Component 1 (train/evaluate/tune/calibrate) is done — see `ml-pipeline/RESULTS.md`; Component 2 (streaming + drift) is reserved (`src/data_pipeline.py`/`src/mlflow_lifecycle.py` stubs) for a teammate. | Python, river, MLflow |
+| `ml-pipeline/` | Standalone HST warm-up + drift-detection research pipeline (Component 1-2). Component 1 (train/evaluate/tune/calibrate) is done — see `ml-pipeline/RESULTS.md`; Component 2 (dynamic model updating, CADAL: drift attribution, versioned rollback, change-aware triggers, operator queries for ambiguous shifts) is implemented — see `docs/Component_2_Dynamic_Model_Updating.md` and `ml-pipeline/RESULTS_COMPONENT2.md`. | Python, river, MLflow |
 | `adaptive-pipeline/` | Standalone RL research pipeline (Component 4 — Adaptive Learning Decision Engine). Scaffold only, no code yet, no `.venv` installed yet — see `adaptive-pipeline/CLAUDE.md` for the open state/action/reward design questions that need answering first. | Python, Stable-Baselines3, Gymnasium, MLflow |
 | `infrastructure/` | Helm charts, Kubernetes manifests, Terraform | Helm, kubectl, Terraform |
 | `datasets/` | SMD/NAB dataset download + preprocessing scripts (not the raw data itself) | — |
@@ -66,7 +69,7 @@ Each service/area folder has its own short `CLAUDE.md` with specifics.
 
 ## Local dev
 
-Use the `local-dev-stack` skill to start/stop Redis, TimescaleDB, and MLflow locally, and the
+For the Component 2 demo stack (TimescaleDB 5433, Redis 6380) use `infrastructure/local/docker-compose.demo.yml`; the runbook is `docs/Component_2_Demo_Script.md`. Use the `local-dev-stack` skill to start/stop Redis, TimescaleDB, and MLflow locally, and the
 `scaffold-service` skill when adding a new service under `services/`.
 
 CI workflows (`.github/workflows/`) are intentionally not set up yet — they'd fail on every push

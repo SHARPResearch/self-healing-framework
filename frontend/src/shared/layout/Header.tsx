@@ -2,6 +2,7 @@ import { LayoutDashboard, LogOut, Settings, User } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { NotificationPanel } from "@/features/notifications/components/NotificationPanel";
+import { LiveStatusBadge } from "@/shared/components/LiveStatusBadge";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,6 +22,7 @@ export function Header({ pageTitle }: { pageTitle: string }) {
       </div>
 
       <div className="flex items-center gap-3">
+        <LiveStatusBadge />
         <NotificationPanel />
 
         <Separator orientation="vertical" className="h-6" />

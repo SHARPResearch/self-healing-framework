@@ -115,10 +115,8 @@ function connect(): void {
   ws.onmessage = (event) => {
     try {
       const msg = JSON.parse(event.data as string) as LiveMessage;
-      if (msg.type === "log") {       // high volume and only the Logs page wants it
-        listeners.get("log")?.forEach((fn) => fn(msg));
-        return;
-      }
+      listeners.get(msg.type)?.forEach((fn) => fn(msg));
+      if (msg.type === "log") return;   // high volume and only the Logs page wants it
       queue.push(msg);
       notify(msg);
     } catch {

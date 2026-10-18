@@ -120,6 +120,9 @@ export function useLogStream({ query, rangeSeconds, live }: Options) {
     };
   }, []);
 
+  // a demo reset wipes the lifecycle lines: start over from what the server now has
+  useEffect(() => subscribeToMessages("demo_reset", () => void load()), [load]);
+
   // live tail
   useEffect(() => {
     if (!live) return;

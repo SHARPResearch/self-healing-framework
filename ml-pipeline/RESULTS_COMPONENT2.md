@@ -5,6 +5,8 @@ CADAL did not beat a static model. The diagnosis of why led to the changes liste
 file reports the final configuration only, with every claim tested on data that was not used to
 design it.
 
+Section 9 adds the operator-in-the-loop extension (CADAL-HITL).
+
 **Final configuration.**
 - Component 1 detector: PCA reconstruction error, EWMA-smoothed over 5 events
   (`detector_config("pca_s5")`), calibrated per version with Peaks-Over-Threshold at risk 0.01.
@@ -204,3 +206,87 @@ Each change was found from a measured failure on development data:
 - Single laptop for the scalability numbers; no real multi-node cluster test.
 - PCA needs clearly more warm-up samples than metrics (the RCAEval Sock Shop cases show the
   failure mode).
+
+## 9. Operator in the loop: CADAL-HITL (`outputs/final/smd_hitl_v2/combined_runs.csv`)
+
+Section 1 left one weak spot: drift that nothing announces. Without labels, a persistent,
+learnable shift with no change event looks exactly like a long incident:
+- plain CADAL holds it, so post-shift false alarms stay at 0.76;
+- `cadal_retrain_free` learns it, but then also learns incidents and loses MCC on undisturbed data.
+
+CADAL-HITL handles only this case (verdict `ambiguous`, action `ask`):
+- The champion keeps serving and the validated challenger is parked.
+- The operator is asked "new normal or incident?".
+  - "New normal" promotes the parked challenger, with the query id and operator in the audit trail.
+  - "Incident" holds, and CADAL won't ask again for a day.
+- An unanswered query expires to hold after a day and starts the same cooldown.
+- At most one query is open per service, and at most two are asked per service per day.
+
+**Simulated operator.** It answers 60 events after the query, from the ground-truth labels of the
+quarantine tail it was asked about: "incident" if at least 10% is labelled anomalous, otherwise
+"new normal". `cadal_hitl_noisy` flips each answer with probability 0.2. Labels are used for
+nothing else, and every query is counted.
+
+MCC, all 28 entities (held-out 20 in brackets):
+
+| | none | deploy | silent | noop_deploy | mean |
+|---|---|---|---|---|---|
+| static | 0.274 (0.243) | 0.072 (0.074) | 0.072 (0.074) | 0.274 (0.243) | 0.173 (0.158) |
+| cadal | **0.280** (0.250) | **0.144** (**0.128**) | 0.096 (0.078) | **0.313** (**0.297**) | **0.209** (**0.189**) |
+| cadal_retrain_free | 0.236 (0.232) | 0.124 (0.110) | 0.117 (**0.100**) | 0.264 (0.271) | 0.185 (0.178) |
+| **cadal_hitl** | 0.272 (0.245) | 0.137 (0.115) | **0.118** (**0.100**) | 0.277 (0.253) | 0.201 (0.178) |
+| cadal_hitl_noisy (20% wrong) | 0.277 (**0.259**) | 0.137 (0.116) | 0.109 (0.102) | 0.270 (0.262) | 0.198 (0.185) |
+
+After the shift only, silent drift (all 28 entities):
+
+| | post-shift MCC | post-shift false-alarm rate |
+|---|---|---|
+| static | −0.001 | 0.995 |
+| cadal | 0.031 | 0.759 |
+| cadal_retrain_free | 0.079 | 0.385 |
+| **cadal_hitl** | **0.083** (vs cadal: 16 W / 6 L, **p = 0.008**) | **0.414** (vs cadal: **p < 0.0001**) |
+| cadal_hitl_noisy | 0.076 | 0.432 |
+
+Questions asked over a whole SMD test split (~20 days at one sample a minute):
+
+| scenario | none | deploy | silent | noop_deploy |
+|---|---|---|---|---|
+| queries per entity | 1.50 | 1.36 | 2.11 | 1.21 |
+| of which "new normal" | 1.29 | 1.04 | 1.82 | 1.00 |
+
+Reading it:
+- **It fixes the weak spot it was built for.** On unannounced drift, post-shift false alarms
+  roughly halve (0.76 to 0.41) and post-shift MCC rises from 0.031 to 0.083, both significant.
+  - Over the whole run, silent MCC is 0.118 vs 0.096 (15 W / 6 T / 7 L, p = 0.14).
+  - That is enough to make the silent-drift win over a static model significant on all 28
+    entities (0.118 vs 0.072, p = 0.03), which plain CADAL did not reach (p = 0.17). It is not
+    significant on the held-out 20 alone (p = 0.22).
+- **It costs a few questions.** About 1.5 per service per 20 days, and about 2 under silent drift.
+- **It is robust to a wrong operator.** With 20% of answers flipped, no scenario changes
+  significantly (silent 0.109 vs 0.118, p = 0.11). On held-out entities the noisy operator's mean
+  is even slightly higher.
+- **It is the better way to repair silent drift.** It matches `cadal_retrain_free` on silent drift
+  (0.118 vs 0.117) without that variant's cost on undisturbed data (none: 0.272 vs 0.236).
+- **What it does not fix.** Against plain CADAL it costs a little on undisturbed data and on
+  real SMD drift (none 0.272 vs 0.280, noop_deploy 0.277 vs 0.313; neither significant).
+  - The losses come from a handful of entities (machine-2-9, 1-6, 3-6). There a correctly
+    confirmed "new normal" promoted a challenger fitted on one day, and it then missed a long
+    anomaly period weeks later.
+  - So the operator settles *attribution*, but not whether a one-day challenger will
+    *generalise*. Giving the operator a preview of the challenger's quality is the next step.
+- **No post-hoc rule was adopted.** On held-out entities the losing runs mostly had queries raised
+  on falling scores (`drift_down`). On the development entities the pattern was the reverse, so
+  "don't ask on drift_down" would have been fitted to the test set.
+
+Novelty, relative to `docs/Component_2_Dynamic_Model_Updating.md` §2: label-efficient and active
+drift adaptation asks for labels to *detect* or *retrain*. CADAL-HITL asks one categorical
+question only in the one case where label-free attribution cannot decide: a shift that is
+persistent, learnable and unexplained. It keeps a validated candidate ready, so the answer takes effect immediately and is
+audited. Its fallback is safe by default.
+
+Threats specific to this section:
+- The operator is simulated from labels; real operators answer slower and differently.
+- The 10% incident rule and the 60-event delay are assumptions.
+- This run includes the one-open-query and expiry-cooldown limits. Its `cadal_hitl` results are
+  identical to an earlier run without them: with answers arriving after 60 events, the limits
+  never applied.

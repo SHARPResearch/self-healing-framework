@@ -29,6 +29,26 @@ numbers: `RESULTS_COMPONENT2.md`. Things that look like knobs but were measured,
 - Never pickle an HST for versioning (71 MB, ~6 s to load); use `hst_state.capture/apply`.
   Challengers reuse the champion's tree structure (`reset(keep_scaler=True)`); building a fresh
   HST costs ~16 s.
+- **Final configuration** (`RESULTS_COMPONENT2.md`, `docs/Component_2_Panel_Response.md`):
+  detector `detector_config("pca_s5")` (PCA reconstruction error, EWMA span 5, `src/detectors.py`)
+  with `LifecycleConfig(threshold_method="pot")`. Library defaults are still HST plus the
+  percentile so Component 1 scripts behave as before; `run_dynamic.py` defaults to the final
+  config. Every choice was made on the `machine-1-*` dev entities only, with held-out claims
+  checked on the other 20, NAB and RCAEval. Keep that split if you change anything.
+- **Re-baselining before retraining** (`fit_rebaseline`): it is held to the target alarm rate,
+  **not** the per-entity retrain noise floor (with PCA that floor reached ~0.6). Retraining
+  needs a change event (`retrain_requires_change`); without one, a day-long SMD incident was
+  "learned".
+- **PCA scores** are `spe / (1 + spe)` because the lifecycle clamps scores to [0, 1]. Smoothing
+  and POT work on the raw SPE (`raw_score` / `unsquash`); doing them on squashed scores lost
+  PR-AUC. PCA is degenerate on univariate data, so NAB uses `lazy_range_ens`. It needs clearly
+  more warm-up rows than metrics (RCAEval Sock Shop shows the failure).
+- `src/lazy_hst.py` is river's HST built on demand, verified event by event against river on the
+  same structure. Use it rather than river's `HalfSpaceTrees` anywhere memory matters (0.1 MB vs
+  370 MB).
+- `async_decisions=True` for serving, off for evaluation runs (deterministic).
+- Parallel evaluation workers: run them as `--shard i/n`. SMD preprocessing reuses and atomically
+  writes its parquet files; never rewrite shared data files from concurrent workers.
 
 **Tuning + calibration done, see `RESULTS.md` for full numbers and honest caveats**: threshold
 swept (0.7 guide default -> 0.4), hyperparameters swept one-at-a-time (baseline

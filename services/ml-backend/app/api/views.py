@@ -14,6 +14,18 @@ def _iso(ts: float | None = None) -> str:
     return datetime.fromtimestamp(ts, timezone.utc).isoformat() if ts else datetime.now(timezone.utc).isoformat()
 
 
+def quarantine_trigger(rt: ServiceRuntime) -> str | None:
+    mgr = rt.manager
+    return getattr(mgr, "_q_trigger", None) if mgr.phase != "stable" else None
+
+
+def drift_detected(rt: ServiceRuntime) -> bool:
+    """Drift or a change is being investigated, or the operator was asked. A routine scheduled
+    validity check (one day in every two) is not drift."""
+    trigger = quarantine_trigger(rt)
+    return (trigger is not None and trigger != "scheduled") or bool(rt.manager.open_queries)
+
+
 def service_health(fleet: ServiceFleet, rt: ServiceRuntime) -> dict:
     mgr = rt.manager
     return {
@@ -24,9 +36,10 @@ def service_health(fleet: ServiceFleet, rt: ServiceRuntime) -> dict:
         "scoreHistory": fleet.score_history(rt),
         "lastAction": rt.last_action,
         "lastActionAt": rt.last_action_at,
-        "driftDetected": mgr.phase != "stable" or bool(mgr.open_queries),
+        "driftDetected": drift_detected(rt),
         # lifecycle extras
         "phase": mgr.phase,
+        "quarantineTrigger": quarantine_trigger(rt),
         "alarm": rt.last_alarm,
         "modelVersion": mgr.registry.production_version,
         "openQueries": len(mgr.open_queries),

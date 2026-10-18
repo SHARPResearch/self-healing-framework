@@ -272,6 +272,23 @@ CREATE INDEX IF NOT EXISTS idx_in_flight_service
     ON in_flight_actions (service_id, expires_at DESC);
 """
 
+# ─────────────────────────────────────────────────────────────────────
+# INCIDENT LIFECYCLE — one row per service, tracks current incident
+# ─────────────────────────────────────────────────────────────────────
+INCIDENT_STATE_DDL = """
+CREATE TABLE IF NOT EXISTS incident_state (
+    service_id       TEXT PRIMARY KEY,
+    current_health   TEXT NOT NULL DEFAULT 'healthy',
+    incident_start   TIMESTAMPTZ,
+    incident_id      TEXT,
+    last_seen_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_incident_open
+    ON incident_state (incident_start)
+    WHERE incident_start IS NOT NULL;
+"""
 
 # ─────────────────────────────────────────────────────────────────────
 # Register all new DDL in the list that run_migrations() iterates.
@@ -285,4 +302,5 @@ BATCH1_DDL = [
     ESCALATIONS_DDL,
     ACTION_HISTORY_DDL,
     IN_FLIGHT_ACTIONS_DDL,
+    INCIDENT_STATE_DDL,       
 ]

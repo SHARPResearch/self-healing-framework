@@ -38,12 +38,15 @@ logger = logging.getLogger(__name__)
 
 DEMO_SERVICES = [
     # (service_id, display name, SMD entity it replays, first test row of its replay window)
-    ("service-a-auth", "Auth Service", "machine-2-9", 0),
-    ("service-b-orders", "Orders Service", "machine-3-10", 15250),
-    ("service-c-inventory", "Inventory Service", "machine-1-2", 9250),
-    ("service-d-shipping", "Shipping Service", "machine-2-8", 0),
-    ("service-e-payments", "Payments Service", "machine-2-2", 0),
-    ("service-f-search", "Search Service", "machine-1-5", 0),
+    # Orders, Inventory and Payments are the quiet ones the demo injects into (no drift check of
+    # their own for minutes); Auth, Shipping and Search have a drift check about every 3 minutes,
+    # which is realistic background activity. Chosen by tools in docs/Component_2_Demo_Script.md.
+    ("service-a-auth", "Auth Service", "machine-3-8", 3000),
+    ("service-b-orders", "Orders Service", "machine-3-10", 15000),
+    ("service-c-inventory", "Inventory Service", "machine-1-2", 12000),
+    ("service-d-shipping", "Shipping Service", "machine-3-8", 0),
+    ("service-e-payments", "Payments Service", "machine-1-2", 15000),
+    ("service-f-search", "Search Service", "machine-3-10", 3000),
 ]
 CANONICAL = ("cpu_rate", "memory_used", "network_rx", "network_tx", "disk_io_read", "disk_io_write")
 
@@ -103,6 +106,7 @@ class ServiceRuntime:
     test_df: pd.DataFrame
     medians: dict
     cursor: int = 0
+    window_start: int = 0               # first SMD test row of this service's replay window
     injections: list = field(default_factory=list)
     scores: deque = field(default_factory=lambda: deque(maxlen=600))   # (step, normalized, alarm)
     last_display: float = 0.0
@@ -160,7 +164,7 @@ class ServiceFleet:
         mgr.warm_up(train.tail(self.warm_up_rows).to_dict(orient="records"))
         rt = ServiceRuntime(service_id=service_id, display_name=name, entity=entity, manager=mgr,
                             changes=changes, outbox=outbox,
-                            test_rows=test.to_dict(orient="records"), test_df=test,
+                            test_rows=test.to_dict(orient="records"), test_df=test, window_start=start,
                             medians=train.median().to_dict())
         rt.rng.seed(service_id)
         return rt
@@ -216,7 +220,7 @@ class ServiceFleet:
             varying = [c for c in rt.test_df.columns if float(rt.test_df[c].std()) > 1e-6]
             feats = tuple(rt.rng.sample(varying, max(2, len(varying) // 8)))
             # a transient spike: a fifth of a lifecycle day, well inside one quarantine
-            length = max(60, settings.demo_samples_per_day // 5)
+            length = settings.demo_incident_events or max(60, settings.demo_samples_per_day // 5)
             rt.injections.append(Injection("incident", feats, tuple(0.45 for _ in feats),
                                            until_step=step + length))
             return {"kind": kind, "features": list(feats), "events": length}

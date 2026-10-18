@@ -35,6 +35,7 @@ injected deploy, silent and no-op drift scenarios.
 | Versioned model + threshold, rollback, audit trail | | ✔ (no trigger) | | | | closed | | **✔ MLflow aliases + JSONL** |
 | Label-free validation before promote **and** before rollback | | | | McUDI (degradation only) | | | | **✔** |
 | Rollback in one scoring cycle for HST | | | | | | | | **✔ 13 KB sparse snapshots** |
+| Asks a human only when label-free attribution cannot decide, with a validated candidate waiting | | | | | | | | **✔ CADAL-HITL** |
 
 Reading of the table, and the claim it supports. Prior work has each piece: river's online
 learning and ADWIN, MLflow's registry, adaptive detectors such as METER, ARCUS, AnDri and
@@ -48,7 +49,10 @@ one closed loop that does all of the following:
 3. validates both directions of a model swap without labels (challenger before promote, rollback
    target before rollback);
 4. versions the model together with its threshold so that every behavioural change of the
-   detector is an auditable transition.
+   detector is an auditable transition;
+5. asks the operator a single categorical question ("new normal or incident?") only when the
+   label-free evidence cannot decide. A validated challenger is kept ready, so the answer takes
+   effect immediately and is audited, and an unanswered question falls back safely to hold.
 
 That combination is the contribution. The individual algorithms (ADWIN, HST, percentile
 calibration) are deliberately standard and cited.
@@ -108,6 +112,21 @@ baseline.
 decide lifecycle transitions. MLflow (Zaharia et al., 2018) versions models but has "no automated
 trigger" (proposal §2). MLflow 3 also deprecates the registry *stages* the proposal planned to
 use; CADAL uses aliases and tags instead.
+
+**Human feedback and active learning under drift.**
+- Active learning for drifting streams (Žliobaitė et al., TNNLS 2014) spends a labelling budget on
+  *instance labels* to keep a classifier current.
+- Opprentice (Liu et al., IMC 2015) and Label-Less (INFOCOM 2019) collect operator anomaly labels
+  to configure KPI detectors.
+- DREAM uses human feedback to adapt malware classifiers after drift.
+- The closest recent work is a self-adaptive anomaly detector for connected vehicles (arXiv
+  2607.08373, 2026). It pairs drift detectors with an operator-triggered retraining loop.
+
+In all of these the human supplies labels, or decides *to retrain*. CADAL-HITL instead asks one
+question about the *cause* of a shift, and only in the single verdict where unsupervised
+attribution is undecidable: persistent, learnable and unexplained. It is evaluated on
+label-efficiency (MCC gained per question) and on robustness to wrong answers, not on labelling
+cost.
 
 **Evaluation methodology.** Point-adjusted F1 overestimates detectors (Kim et al., AAAI 2022), so
 CADAL is evaluated with point-wise F1 plus event-wise recall, and the point-adjusted variant is
@@ -185,6 +204,15 @@ Key design decisions, each motivated by a measured failure (Section 6 has the ev
       Half-Space Trees as the default detector (held-out PR-AUC +51%, `ml-pipeline/RESULTS.md`).
     - Lazily built trees keep HST available at ~0.1 MB instead of ~370 MB per model.
     - Memory per monitored service is 34 KB.
+11. **Operator in the loop (CADAL-HITL).** The "learnable but unexplained" case gets the verdict
+    `ambiguous` and the action `ask`, instead of being held as a probable incident:
+    - The champion keeps serving and the validated challenger is parked as a pending candidate.
+    - The answer "new_normal" promotes that candidate, and the query id and operator are recorded
+      on the version and the transition. The answer "incident" holds and pauses asking.
+    - Safeguards: a query TTL with a fallback to hold, one open query per service, a budget per
+      day, and a cooldown after an "incident" answer or an expiry.
+    - It is exposed in `services/ml-backend` as `POST /api/queries/{id}/answer` and on the
+      dashboard's Model lifecycle page.
 
 ## 5. Mapping to the proposal's requirements
 
@@ -211,7 +239,15 @@ held-out SMD entities (MCC, CADAL vs static, same detector):
   0.091 vs 0.000, because the static model alarms on 99.5% of normal time.
 - **On SMD's real train-to-test drift**, with a deployment event allowing a model update:
   0.297 vs 0.243 (p = 0.026).
-- **After an unannounced shift:** not significant. This is the main limitation.
+- **After an unannounced shift:** not significant for plain CADAL. This was the main
+  limitation, and CADAL-HITL targets it.
+- **CADAL-HITL** (operator queries, simulated from labels; `RESULTS_COMPONENT2.md` §9):
+  - After an unannounced shift, false alarms fall from 0.76 to 0.41 (p < 0.0001) and post-shift
+    MCC rises from 0.031 to 0.083 (p = 0.008), all 28 entities.
+  - It asks about 1.5 questions per service per 20 days, and is unaffected by 20% wrong answers.
+  - It costs a little, not significantly, on undisturbed data and on real SMD drift. A confirmed
+    new normal still promotes a challenger fitted on one day, and that challenger may generalise
+    worse.
 - **Against other policies:** the original "roll back on drift" design never beats static, and
   blind periodic retraining loses 40% of the MCC when nothing changes. CADAL has the best mean
   over all scenarios.
@@ -271,3 +307,6 @@ publishable on their own as an "experience report".
 17. N. Goix. How to Evaluate the Quality of Unsupervised Anomaly Detection Algorithms? arXiv 1607.01152, 2016.
 18. J. Gama et al. A Survey on Concept Drift Adaptation. ACM CSUR 46(4), 2014.
 19. Dynatrace documentation: auto-adaptive baselines and baseline reset. https://www.dynatrace.com/news/blog/dynatrace-innovates-again-with-the-release-of-topology-driven-auto-adaptive-metric-baselines/
+20. I. Žliobaitė, A. Bifet, B. Pfahringer, G. Holmes. Active Learning With Drifting Streaming Data. IEEE TNNLS 25(1):27-39, 2014.
+21. D. Liu et al. Opprentice: Towards Practical and Automatic Anomaly Detection Through Machine Learning. IMC 2015.
+22. Self-Adaptive Anomaly Detection with Reinforcement Learning and Human Feedback in Connected Vehicles. arXiv 2607.08373, 2026. https://arxiv.org/abs/2607.08373

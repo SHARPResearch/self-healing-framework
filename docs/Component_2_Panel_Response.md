@@ -143,6 +143,13 @@ changed. CADAL is the only policy that helps after changes without hurting the r
   partly repaired (not significant). This is deliberate. Without such a signal, a persistent
   change cannot be told apart from a long incident without labels, and the system refuses to
   "learn" a possible incident.
+  - **Progress since PP1: operator in the loop (CADAL-HITL).** In exactly this case, CADAL now asks
+    the operator "new normal or incident?" and keeps the current model serving until answered.
+  - With a simulated operator, after an unannounced shift false alarms fall from 0.76 to 0.41
+    (p < 0.0001) and post-shift MCC rises from 0.031 to 0.083 (p = 0.008).
+  - It asks about 1.5 questions per service per 20 days, and 20% wrong answers make no
+    significant difference.
+  - Full results are in `ml-pipeline/RESULTS_COMPONENT2.md` §9.
 - **The accuracy ceiling:** absolute scores stay modest (best F1 ~0.3 on SMD). That is the
   ceiling of unsupervised detection on this dataset, so the proposal's F1 ≥ 0.65 target is not
   reachable.
@@ -156,4 +163,4 @@ changed. CADAL is the only policy that helps after changes without hurting the r
 | panel comment | answer |
 |---|---|
 | Scalability | 34 KB and ~0.03 ms per service per event. ~20k events/s per process, 70k with 4 processes. Model updates block scoring for ≤ 0.4 ms. Replicas share only ~5 KB model versions in MLflow. |
-| Dynamic vs static | A paired, held-out comparison on real telemetry under controlled drift. Dynamic updating never hurt when nothing changed, restored detection after deployments (MCC 0.128 vs 0.074 on held-out machines), and beat the static model on SMD's real drift (0.297 vs 0.243, p = 0.026). It does not yet fix changes that come without a deployment signal. |
+| Dynamic vs static | A paired, held-out comparison on real telemetry under controlled drift. Dynamic updating never hurt when nothing changed, restored detection after deployments (MCC 0.128 vs 0.074 on held-out machines), and beat the static model on SMD's real drift (0.297 vs 0.243, p = 0.026). Changes without a deployment signal are now handled by asking the operator: post-shift false alarms 0.76 → 0.41 at ~1.5 questions per service per 20 days. |

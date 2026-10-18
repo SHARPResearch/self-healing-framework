@@ -4,3 +4,4 @@ dist-ssr/
 *.tsbuildinfo
 .env
 .env.local
+/frontend/package-lock.json

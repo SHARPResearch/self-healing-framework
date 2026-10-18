@@ -128,6 +128,10 @@ async def get_decision(decision_id: str):
         raise HTTPException(404, f"decision {decision_id} not found")
     return row_to_decision(row)
 
+@router.get("/incidents")
+async def list_incidents():
+    """Debug — show all service incident states."""
+    return await postgres_store.get_all_incident_states()
 
 # ─────────────────────────────────────────────────────────────────────
 # Helpers

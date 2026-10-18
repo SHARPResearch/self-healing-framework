@@ -224,11 +224,13 @@ held-out SMD entities (MCC, CADAL vs static, same detector):
   +0.2 to 0.3 on 30% of features). Real deployments also change correlations and variance.
   Mitigation: also report the "none" scenario (natural SMD drift only) and the no-op deployment
   scenario.
-- **Development entity.** The design was debugged on machine-1-1. Results are reported for all
-  28 entities and separately for the 27 held-out ones.
-- **Single detector.** Every result is for river HST with MinMaxScaler. The attribution rules are
-  model-agnostic, but the "continuous learning hurts" finding may be HST-specific
-  (window-based mass).
+- **Development entities.** Every design choice was made on the 8 `machine-1-*` entities; the
+  claims are the 20 held-out entities, NAB and RCAEval.
+- **Detector dependence.** The lifecycle was evaluated with two detectors: PCA as the default, and
+  river HST as shipped. CADAL helps PCA much more than HST, because PCA is far more
+  drift-sensitive. The "continuous learning hurts" finding was measured with HST (window-based
+  mass); PCA does not learn continuously at all.
+- **Multiple comparisons.** About 60 paired tests were run without correction.
 - **Inherent ambiguity.** An incident that settles into a steady, self-consistent state for longer
   than the quarantine is indistinguishable from a new normal without labels. The change prior
   and longer silent quarantine reduce this risk but cannot remove it.

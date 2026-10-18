@@ -50,7 +50,7 @@ async def dashboard_summary() -> dict:
     decisions_all = [d for rt in rts for d in rt.manager.decisions]
     return {
         "activeAlarms": sum(1 for rt in rts if rt.last_alarm),
-        "servicesInQuarantine": sum(1 for rt in rts if rt.manager.phase != "stable"),
+        "servicesInQuarantine": sum(1 for rt in rts if views.drift_detected(rt)),
         "openQueries": sum(len(rt.manager.open_queries) for rt in rts),
         "modelUpdates": sum(1 for d in decisions_all if d.get("action") in ("promote", "rollback")),
         "decisions": len(decisions_all),

@@ -105,6 +105,7 @@ class Runtime:
                     "step": res.step, "score": round(display, 4), "alarm": bool(res.alarm),
                     "severity": self.fleet.severity(rt), "version": res.version,
                     "phase": res.phase, "threshold": 0.5,
+                    "trigger": getattr(rt.manager, "_q_trigger", None) if res.phase != "stable" else None,
                 }))
             await self.drain(rt)
 

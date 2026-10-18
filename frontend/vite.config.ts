@@ -12,5 +12,10 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    // services/ml-backend (uvicorn on :8000). The app falls back to mock data when it isn't up.
+    proxy: {
+      "/api": "http://localhost:8000",
+      "/ws": { target: "ws://localhost:8000", ws: true },
+    },
   },
 });

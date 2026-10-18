@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useUiStore } from "@/shared/store/uiStore";
+import { useLiveConnection } from "@/hooks/useLiveConnection";
 import { Sidebar } from "./Sidebar";
 import { Header } from "./Header";
 
@@ -12,6 +13,7 @@ interface AppShellProps {
 export function AppShell({ pageTitle, children }: AppShellProps) {
   const collapsed = useUiStore((state) => state.sidebarCollapsed);
   const toggleSidebar = useUiStore((state) => state.toggleSidebar);
+  useLiveConnection();
 
   return (
     <TooltipProvider>

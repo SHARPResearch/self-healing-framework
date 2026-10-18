@@ -163,6 +163,8 @@ class LogHub:
                     if t <= start:             # --since is inclusive: skip what is already stored
                         continue
                     start = t
+                    if not message.strip():    # docker passes blank lines through
+                        continue
                     self.add(make_line(service, message, container_level(message),
                                        source="container", attrs={"container": container}, time=t))
                 proc.wait()
@@ -183,15 +185,19 @@ class LogHub:
 
 class AlarmLog:
     """
-    Turns a service's per-event alarm flag into two log lines per episode instead of one per event:
-    "raised" when it starts alarming after QUIET events without an alarm, "cleared" once it has been
-    quiet for QUIET events again. SMD scores are spiky; per-event logging would be unreadable.
+    Turns a service's per-event alarm flag into two log lines per episode instead of one per event.
+    An episode starts at its first alarming event, but is only logged ("raised") once it has
+    MIN_ALARMS alarming events: a calibrated detector alarms on about 1% of normal events, and a
+    line for every such blip would bury the real ones. It ends ("cleared") after QUIET events
+    without an alarm, and only logged episodes get a "cleared" line.
     """
 
     QUIET = 30
+    MIN_ALARMS = 8
 
     def __init__(self):
-        self.active = False
+        self.open = False
+        self.raised = False
         self.since_alarm = self.QUIET
         self.started_step = 0
         self.peak = 0.0
@@ -200,15 +206,19 @@ class AlarmLog:
     def update(self, step: int, alarm: bool, score: float) -> Optional[tuple[str, dict]]:
         if alarm:
             self.since_alarm = 0
-            if not self.active:
-                self.active, self.started_step, self.peak, self.alarms = True, step, score, 1
-                return "raised", {"step": step, "score": round(score, 4)}
-            self.peak = max(self.peak, score)
-            self.alarms += 1
+            if not self.open:
+                self.open, self.raised, self.started_step, self.peak, self.alarms = True, False, step, score, 1
+            else:
+                self.peak = max(self.peak, score)
+                self.alarms += 1
+            if not self.raised and self.alarms >= self.MIN_ALARMS:
+                self.raised = True
+                return "raised", {"step": step, "since_step": self.started_step, "score": round(self.peak, 4)}
             return None
         self.since_alarm += 1
-        if self.active and self.since_alarm >= self.QUIET:
-            self.active = False
-            return "cleared", {"from_step": self.started_step, "to_step": step - self.QUIET,
-                               "peak": round(self.peak, 4), "alarming_events": self.alarms}
+        if self.open and self.since_alarm >= self.QUIET:
+            was_logged, self.open, self.raised = self.raised, False, False
+            if was_logged:
+                return "cleared", {"from_step": self.started_step, "to_step": step - self.QUIET,
+                                   "peak": round(self.peak, 4), "alarming_events": self.alarms}
         return None

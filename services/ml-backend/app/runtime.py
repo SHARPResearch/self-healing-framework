@@ -127,8 +127,8 @@ class Runtime:
             if episode:
                 kind, attrs = episode
                 if kind == "raised":
-                    self.log(rt.service_id, f"alarm raised at step {attrs['step']} "
-                             f"(score {attrs['score']}, model v{res.version})", "warn", attrs)
+                    self.log(rt.service_id, f"alarm raised: sustained since step {attrs['since_step']} "
+                             f"(peak score {attrs['score']}, model v{res.version})", "warn", attrs)
                 else:
                     self.log(rt.service_id, f"alarm cleared: steps {attrs['from_step']} to {attrs['to_step']}, "
                              f"peak score {attrs['peak']}, {attrs['alarming_events']} alarming events",
@@ -165,10 +165,10 @@ class Runtime:
         while rt.outbox.events:
             kind, payload = rt.outbox.events.popleft()
             if kind == "transition":
+                moved = payload["from_version"] not in (None, payload["to_version"])
                 self.log(rt.service_id, f"model {payload['transition']} "
-                         f"v{payload['from_version']} to v{payload['to_version']}: {payload['reason']}"
-                         if payload["from_version"] != payload["to_version"] else
-                         f"model {payload['transition']} v{payload['to_version']}: {payload['reason']}",
+                         + (f"v{payload['from_version']} to v{payload['to_version']}" if moved
+                            else f"v{payload['to_version']}") + f": {payload['reason']}",
                          "warn" if payload["transition"] == "rollback" else "info",
                          {"transition": payload["transition"], "to_version": payload["to_version"]})
                 await self.store.write_transition(payload)

@@ -98,10 +98,10 @@ def _append(path: Path, fields: list[str], row: dict) -> None:
         w.writerow(row)
 
 
-def warm_up_entity(entity_id: str, hst_cfg=HST_CFG):
+def warm_up_entity(entity_id: str, hst_cfg=HST_CFG, base: LifecycleConfig = BASE):
     """One calibrated warm-up on an SMD entity's train split."""
     train = pd.read_parquet(preprocess_entity(entity_id, split="train")).to_dict(orient="records")
-    return warm_up_rows(entity_id, train, hst_cfg, BASE)
+    return warm_up_rows(entity_id, train, hst_cfg, base)
 
 
 def warm_up_rows(entity_id: str, train: list[dict], hst_cfg=HST_CFG, base: LifecycleConfig = BASE):
@@ -180,6 +180,8 @@ def main() -> None:
     parser.add_argument("--shard", default="0/1", help="i/n: run every n-th entity starting at i (parallel workers)")
     parser.add_argument("--detector", default="river", choices=list(DETECTOR_PRESETS),
                         help="Component 1 detector preset (src/hst_model.DETECTOR_PRESETS)")
+    parser.add_argument("--threshold", default="percentile", choices=["percentile", "pot"],
+                        help="calibration rule for every policy (LifecycleConfig.threshold_method)")
     parser.add_argument("--trace", action="store_true",
                         help="save per-step score / alarm / version / threshold to <out-dir>/traces/")
     args = parser.parse_args()
@@ -191,6 +193,7 @@ def main() -> None:
     runs_csv, curves_csv, decisions_path = out / "runs.csv", out / "f1_curves.csv", out / "decisions.jsonl"
     done = _done_keys(runs_csv)
     hst_cfg = detector_config(args.detector)
+    base = replace(BASE, threshold_method=args.threshold)
     entities = args.entities or discover_entities("train")
     shard, n_shards = (int(v) for v in args.shard.split("/"))
     entities = entities[shard::n_shards]
@@ -200,7 +203,7 @@ def main() -> None:
         if not todo:
             continue
         t = time.perf_counter()
-        model, warm_state, calib, recent, null, ref = warm_up_entity(entity_id, hst_cfg)
+        model, warm_state, calib, recent, null, ref = warm_up_entity(entity_id, hst_cfg, base)
         logger.info("[%s] warm-up %.0fs, %d runs to do", entity_id, time.perf_counter() - t, len(todo))
         test_df = pd.read_parquet(preprocess_entity(entity_id, split="test"))
         labels = load_labels(entity_id)
@@ -214,7 +217,7 @@ def main() -> None:
                 trace = {} if args.trace else None
                 summary, curve, decisions = run_one(
                     entity_id, model, warm_state, calib, recent, null, rows, labels, injections,
-                    ALL_VARIANTS[variant], hst_cfg, trace, ref)
+                    replace(ALL_VARIANTS[variant], threshold_method=args.threshold), hst_cfg, trace, ref)
                 if trace:
                     (out / "traces").mkdir(exist_ok=True)
                     np.savez_compressed(out / "traces" / f"{entity_id}_{scenario}_{variant}.npz", **trace)

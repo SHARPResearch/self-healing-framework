@@ -20,6 +20,16 @@ const FLUSH_MS = 250;
 const POLL_MS = 4000;
 const MAX_BACKOFF_MS = 30_000;
 
+/** Pages that want raw messages of one type (the Logs page tails `log`) without the store. */
+const listeners = new Map<string, Set<(msg: LiveMessage) => void>>();
+
+export function subscribeToMessages(type: string, fn: (msg: LiveMessage) => void): () => void {
+  let set = listeners.get(type);
+  if (!set) listeners.set(type, (set = new Set()));
+  set.add(fn);
+  return () => set.delete(fn);
+}
+
 let started = false;
 let backoff = 1000;
 let queue: LiveMessage[] = [];
@@ -105,6 +115,10 @@ function connect(): void {
   ws.onmessage = (event) => {
     try {
       const msg = JSON.parse(event.data as string) as LiveMessage;
+      if (msg.type === "log") {       // high volume and only the Logs page wants it
+        listeners.get("log")?.forEach((fn) => fn(msg));
+        return;
+      }
       queue.push(msg);
       notify(msg);
     } catch {

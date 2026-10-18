@@ -105,6 +105,15 @@ class LifecycleConfig:
     # champion keeps scoring (FR3). Off by default so evaluation runs are deterministic. Copying
     # is cheap only for lazy trees (HST_LAZY); river's eager trees copy ~1.6M nodes.
     async_decisions: bool = False
+    # Operator in the loop (CADAL-HITL). When the label-free evidence cannot settle a shift (a
+    # self-consistent new regime with no change event to explain it), ask the operator instead of
+    # guessing: the champion keeps serving, the validated challenger waits as a pending candidate,
+    # and the answer licenses or refuses its promotion. Unanswered queries expire to HOLD.
+    operator_queries: bool = False
+    query_ttl: int = 1440                   # events a query stays open before falling back to HOLD
+    query_budget: int = 2                   # at most this many queries per service ...
+    query_budget_window: int = 1440         # ... per this many events (one day at SMD rate)
+    query_cooldown: int = 1440              # after "incident", do not ask again for this long
 
     def __post_init__(self):
         if self.policy not in POLICIES:
@@ -126,6 +135,9 @@ class LifecycleConfig:
             quarantine_with_change=scale(self.quarantine_with_change),
             quarantine_silent=scale(self.quarantine_silent),
             change_horizon=scale(self.change_horizon),
+            query_ttl=scale(self.query_ttl),
+            query_budget_window=scale(self.query_budget_window),
+            query_cooldown=scale(self.query_cooldown),
             cooldown=scale(self.cooldown),
             scheduled_every=scale(self.scheduled_every),
             scheduled_window=scale(self.scheduled_window),
@@ -316,6 +328,10 @@ class DynamicModelManager:
         self._executor: Optional[ThreadPoolExecutor] = None
         self._pending = None
         self._deferred_change = False
+        # Operator queries: query_id -> record; pending candidates stay in memory only.
+        self.queries: dict[str, dict] = {}
+        self._query_steps: list[int] = []
+        self._ask_cooldown_until = 0
 
     # ── warm-up ──────────────────────────────────────────────────────────────
     def warm_up(self, rows: list[dict], calib_frac: float = 0.2) -> dict:
@@ -376,6 +392,8 @@ class DynamicModelManager:
         if self._pending is not None and self._pending.done():
             out, self._pending = self._pending.result(), None
             decision = self._apply_outcome(out)
+
+        decision = self._expire_queries() or decision
 
         for evt in self.changes.poll(self.step):
             decision = self._on_change_event(evt) or decision
@@ -571,7 +589,14 @@ class DynamicModelManager:
             "champion_state": capture(self.model),
             "champion_threshold": self.threshold, "champion_gate": self.learn_gate,
             "ref_stats": self.ref_stats, "null": self.attribution_null.get(n, {}),
+            "may_ask": self._may_ask(),
         }
+
+    def _may_ask(self) -> bool:
+        if not self.cfg.operator_queries or self.step < self._ask_cooldown_until:
+            return False
+        recent = [s for s in self._query_steps if self.step - s < self.cfg.query_budget_window]
+        return len(recent) < self.cfg.query_budget
 
     def _evaluate_quarantine(self, model, ctx: dict) -> dict:
         """
@@ -623,7 +648,8 @@ class DynamicModelManager:
             moving_floor=ctx["null"].get("moving"),
             rebaseline_tail_alarm_rate=rebaseline_tail,
         )
-        result: Attribution = attribute(evidence, self.cfg.attribution)
+        attribution_cfg = replace(self.cfg.attribution, ask_operator=ctx.get("may_ask", False))
+        result: Attribution = attribute(evidence, attribution_cfg)
 
         rollback_target = None
         if result.action is Action.ROLLBACK:
@@ -642,7 +668,7 @@ class DynamicModelManager:
                 )
 
         challenger_state = None
-        if result.action is Action.PROMOTE and result.evidence.get("repair") != "rebaseline":
+        if result.action in (Action.PROMOTE, Action.ASK) and result.evidence.get("repair") != "rebaseline":
             if self.cfg.learns_while_serving:
                 # A learning model is served with a threshold calibrated the way it will run
                 # (score each remaining buffered event, then learn it), not on the frozen
@@ -698,9 +724,13 @@ class DynamicModelManager:
             self.learn_gate = target.tags.get("learn_gate", target.threshold)
             self.registry.set_production(target.version, step=self.step, transition="rollback",
                                          reason=result.reason, evidence=result.evidence)
-        else:  # HOLD or RESUME: the champion stays, exactly as it was
+        else:  # HOLD, RESUME or ASK: the champion stays, exactly as it was
             apply(self.model, out["champion_state"])
             self.threshold, self.learn_gate = out["champion_threshold"], out["champion_gate"]
+
+        query_id = None
+        if result.action is Action.ASK:
+            query_id = self._open_query(result, out)
 
         self.monitor.reset()
         self.phase = "stable"
@@ -709,11 +739,128 @@ class DynamicModelManager:
         self.decision_ms.append(out["eval_ms"])
         decision = self._decide({"action": result.action.value, "verdict": result.verdict.value,
                                  "trigger": out["trigger"], "reason": result.reason,
-                                 "evidence": result.evidence})
+                                 "evidence": result.evidence, "query_id": query_id})
         if self._deferred_change:
             self._deferred_change = False
             self._open_quarantine("change_event")
         return decision
+
+    # -- operator in the loop -------------------------------------------------------------------
+    def _open_query(self, result: Attribution, out: dict) -> str:
+        query_id = f"q-{self.service_id}-{self.step}"
+        self._query_steps.append(self.step)
+        self.queries[query_id] = {
+            "query_id": query_id, "service_id": self.service_id, "status": "open",
+            "created_step": self.step, "expires_step": self.step + self.cfg.query_ttl,
+            "question": "Is this a new normal for the service, or an incident?",
+            "reason": result.reason, "evidence": result.evidence,
+            "answer": None, "operator": None, "answered_step": None,
+            "_candidate": {
+                "state": out["challenger_state"], "threshold": out["challenger_threshold"],
+                "gate": out["challenger_gate"], "ref_stats": out["new_ref_stats"],
+            },
+        }
+        self.publisher.publish_lifecycle({"event": "operator_query", **self.public_query(query_id)})
+        return query_id
+
+    def public_query(self, query_id: str) -> dict:
+        """A query without its in-memory candidate model, for APIs and events."""
+        return {k: v for k, v in self.queries[query_id].items() if not k.startswith("_")}
+
+    @property
+    def open_queries(self) -> list[dict]:
+        return [self.public_query(q) for q, r in self.queries.items() if r["status"] == "open"]
+
+    def _expire_queries(self) -> Optional[dict]:
+        decision = None
+        for query_id, q in self.queries.items():
+            if q["status"] == "open" and self.step >= q["expires_step"]:
+                q["status"] = "expired"
+                q.pop("_candidate", None)
+                self.publisher.publish_lifecycle({"event": "query_expired", **self.public_query(query_id)})
+                decision = self._decide({
+                    "action": "hold", "verdict": "incident", "trigger": "operator_timeout",
+                    "reason": f"query {query_id} expired unanswered: keeping the champion (safe default)",
+                    "evidence": {"query_id": query_id}, "query_id": query_id,
+                })
+        return decision
+
+    def answer_query(self, query_id: str, answer: str, operator: str = "operator") -> dict:
+        """
+        Apply an operator's answer to an open query. "new_normal" promotes the pending,
+        already validated challenger; "incident" confirms the hold and pauses asking for
+        query_cooldown events. Both are recorded with the query id and the operator.
+        """
+        if answer not in ("new_normal", "incident"):
+            raise ValueError("answer must be 'new_normal' or 'incident'")
+        q = self.queries.get(query_id)
+        if q is None or q["status"] != "open":
+            raise KeyError(f"no open query {query_id}")
+        if self._pending is not None:
+            raise RuntimeError("a lifecycle decision is in progress; retry in a moment")
+        q.update(status="answered", answer=answer, operator=operator, answered_step=self.step)
+        candidate = q.pop("_candidate")
+        evidence = {**q["evidence"], "query_id": query_id, "operator": operator, "answer": answer}
+        if answer == "new_normal":
+            reason = f"operator {operator} confirmed a new normal (query {query_id})"
+            apply(self.model, candidate["state"])
+            self.shifts = {}
+            self.ref_stats = candidate["ref_stats"]
+            self.threshold, self.learn_gate = candidate["threshold"], candidate["gate"]
+            version = self.registry.register(
+                self._snapshot(), self.threshold, self.cfg.target_rate, step=self.step, reason=reason,
+                tags={"kind": "challenger", "verdict": "concept_drift", "learn_gate": self.learn_gate,
+                      "query_id": query_id, "operator": operator},
+            )
+            self.registry.set_production(version, step=self.step, transition="promote",
+                                         reason=reason, evidence=evidence)
+            if self.phase == "quarantine":   # the answer supersedes an observation in progress
+                self.phase = "stable"
+            self.monitor.reset()
+            self._cooldown_until = self.step + self.cfg.cooldown
+            action, verdict = "promote", "concept_drift"
+        else:
+            reason = f"operator {operator} confirmed an incident (query {query_id}): champion kept"
+            self._ask_cooldown_until = self.step + self.cfg.query_cooldown
+            action, verdict = "hold", "incident"
+        self.publisher.publish_lifecycle({"event": "query_answered", **self.public_query(query_id)})
+        return self._decide({"action": action, "verdict": verdict, "trigger": "operator",
+                             "reason": reason, "evidence": evidence, "query_id": query_id})
+
+    def request_validity_check(self, operator: str = "operator") -> bool:
+        """Open a quarantine now, as the scheduled check would (UI 'check model' button)."""
+        if self.cfg.policy != "cadal" or self.phase != "stable":
+            return False
+        self._open_quarantine("operator")
+        return True
+
+    def manual_set_version(self, version: int, transition: str, operator: str = "operator") -> dict:
+        """
+        Serve a registered version because an operator said so (UI promote / rollback). Recorded
+        as an ordinary audited transition, with the version's alarm rate on recent traffic as
+        evidence of what the operator chose.
+        """
+        if transition not in ("promote", "rollback"):
+            raise ValueError("transition must be 'promote' or 'rollback'")
+        if self._pending is not None:
+            raise RuntimeError("a lifecycle decision is in progress; retry in a moment")
+        target = self.registry.get(version)
+        recent = list(self._recent_rows)[-200:]
+        evidence = {"operator": operator, "target_version": version}
+        if recent:
+            evidence["target_recent_alarm_rate"] = round(self._alarm_rate_of(target, recent), 4)
+        self._restore(target.state)
+        self.threshold = target.threshold
+        self.learn_gate = target.tags.get("learn_gate", target.threshold)
+        reason = f"manual {transition} to v{version} by {operator}"
+        self.registry.set_production(version, step=self.step, transition=transition,
+                                     reason=reason, evidence=evidence)
+        if self.phase == "quarantine":
+            self.phase = "stable"
+        self.monitor.reset()
+        self._cooldown_until = self.step + self.cfg.cooldown
+        return self._decide({"action": transition, "verdict": "operator", "trigger": "operator",
+                             "reason": reason, "evidence": evidence})
 
     def _close_quarantine(self) -> Optional[dict]:
         ctx = self._quarantine_context()

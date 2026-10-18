@@ -452,3 +452,108 @@ def test_pot_threshold_method_sets_r0_and_fits_the_raw_error_tail():
     pct = calibrated_threshold(mgr.model, calib, dc_replace(cfg, threshold_method="percentile"))
     pot = calibrated_threshold(mgr.model, calib, cfg)
     assert pot != pct and 0.0 < pot < 1.0
+
+
+# -- operator in the loop (CADAL-HITL) -------------------------------------------------------
+def _hitl_manager(**kw):
+    from src.change_events import QueueChangeEventSource
+    from src.publishers import RecordingPublisher
+    cfg = _cfg(operator_queries=True, query_ttl=400, query_budget=2, query_budget_window=5000,
+               query_cooldown=1000, **kw)
+    pub = RecordingPublisher()
+    mgr = DynamicModelManager("svc", cfg, HST, change_source=QueueChangeEventSource(), publisher=pub)
+    rng = random.Random(0)
+    mgr.warm_up([_normal(rng) for _ in range(600)])
+    return mgr, pub
+
+
+def _silent_regime_change(seed=3, before=300, after=900):
+    """A shift re-baselining cannot repair (a and b swap roles) and that no event explains."""
+    rng = random.Random(seed)
+    rows = [_normal(rng) for _ in range(before)]
+    for _ in range(after):
+        r = _normal(rng)
+        r["a"], r["b"] = 0.75 + rng.gauss(0, 0.04), 0.05 + rng.gauss(0, 0.02)
+        rows.append(r)
+    return rows
+
+
+def _run_until_query(mgr):
+    for x in _silent_regime_change():
+        mgr.process(x)
+        if mgr.open_queries:
+            return mgr.open_queries[0]
+    return None
+
+
+def test_ambiguous_shift_asks_the_operator_and_keeps_the_champion():
+    mgr, pub = _hitl_manager(rebaseline=False)
+    q = _run_until_query(mgr)
+    assert q is not None, mgr.decisions
+    assert mgr.decisions[-1]["action"] == "ask" and mgr.decisions[-1]["query_id"] == q["query_id"]
+    assert mgr.registry.production().version == 1      # nothing replaced yet
+    assert any(p["event"] == "operator_query" for p in pub.payloads)
+    assert "_candidate" not in q                       # public view carries no model
+
+
+def test_answer_new_normal_promotes_the_validated_candidate_with_an_audited_reason():
+    mgr, pub = _hitl_manager(rebaseline=False)
+    q = _run_until_query(mgr)
+    decision = mgr.answer_query(q["query_id"], "new_normal", operator="shalon")
+    assert decision["action"] == "promote" and decision["query_id"] == q["query_id"]
+    prod = mgr.registry.production()
+    assert prod.version > 1 and prod.tags["query_id"] == q["query_id"] and prod.tags["operator"] == "shalon"
+    last = mgr.registry.transitions[-1]
+    assert last.transition == "promote" and q["query_id"] in last.reason
+    assert mgr.queries[q["query_id"]]["status"] == "answered"
+    assert any(p["event"] == "query_answered" for p in pub.payloads)
+
+
+def test_answer_incident_keeps_the_champion_and_pauses_asking():
+    mgr, _ = _hitl_manager(rebaseline=False)
+    q = _run_until_query(mgr)
+    decision = mgr.answer_query(q["query_id"], "incident")
+    assert decision["action"] == "hold" and mgr.registry.production().version == 1
+    assert not mgr._may_ask()
+    import pytest as _pt
+    with _pt.raises(KeyError):
+        mgr.answer_query(q["query_id"], "new_normal")   # already answered
+
+
+def test_unanswered_query_expires_to_hold():
+    mgr, pub = _hitl_manager(rebaseline=False)
+    q = _run_until_query(mgr)
+    rng = random.Random(9)
+    for _ in range(mgr.cfg.query_ttl + 5):
+        mgr.process(_normal(rng))
+    assert mgr.queries[q["query_id"]]["status"] == "expired"
+    assert any(d["trigger"] == "operator_timeout" for d in mgr.decisions)
+    assert mgr.registry.production().version == 1
+
+
+def test_query_budget_caps_how_often_the_operator_is_asked():
+    mgr, _ = _hitl_manager(rebaseline=False)
+    mgr._query_steps = [mgr.step, mgr.step]   # budget of 2 already used in this window
+    assert not mgr._may_ask()
+    assert _run_until_query(mgr) is None
+
+
+def test_without_operator_queries_the_same_shift_is_held():
+    mgr, _ = _hitl_manager(rebaseline=False)
+    mgr.cfg = LifecycleConfig(**{**mgr.cfg.__dict__, "operator_queries": False})
+    assert _run_until_query(mgr) is None
+    assert all(d["action"] != "ask" for d in mgr.decisions)
+
+
+def test_manual_rollback_and_validity_check_are_audited():
+    mgr, _ = _hitl_manager(rebaseline=False)
+    q = _run_until_query(mgr)
+    mgr.answer_query(q["query_id"], "new_normal")
+    promoted = mgr.registry.production().version
+    d = mgr.manual_set_version(1, "rollback", operator="shalon")
+    assert d["action"] == "rollback" and mgr.registry.production().version == 1
+    assert mgr.registry.transitions[-1].evidence["operator"] == "shalon"
+    assert "target_recent_alarm_rate" in mgr.registry.transitions[-1].evidence
+    assert mgr.request_validity_check() is True and mgr.phase == "quarantine"
+    assert mgr.request_validity_check() is False     # already observing
+    assert promoted > 1

@@ -447,7 +447,9 @@ def _anomaly(sid: str):
     ])
 
     # ✅ STABLE ID: same scenario + same service = same anomaly_id
-    stable_id = f"ANM-{CURRENT_SCENARIO}-{sid}"
+    today = datetime.now(timezone.utc).strftime("%Y%m%d")
+    stable_id = f"ANM-{CURRENT_SCENARIO}-{sid}-{today}"
+
 
     return {
         "id": stable_id,   # ← was f"ANM-{datetime...}-{random.randint(...)}"

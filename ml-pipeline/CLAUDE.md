@@ -79,6 +79,17 @@ Component 2's `MLflowRegistry` uses that URI too. MLflow 3 also deprecated regis
 `SMD_RAW_DIR` now points at `../datasets/smd/raw` (this repo's canonical dataset location) instead
 of a local copy — don't re-duplicate the ~466MB dataset here.
 
+**Operator in the loop (CADAL-HITL)**: `LifecycleConfig(operator_queries=True)` turns the
+"learnable but unexplained" hold into `ambiguous` / `ask`, and `DynamicModelManager.answer_query`
+applies the answer. `evaluate_dynamic.py` variants `cadal_hitl` and `cadal_hitl_noisy` use a
+`SimulatedOperator` seeded per run by `operator_seed`. With one shared seed, a 20% error rate
+never fires on runs that ask only one to three questions. Results are in `RESULTS_COMPONENT2.md`
+§9. A rule picked from held-out entities (don't ask on `drift_down`) was rejected because the dev
+entities showed the opposite pattern.
+
+**Used live by** `services/ml-backend`, which imports this package from source
+(`app/core/pipeline_path.py`). Lifecycle changes here change the demo, so re-run its tests.
+
 **Eventually lifts into** `services/ml-backend/app/ml/` per Doc3 Phase 2-3 — this pipeline's
 `HSTStreamProcessor` design already anticipates that (see the class docstring in
 `docs/Component_1_2_Technical_Guide.md` Part 4).

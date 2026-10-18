@@ -99,6 +99,9 @@ Demo injections (`POST /api/demo/{service}/{kind}`):
 | POST | `/demo/{id}/{deploy\|silent_change\|incident}` | injects a scenario |
 | POST | `/demo/speed` | body `{eventsPerSec?, paused?}` |
 | POST | `/demo/reset` | rebuilds the fleet from scratch |
+| GET | `/logs?q=&since=&until=&before=&limit=` | `{lines, hasMore}`: the newest `limit` matching log lines, oldest first. Page back with `before=<oldest time>` |
+| GET | `/logs/histogram?q=&since=&until=` | `{bucketSeconds, buckets: [{time, info, warn, error}]}` for the strip above the log table |
+| GET | `/logs/services` | `[{service, source, count}]`, every service that has logged |
 
 Errors: 404 for an unknown service, version or query; 409 for a conflict (the query was already
 answered, a decision is pending, or there is no version to roll back to); 422 for an invalid body.
@@ -118,9 +121,30 @@ The envelope is `{type, service_id, ts, data}`. On connect the client gets one `
 | `query_answered` / `query_expired` | the query with its `answer` and `operator` |
 | `model_transition` | `transition` (register, promote, rollback, checkpoint), `from_version, to_version, reason, evidence` |
 | `demo_injection`, `demo_speed`, `demo_reset` | presenter controls |
+| `log` | one log line (`id, time, service, serviceId, source, level, message, attrs`), see Logs below. Published to Redis Pub/Sub only, not to the `anomaly_events` stream |
 
 Every message is also published to Redis Pub/Sub `ws:anomaly_broadcast` and appended to the Redis
 Stream `anomaly_events` (maxlen 20000), where the Decision Engine will consume it.
+
+## Logs
+
+The Logs page (`/logs` in the dashboard, Railway style) reads one stream that three sources feed
+(`app/logs.py`):
+
+| Source (`source`) | Service shown | What |
+|---|---|---|
+| `container` | `TimescaleDB`, `Redis` | `docker logs -f` of the demo stack's containers (names in `LOG_CONTAINERS`). Resumes after a restart from the newest stored line |
+| `app` | `ml-backend` | the backend's own Python and uvicorn logging, at INFO and above |
+| `lifecycle` | each monitored service id | alarm episodes (logged once an episode has 8 alarming events, then again when it clears), quarantines, decisions, operator queries and answers, model transitions, demo injections |
+
+The `q` filter is free text (case-insensitive) plus `service:`, `level:` and `source:` terms,
+for example `checkpoint service:timescaledb level:error`. Repeating a key matches any of its
+values. The browser applies the same grammar to lines arriving over the WebSocket, so a live tail
+matches what a query would return.
+
+Lines are stored in `service_logs` (a hypertable). The id is a hash of time, service and message, so
+re-reading `docker logs --since` cannot create duplicates. Set `LOG_HTTP_ACCESS=true` to also log
+every HTTP request, and `FOLLOW_CONTAINER_LOGS=false` if Docker isn't on the PATH.
 
 ## Persistence (TimescaleDB)
 
@@ -132,6 +156,7 @@ Tables:
 - `lifecycle_decisions`
 - `operator_queries`
 - `change_events`
+- `service_logs` (hypertable: the log stream above)
 
 ```powershell
 docker exec selfheal-demo-timescaledb-1 psql -U postgres -d selfheal -c "select * from lifecycle_decisions order by time desc limit 5"

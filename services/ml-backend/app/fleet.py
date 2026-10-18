@@ -37,13 +37,13 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 DEMO_SERVICES = [
-    # (service_id, display name, SMD entity it replays)
-    ("service-a-auth", "Auth Service", "machine-1-6"),
-    ("service-b-orders", "Orders Service", "machine-1-3"),
-    ("service-c-inventory", "Inventory Service", "machine-2-2"),
-    ("service-d-shipping", "Shipping Service", "machine-2-5"),
-    ("service-e-payments", "Payments Service", "machine-3-3"),
-    ("service-f-search", "Search Service", "machine-2-9"),
+    # (service_id, display name, SMD entity it replays, first test row of its replay window)
+    ("service-a-auth", "Auth Service", "machine-2-9", 0),
+    ("service-b-orders", "Orders Service", "machine-3-10", 15250),
+    ("service-c-inventory", "Inventory Service", "machine-1-2", 9250),
+    ("service-d-shipping", "Shipping Service", "machine-2-8", 0),
+    ("service-e-payments", "Payments Service", "machine-2-2", 0),
+    ("service-f-search", "Search Service", "machine-1-5", 0),
 ]
 CANONICAL = ("cpu_rate", "memory_used", "network_rx", "network_tx", "disk_io_read", "disk_io_write")
 
@@ -144,13 +144,15 @@ class ServiceFleet:
 
     # -- set-up ------------------------------------------------------------------------------------
     def build(self) -> None:
-        for service_id, name, entity in self.specs:
-            self.services[service_id] = self._build_service(service_id, name, entity)
+        for service_id, name, entity, *start in self.specs:
+            self.services[service_id] = self._build_service(service_id, name, entity, *start)
             logger.info("fleet: %s warmed up on %s", service_id, entity)
 
-    def _build_service(self, service_id, name, entity) -> ServiceRuntime:
+    def _build_service(self, service_id, name, entity, start: int = 0) -> ServiceRuntime:
         train = pd.read_parquet(preprocess_entity(entity, "train"))
         test = pd.read_parquet(preprocess_entity(entity, "test"))
+        if settings.replay_window_rows:
+            test = test.iloc[start:start + settings.replay_window_rows].reset_index(drop=True)
         outbox, changes = Outbox(), QueueChangeEventSource()
         mgr = DynamicModelManager(service_id, self.cfg, self.hst_cfg,
                                   registry=MirroredRegistry(service_id, outbox),
@@ -165,7 +167,11 @@ class ServiceFleet:
 
     # -- one replay step ---------------------------------------------------------------------------
     def next_row(self, rt: ServiceRuntime) -> dict:
-        x = dict(rt.test_rows[rt.cursor % len(rt.test_rows)])
+        # Ping-pong through the replay window (forward, then backward) so an endless replay has
+        # no wrap-around jump that would itself look like a regime change.
+        n = len(rt.test_rows)
+        i = rt.cursor % max(1, 2 * n - 2)
+        x = dict(rt.test_rows[i if i < n else 2 * n - 2 - i])
         rt.cursor += 1
         step = rt.manager.step + 1
         rt.injections = [i for i in rt.injections if i.until_step is None or step <= i.until_step]
@@ -209,7 +215,8 @@ class ServiceFleet:
         if kind == "incident":
             varying = [c for c in rt.test_df.columns if float(rt.test_df[c].std()) > 1e-6]
             feats = tuple(rt.rng.sample(varying, max(2, len(varying) // 8)))
-            length = int(settings.replay_events_per_sec * 20)
+            # a transient spike: a fifth of a lifecycle day, well inside one quarantine
+            length = max(60, settings.demo_samples_per_day // 5)
             rt.injections.append(Injection("incident", feats, tuple(0.45 for _ in feats),
                                            until_step=step + length))
             return {"kind": kind, "features": list(feats), "events": length}

@@ -119,6 +119,17 @@ const ACTION_TONE: Record<string, FeedEntry["tone"]> = {
   ask: "info",
 };
 
+const OPERATOR_KEY = "sharp.operator";
+
+/** The name recorded in the audit trail for operator answers and manual actions (per browser). */
+function readOperator(): string {
+  try {
+    return localStorage.getItem(OPERATOR_KEY) || "operator";
+  } catch {
+    return "operator";
+  }
+}
+
 /** Mirrors the backend's views.drift_detected: a scheduled validity check is not drift. */
 function isDrift(trigger: string | null, openQueries: number): boolean {
   return (trigger !== null && trigger !== "scheduled") || openQueries > 0;
@@ -142,7 +153,7 @@ export const useLiveStore = create<LiveState>((set) => ({
   queries: {},
   summary: null,
   feed: [],
-  operator: "operator",
+  operator: readOperator(),
 
   setStatus: (status) => set({ status }),
   setHealth: (health) => set({ health }),
@@ -172,7 +183,14 @@ export const useLiveStore = create<LiveState>((set) => ({
   setDecisions: (decisions) => set({ decisions: decisions.slice(0, MAX_DECISIONS) }),
   setQueries: (queries) => set({ queries: Object.fromEntries(queries.map((q) => [q.queryId, q])) }),
   setSummary: (summary) => set({ summary }),
-  setOperator: (operator) => set({ operator }),
+  setOperator: (operator) => {
+    try {
+      localStorage.setItem(OPERATOR_KEY, operator);
+    } catch {
+      // storage unavailable: keep it for this session only
+    }
+    set({ operator });
+  },
 
   applyMessages: (messages) =>
     set((state) => {

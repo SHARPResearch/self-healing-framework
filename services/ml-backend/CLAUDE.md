@@ -17,6 +17,10 @@ runbook and the full REST/WebSocket contract.
 - `app/runtime.py`: the replay loop. It drains each outbox into the store and the bus.
 - `app/store.py`: `PgStore` (asyncpg), with `MemoryStore` as the fallback.
 - `app/bus.py`: Redis Pub/Sub + Stream, with an in-process fallback.
+- `app/logs.py`: the Logs page stream (container `docker logs -f` threads, Python logging, one line per
+  lifecycle event). The hub only appends to a deque from any thread; the replay loop flushes it into
+  `service_logs` and the bus. Store failures for logs log at DEBUG on purpose: a warning would itself
+  become a log line and feed back.
 - `app/api/`: `routes.py` (REST), `websocket.py`, and `views.py` (JSON shaped like the frontend's
   types).
 

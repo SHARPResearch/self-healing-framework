@@ -20,7 +20,13 @@ following Doc2 literally for another part of this repo, this folder is the docum
 **Status**: every route is a real page. The pages split into live ones and mock ones:
 - **Live** (from `services/ml-backend`, with a mock fallback): Dashboard (service grid, stat cards,
   drift banner, anomaly trend), Models (`LiveModelDetailDialog`: version history, rollback, restore,
-  validity check) and the new **Model lifecycle** page (`features/lifecycle/`, live only, no mock).
+  validity check), the **Model lifecycle** page (`features/lifecycle/`, live only, no mock) and the
+  **Logs** page (`features/logs/`, live only): a Railway style log viewer with a filter box
+  (`service:` / `level:` / `source:` terms plus free text, parsed in `lib/filter.ts` exactly as the
+  backend does), a level histogram, live tail over the WebSocket (`subscribeToMessages("log")` in
+  `useLiveConnection`, which keeps log lines out of `liveStore`), paging back on scroll-up, and
+  download. Triggers there are native `<button>`s because shadcn's `Button` does not forward refs
+  under React 18 and Radix tooltips and menus need one.
 - **Wiring**: `src/lib/api.ts` (typed REST), `src/hooks/useLiveConnection.ts` (one app-wide
   WebSocket on `/ws/events`, backoff 1 to 30 s, plus a 4 s REST poll; messages are batched every
   250 ms) and `src/shared/store/liveStore.ts`. Pages use mock data only while `ready` is false; the

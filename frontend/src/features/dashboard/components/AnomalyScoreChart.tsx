@@ -12,7 +12,8 @@ import type { AnomalyTrendPoint } from "../types";
 
 interface AnomalyScoreChartProps {
   data: AnomalyTrendPoint[];
-  changePct: number;
+  changePct?: number;
+  description?: string;
 }
 
 /**
@@ -20,18 +21,24 @@ interface AnomalyScoreChartProps {
  * docs/prompts/Doc4_Claude_Code_Agent_Prompts.md P-12: reference lines at 0.5
  * (warn) and 0.85 (critical), y axis fixed to 0..1.
  */
-export function AnomalyScoreChart({ data, changePct }: AnomalyScoreChartProps) {
+export function AnomalyScoreChart({
+  data,
+  changePct,
+  description = "Mean anomaly score across all services, last 7 days.",
+}: AnomalyScoreChartProps) {
   return (
     <div>
       <div className="mb-1 flex items-center gap-2">
         <h3 className="text-base font-semibold">Anomaly score trend</h3>
-        <Badge variant="secondary" className="text-status-healthy">
-          {changePct >= 0 ? "+" : ""}
-          {changePct}%
-        </Badge>
+        {changePct !== undefined && (
+          <Badge variant="secondary" className="text-status-healthy">
+            {changePct >= 0 ? "+" : ""}
+            {changePct}%
+          </Badge>
+        )}
       </div>
       <p className="mb-4 text-sm text-muted-foreground">
-        Mean anomaly score across all services, last 7 days.
+        {description}
       </p>
       <ResponsiveContainer width="100%" height={260}>
         <LineChart data={data} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
@@ -64,6 +71,7 @@ export function AnomalyScoreChart({ data, changePct }: AnomalyScoreChartProps) {
             stroke="var(--foreground)"
             strokeWidth={2}
             dot={false}
+            isAnimationActive={false}
           />
         </LineChart>
       </ResponsiveContainer>

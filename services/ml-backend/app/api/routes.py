@@ -85,11 +85,21 @@ async def promote(service_id: str, body: VersionBody) -> dict:
 @router.post("/models/{service_id}/rollback")
 async def rollback(service_id: str, body: VersionBody) -> dict:
     rt = _service(service_id)
-    prev = rt.manager.registry.previous_production()
-    version = body.version or (prev.version if prev else None)
+    version = body.version or _before_last_promotion(rt)
     if version is None:
         raise HTTPException(409, "no earlier production version to roll back to")
     return await _manual(rt, version, "rollback", body.operator)
+
+
+def _before_last_promotion(rt) -> Optional[int]:
+    """Undo the most recent promotion. Scheduled checkpoints also register versions, so the plain
+    previous production version is usually a checkpoint of the very model being rolled back."""
+    current = rt.manager.registry.production_version
+    for t in reversed(rt.manager.registry.transitions):
+        if t.transition == "promote" and t.from_version is not None and t.from_version != current:
+            return t.from_version
+    prev = rt.manager.registry.previous_production()
+    return prev.version if prev else None
 
 
 async def _manual(rt, version: int, transition: str, operator: str) -> dict:

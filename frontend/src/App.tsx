@@ -9,6 +9,7 @@ import { ServicesPage } from "@/features/services/ServicesPage";
 import { NotificationsPage } from "@/features/notifications/NotificationsPage";
 import { ModelsPage } from "@/features/models/ModelsPage";
 import { ModelLifecyclePage } from "@/features/lifecycle/ModelLifecyclePage";
+import { LogsPage } from "@/features/logs/LogsPage";
 import { SettingsPage } from "@/features/settings/SettingsPage";
 import { NotFoundPage } from "@/shared/components/NotFoundPage";
 import { ProfilePage } from "@/features/profile/ProfilePage";
@@ -52,6 +53,7 @@ function App() {
         <Route path="/incidents" element={<IncidentsPage />} />
         <Route path="/models" element={<ModelsPage />} />
         <Route path="/model-lifecycle" element={<ModelLifecyclePage />} />
+        <Route path="/logs" element={<LogsPage />} />
         <Route path="/copilot" element={<CopilotPage />} />
         <Route path="/notifications" element={<NotificationsPage />} />
         <Route path="/settings" element={<SettingsPage />} />

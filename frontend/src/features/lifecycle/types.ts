@@ -8,7 +8,16 @@ import type { ServiceHealth } from "@/features/dashboard/types";
  */
 export type LifecyclePhase = "stable" | "quarantine" | "deciding";
 
-export type Verdict = "incident" | "concept_drift" | "model_decay" | "no_change" | "ambiguous";
+// "operator" marks a manual promote/rollback; the naive_rollback baseline uses "unattributed".
+export type Verdict =
+  | "incident"
+  | "concept_drift"
+  | "model_decay"
+  | "no_change"
+  | "ambiguous"
+  | "operator"
+  | "unattributed"
+  | "scheduled";
 
 export type LifecycleAction = "hold" | "promote" | "rollback" | "resume" | "ask";
 
@@ -20,6 +29,8 @@ export type InjectionKind = "deploy" | "silent_change" | "incident";
 
 export interface LiveServiceHealth extends ServiceHealth {
   phase: LifecyclePhase;
+  /** What opened the current quarantine; "scheduled" is a routine validity check, not drift. */
+  quarantineTrigger: string | null;
   alarm: boolean;
   modelVersion: number;
   openQueries: number;

@@ -531,6 +531,24 @@ def test_unanswered_query_expires_to_hold():
     assert mgr.registry.production().version == 1
 
 
+def test_expired_query_pauses_asking_like_an_incident_answer():
+    mgr, _ = _hitl_manager(rebaseline=False)
+    _run_until_query(mgr)
+    rng = random.Random(9)
+    for _ in range(mgr.cfg.query_ttl + 5):
+        mgr.process(_normal(rng))
+    assert not mgr.open_queries and not mgr._may_ask()
+    assert mgr._ask_cooldown_until > mgr.step
+
+
+def test_only_one_query_is_open_per_service():
+    mgr, _ = _hitl_manager(rebaseline=False)
+    _run_until_query(mgr)
+    assert not mgr._may_ask()                    # the open question blocks a second one
+    mgr._query_steps = []                        # even with budget to spare
+    assert not mgr._may_ask()
+
+
 def test_query_budget_caps_how_often_the_operator_is_asked():
     mgr, _ = _hitl_manager(rebaseline=False)
     mgr._query_steps = [mgr.step, mgr.step]   # budget of 2 already used in this window

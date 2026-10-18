@@ -593,7 +593,9 @@ class DynamicModelManager:
         }
 
     def _may_ask(self) -> bool:
-        if not self.cfg.operator_queries or self.step < self._ask_cooldown_until:
+        # One open question per service at a time: while the operator has not answered, a new
+        # ambiguous shift is held like before rather than stacking a second query.
+        if not self.cfg.operator_queries or self.step < self._ask_cooldown_until or self.open_queries:
             return False
         recent = [s for s in self._query_steps if self.step - s < self.cfg.query_budget_window]
         return len(recent) < self.cfg.query_budget
@@ -777,6 +779,8 @@ class DynamicModelManager:
             if q["status"] == "open" and self.step >= q["expires_step"]:
                 q["status"] = "expired"
                 q.pop("_candidate", None)
+                # An unanswered question is not re-asked straight away either (alert fatigue).
+                self._ask_cooldown_until = max(self._ask_cooldown_until, self.step + self.cfg.query_cooldown)
                 self.publisher.publish_lifecycle({"event": "query_expired", **self.public_query(query_id)})
                 decision = self._decide({
                     "action": "hold", "verdict": "incident", "trigger": "operator_timeout",

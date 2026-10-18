@@ -1,5 +1,6 @@
 """
-API tests: the real app on in-memory fallbacks (no Docker), one demo service replaying machine-1-6.
+API tests: the real app on in-memory fallbacks (no Docker), two demo services replaying the same
+calm SMD windows the live demo uses (machine-1-2 from row 9250, machine-2-2 from row 0).
 
 The replay loop is off; tests advance the fleet themselves with runtime.step_all() on the client's
 event loop, so every lifecycle outcome is deterministic.
@@ -18,6 +19,7 @@ from app.main import app  # noqa: E402
 from app.runtime import runtime  # noqa: E402
 
 SERVICE = "service-test"
+INCIDENT_SERVICE = "service-incident"
 SERVICE_HEALTH_KEYS = {"serviceId", "displayName", "status", "anomalyScore", "scoreHistory",
                        "lastAction", "lastActionAt", "driftDetected"}
 MODEL_RUN_KEYS = {"runId", "entityId", "serviceName", "version", "stage", "modelType",
@@ -26,17 +28,26 @@ MODEL_RUN_KEYS = {"runId", "entityId", "serviceName", "version", "stage", "model
 
 @pytest.fixture()
 def client():
-    runtime.fleet = ServiceFleet([(SERVICE, "Test Service", "machine-1-6")], warm_up_rows=3000)
+    runtime.fleet = ServiceFleet([(SERVICE, "Test Service", "machine-1-2", 9250),
+                                  (INCIDENT_SERVICE, "Incident Service", "machine-2-2", 0)])
     with TestClient(app) as c:
         yield c
 
 
-def run_until_decision(client, actions, max_events=None):
+def step(client):
+    # a live decision takes ~40 ms (~2 events); without the wait the test would race past it
+    for rt in runtime.fleet.services.values():
+        if rt.manager.phase == "deciding":
+            rt.manager.wait_for_decision(timeout=60)
+    client.portal.call(runtime.step_all)
+
+
+def run_until_decision(client, actions, service=SERVICE, max_events=None):
     """Advance the replay until the service's latest decision is one of `actions`."""
-    rt = runtime.fleet.services[SERVICE]
+    rt = runtime.fleet.services[service]
     max_events = max_events or settings.demo_samples_per_day * 4
     for _ in range(max_events):
-        client.portal.call(runtime.step_all)
+        step(client)
         if rt.manager.decisions and rt.manager.decisions[-1]["action"] in actions:
             rt.manager.wait_for_decision(timeout=60)
             client.portal.call(runtime.drain_all)
@@ -46,20 +57,20 @@ def run_until_decision(client, actions, max_events=None):
 
 def warm(client, n=200):
     for _ in range(n):
-        client.portal.call(runtime.step_all)
+        step(client)
 
 
 def test_health_reports_fallback_store(client):
     body = client.get("/api/health").json()
     assert body["status"] == "ok"
     assert body["store"] == "memory" and body["redis"] is False
-    assert body["services"] == 1
+    assert body["services"] == 2
 
 
 def test_services_match_frontend_service_health(client):
     warm(client, 50)
     rows = client.get("/api/services").json()
-    assert len(rows) == 1
+    assert len(rows) == 2
     assert SERVICE_HEALTH_KEYS <= rows[0].keys()
     assert rows[0]["status"] in {"watch", "warn", "degrade", "critical"}
     assert 0.0 <= rows[0]["anomalyScore"] <= 1.0
@@ -118,10 +129,10 @@ def test_silent_change_asks_the_operator_and_the_answer_promotes(client):
 
 def test_incident_is_never_learned(client):
     warm(client)
-    client.post(f"/api/demo/{SERVICE}/incident")
-    decision = run_until_decision(client, {"promote", "hold", "ask", "resume"})
+    client.post(f"/api/demo/{INCIDENT_SERVICE}/incident")
+    decision = run_until_decision(client, {"promote", "hold", "ask", "resume"}, service=INCIDENT_SERVICE)
     assert decision["action"] in {"hold", "resume"}
-    assert client.get(f"/api/models/{SERVICE}").json()["productionVersion"] == 1
+    assert client.get(f"/api/models/{INCIDENT_SERVICE}").json()["productionVersion"] == 1
 
 
 def test_websocket_sends_snapshot_then_live_events(client):

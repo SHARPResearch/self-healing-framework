@@ -119,6 +119,11 @@ const ACTION_TONE: Record<string, FeedEntry["tone"]> = {
   ask: "info",
 };
 
+/** Mirrors the backend's views.drift_detected: a scheduled validity check is not drift. */
+function isDrift(trigger: string | null, openQueries: number): boolean {
+  return (trigger !== null && trigger !== "scheduled") || openQueries > 0;
+}
+
 let feedSeq = 0;
 function feed(kind: FeedKind, msg: LiveMessage, title: string, detail: string, tone: FeedEntry["tone"]): FeedEntry {
   feedSeq += 1;
@@ -214,23 +219,34 @@ export const useLiveStore = create<LiveState>((set) => ({
             if (buf.length > SCORE_BUFFER) buf.splice(0, buf.length - SCORE_BUFFER);
             scores[sid] = buf;
             touchedScores.add(sid);
+            const trigger = (d.trigger as string | null) ?? null;
             patch(sid, {
               anomalyScore: point.score,
               status: d.severity as Severity,
               alarm: point.alarm,
               modelVersion: Number(d.version),
               phase: d.phase as LifecyclePhase,
+              quarantineTrigger: trigger,
+              driftDetected: isDrift(trigger, services[sid]?.openQueries ?? 0),
             });
             break;
           }
-          case "quarantine_opened":
-            if (sid) patch(sid, { phase: "quarantine", driftDetected: true });
+          case "quarantine_opened": {
+            const trigger = String(d.trigger);
+            if (sid)
+              patch(sid, {
+                phase: "quarantine",
+                quarantineTrigger: trigger,
+                driftDetected: isDrift(trigger, services[sid]?.openQueries ?? 0),
+              });
             newFeed.push(
-              feed("quarantine", msg, `${name(sid)}: quarantine opened`,
+              feed("quarantine", msg,
+                trigger === "scheduled" ? `${name(sid)}: scheduled validity check` : `${name(sid)}: quarantine opened`,
                 `Trigger ${String(d.trigger)}; observing ${String(d.length)} events while the champion keeps serving.`,
-                "info"),
+                trigger === "scheduled" ? "neutral" : "info"),
             );
             break;
+          }
           case "change_observed":
             newFeed.push(
               feed("change", msg, `${name(sid)}: deployment observed`,
@@ -240,7 +256,6 @@ export const useLiveStore = create<LiveState>((set) => ({
           case "lifecycle_decision": {
             const dec = toDecision(d);
             decisions = [dec, ...decisions].slice(0, MAX_DECISIONS);
-            if (sid) patch(sid, { driftDetected: dec.action === "ask" || dec.action === "hold" });
             newFeed.push(
               feed("decision", msg, `${name(sid)}: ${dec.verdict.replace("_", " ")} → ${dec.action}`,
                 dec.reason, ACTION_TONE[dec.action] ?? "neutral"),
@@ -256,7 +271,10 @@ export const useLiveStore = create<LiveState>((set) => ({
             const openCount = Object.values(queries).filter(
               (x) => x.serviceId === q.serviceId && x.status === "open",
             ).length;
-            patch(q.serviceId, { openQueries: openCount });
+            patch(q.serviceId, {
+              openQueries: openCount,
+              driftDetected: isDrift(services[q.serviceId]?.quarantineTrigger ?? null, openCount),
+            });
             if (msg.type === "operator_query")
               newFeed.push(feed("query", msg, `${q.serviceName}: CADAL asks the operator`, q.reason, "info"));
             else if (msg.type === "query_answered")

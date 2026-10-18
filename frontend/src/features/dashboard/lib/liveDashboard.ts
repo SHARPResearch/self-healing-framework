@@ -26,7 +26,7 @@ export function useLiveDashboard(): {
     const services = order.map((id) => byId[id]).filter(Boolean);
     const mean = services.length ? services.reduce((a, s) => a + s.anomalyScore, 0) / services.length : 0;
     const alarms = services.filter((s) => s.alarm).length;
-    const quarantined = services.filter((s) => s.phase !== "stable").length;
+    const quarantined = services.filter((s) => s.phase !== "stable" && s.quarantineTrigger !== "scheduled").length;
     const openQueries = services.reduce((a, s) => a + s.openQueries, 0);
 
     const buffers = services.map((s) => (scores[s.serviceId] ?? []).slice(-TREND_POINTS));

@@ -55,13 +55,20 @@ async def evaluate_anomaly(anomaly_id: str, save: bool = True):
 
     sid = anomaly["service_id"]
 
-    # 2. Build context
+    # 2. Fetch all recent anomalies so the classifier can see neighbors
+    try:
+        recent = await postgres_store.list_recent_anomalies(limit=50)
+    except Exception:
+        recent = []
+
+    # 3. Build context (with recent anomalies so neighbor counting works)
     builder = ContextBuilder()
     builder.set_services_catalog(SERVICES)
     ctx = builder.build(
         anomaly,
         infra=_infra(sid),
         app=_app(sid),
+        recent_anomalies=recent,
     )
     classify(ctx)
 

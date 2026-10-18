@@ -52,6 +52,7 @@ class Verdict(str, Enum):
     CONCEPT_DRIFT = "concept_drift"
     MODEL_DECAY = "model_decay"
     NO_CHANGE = "no_change"
+    AMBIGUOUS = "ambiguous"   # label-free evidence cannot decide: ask the operator (ask_operator)
 
 
 class Action(str, Enum):
@@ -59,6 +60,7 @@ class Action(str, Enum):
     PROMOTE = "promote"      # challenger becomes champion (concept drift)
     ROLLBACK = "rollback"    # restore last production version (decay)
     RESUME = "resume"        # nothing changed, resume normal gated learning
+    ASK = "ask"              # keep the champion, ask the operator whether this is a new normal
 
 
 VERDICT_ACTION = {
@@ -66,6 +68,7 @@ VERDICT_ACTION = {
     Verdict.CONCEPT_DRIFT: Action.PROMOTE,
     Verdict.MODEL_DECAY: Action.ROLLBACK,
     Verdict.NO_CHANGE: Action.RESUME,
+    Verdict.AMBIGUOUS: Action.ASK,
 }
 
 
@@ -91,6 +94,12 @@ class AttributionConfig:
     # on it silenced the detector for the rest of the incident (machine-1-1, recall 0.87 -> 0.08).
     # Re-baselining stays allowed without a change, since it keeps everything the champion knew.
     retrain_requires_change: bool = True
+    # Operator in the loop: the one case label-free evidence cannot settle is a persistent,
+    # self-consistent shift that only a retrained model explains and no change event explains.
+    # Without an operator it is held as a probable incident (above). With ask_operator it becomes
+    # AMBIGUOUS: the champion keeps serving and the operator is asked once whether it is a new
+    # normal; the answer, not a guess, licenses or refuses the update.
+    ask_operator: bool = False
 
 
 @dataclass(frozen=True)
@@ -198,6 +207,15 @@ def attribute(ev: QuarantineEvidence, cfg: AttributionConfig = AttributionConfig
             f"{ev.rebaseline_tail_alarm_rate:.4f} <= {rebaseline_line:.4f}) {why}",
         )
     if ev.challenger_tail_alarm_rate <= learnable_line and cfg.retrain_requires_change and not has_change:
+        if cfg.ask_operator:
+            evidence["repair"] = "retrain"
+            return done(
+                Verdict.AMBIGUOUS,
+                f"{stale}; a retrained challenger explains the new regime (tail rate "
+                f"{ev.challenger_tail_alarm_rate:.4f} <= {learnable_line:.4f}) but no change event "
+                f"explains it, and without labels a new normal cannot be told from a long incident: "
+                f"asking the operator",
+            )
         return done(
             Verdict.INCIDENT,
             f"{stale}; only a retrained challenger explains the new regime (tail rate "

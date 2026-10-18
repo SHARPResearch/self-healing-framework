@@ -125,3 +125,16 @@ def test_the_retrain_noise_floor_does_not_loosen_the_rebaseline_test():
     ok = attribute(_ev(challenger_tail_alarm_rate=0.9, rebaseline_tail_alarm_rate=0.04,
                        learnable_floor=0.6, n_tail=288))
     assert ok.evidence["repair"] == "rebaseline"
+
+
+def test_unexplained_learnable_shift_asks_the_operator_when_enabled():
+    from src.drift_attribution import AttributionConfig
+    ask = attribute(_ev(), AttributionConfig(ask_operator=True))
+    assert ask.verdict is Verdict.AMBIGUOUS and ask.action is Action.ASK
+    assert ask.evidence["repair"] == "retrain" and "asking the operator" in ask.reason
+    # Only the ambiguous case asks: an explained shift still promotes on its own, an
+    # unlearnable one is still an incident, and re-baselining still needs nobody.
+    assert attribute(_ev(change_event_id="chg"), AttributionConfig(ask_operator=True)).action is Action.PROMOTE
+    assert attribute(_ev(challenger_tail_alarm_rate=0.5), AttributionConfig(ask_operator=True)).action is Action.HOLD
+    rb = attribute(_ev(rebaseline_tail_alarm_rate=0.02), AttributionConfig(ask_operator=True))
+    assert rb.action is Action.PROMOTE

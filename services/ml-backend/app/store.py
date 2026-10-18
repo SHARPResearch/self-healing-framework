@@ -92,6 +92,13 @@ class MemoryStore:
             self.logs.append(line)
             self._log_ids.add(line["id"])
 
+    async def clear_logs(self, source: str) -> None:
+        """Forget one source's lines (a demo reset drops the old fleet's lifecycle lines)."""
+        keep = [ln for ln in self.logs if ln["source"] != source]
+        self.logs.clear()
+        self.logs.extend(keep)
+        self._log_ids = {ln["id"] for ln in keep}
+
     @staticmethod
     def _log_matches(line: dict, f: dict) -> bool:
         names = {line["service"].lower(), (line.get("service_id") or "").lower()}
@@ -294,6 +301,16 @@ class PgStore(MemoryStore):
                      for ln in lines])
         except Exception as exc:  # noqa: BLE001
             logger.debug("store: log write failed (%s)", exc)
+
+    async def clear_logs(self, source: str) -> None:
+        await super().clear_logs(source)
+        if self.pool is None:
+            return
+        try:
+            async with self.pool.acquire() as conn:
+                await conn.execute("DELETE FROM service_logs WHERE source = $1", source)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("store: clearing logs failed (%s)", exc)
 
     @staticmethod
     def _row_to_log(r) -> dict:

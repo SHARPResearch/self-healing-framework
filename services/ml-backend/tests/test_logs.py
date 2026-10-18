@@ -138,3 +138,14 @@ def test_logs_are_streamed_over_the_websocket_but_not_to_the_redis_stream(client
         client.get("/api/logs")                          # flushes the pending lines onto the bus
         seen = {ws.receive_json()["type"] for _ in range(2)}
     assert seen == {"demo_injection", "log"}
+
+
+def test_reset_is_logged_and_drops_the_old_fleets_lifecycle_lines(client):
+    client.post("/api/demo/service-test/incident")
+    assert client.get("/api/logs", params={"q": "injection"}).json()["lines"]
+    assert client.post("/api/demo/reset").status_code == 200
+    lines = client.get("/api/logs", params={"q": "reset"}).json()["lines"]
+    assert any(ln["message"].startswith("demo reset") and ln["service"] == "ml-backend" for ln in lines)
+    assert client.get("/api/logs", params={"q": "injection"}).json()["lines"] == []
+    warm = client.get("/api/logs", params={"q": "warm-up complete service:service-test"}).json()["lines"]
+    assert len(warm) == 1                              # the fresh fleet's, not the startup one

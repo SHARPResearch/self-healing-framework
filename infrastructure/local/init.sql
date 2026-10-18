@@ -16,7 +16,11 @@ CREATE TABLE IF NOT EXISTS metric_events (
     model_version   INTEGER,
     phase           TEXT
 );
-SELECT create_hypertable('metric_events', 'time', if_not_exists => TRUE);
+SELECT create_hypertable('metric_events', 'time', chunk_time_interval => INTERVAL '1 hour', if_not_exists => TRUE);
+-- The demo replays 60x faster than real time, so unbounded history would grow ~1 GB an hour. Chunks
+-- are an hour wide so retention can actually drop them (it only drops whole chunks).
+SELECT set_chunk_time_interval('metric_events', INTERVAL '1 hour');
+SELECT add_retention_policy('metric_events', INTERVAL '6 hours', if_not_exists => TRUE);
 CREATE INDEX IF NOT EXISTS metric_events_service_time ON metric_events (service_id, time DESC);
 
 -- Every model version the lifecycle registered (the MLflow registry mirror).
@@ -95,6 +99,7 @@ CREATE TABLE IF NOT EXISTS service_logs (
     attrs       JSONB,
     PRIMARY KEY (id, time)
 );
-SELECT create_hypertable('service_logs', 'time', if_not_exists => TRUE);
+SELECT create_hypertable('service_logs', 'time', chunk_time_interval => INTERVAL '1 day', if_not_exists => TRUE);
+SELECT add_retention_policy('service_logs', INTERVAL '7 days', if_not_exists => TRUE);
 CREATE INDEX IF NOT EXISTS service_logs_service_time ON service_logs (service, time DESC);
 CREATE INDEX IF NOT EXISTS service_logs_level_time ON service_logs (level, time DESC);

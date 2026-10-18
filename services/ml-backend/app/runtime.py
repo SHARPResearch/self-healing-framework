@@ -60,11 +60,7 @@ class Runtime:
             self.store = await make_store(settings.database_url)
             await self.bus.start(settings.redis_url)
         await asyncio.to_thread(self.fleet.build)
-        for rt in self.fleet.services.values():
-            self.log(rt.service_id, f"warm-up complete on {rt.entity}: {self.fleet.warm_up_rows} rows, "
-                     f"model v{rt.manager.registry.production_version} serving, "
-                     f"{settings.threshold_method.upper()} threshold {rt.manager.threshold:.4f}",
-                     attrs={"entity": rt.entity})
+        self._log_warm_up()
         await self.drain_all()                      # warm-up versions and transitions
         if backing_services and settings.follow_container_logs:
             self.hub.follow_containers(settings.log_containers, await self.store.latest_log_times())
@@ -109,12 +105,13 @@ class Runtime:
         now = datetime.now(timezone.utc)
         for rt in self.fleet.services.values():
             x, res, display = self.fleet.process(rt)
-            self._pending_rows.append({
-                "time": now, "service_id": rt.service_id, "anomaly_score": display,
-                "severity": self.fleet.severity(rt), "drift_detected": res.phase != "stable",
-                "features": self.fleet.snapshot_features(x), "alarm": bool(res.alarm),
-                "threshold": 0.5, "model_version": res.version, "phase": res.phase,
-            })
+            if res.step % settings.persist_every == 0 or res.alarm:
+                self._pending_rows.append({
+                    "time": now, "service_id": rt.service_id, "anomaly_score": display,
+                    "severity": self.fleet.severity(rt), "drift_detected": res.phase != "stable",
+                    "features": self.fleet.snapshot_features(x), "alarm": bool(res.alarm),
+                    "threshold": 0.5, "model_version": res.version, "phase": res.phase,
+                })
             if res.step % settings.score_push_every == 0:
                 await self.bus.publish(envelope("anomaly_score", rt.service_id, {
                     "step": res.step, "score": round(display, 4), "alarm": bool(res.alarm),
@@ -136,6 +133,13 @@ class Runtime:
             await self.drain(rt)
 
     # -- logs --------------------------------------------------------------------------------------
+    def _log_warm_up(self) -> None:
+        for rt in self.fleet.services.values():
+            self.log(rt.service_id, f"warm-up complete on {rt.entity}: {self.fleet.warm_up_rows} rows, "
+                     f"model v{rt.manager.registry.production_version} serving, "
+                     f"{settings.threshold_method.upper()} threshold {rt.manager.threshold:.4f}",
+                     attrs={"entity": rt.entity})
+
     def log(self, service_id: str, message: str, level: str = "info", attrs: Optional[dict] = None) -> None:
         """One line on the Logs page for a monitored service."""
         self.hub.add(make_line(service_id, message, level, source="lifecycle",
@@ -227,6 +231,11 @@ class Runtime:
         self.paused = True
         self.fleet = ServiceFleet(self.fleet.specs, self.fleet.warm_up_rows)
         await asyncio.to_thread(self.fleet.build)
+        self._alarms.clear()
+        self.hub.take()                              # lines of the old fleet that were not flushed yet
+        await self.store.clear_logs("lifecycle")     # the old fleet's story; container logs stay
+        self.hub.add(make_line("ml-backend", "demo reset: every service rebuilt from its warm-up", "info", "app"))
+        self._log_warm_up()
         await self.drain_all()
         self.paused = False
         await self.bus.publish(envelope("demo_reset", None, {}))

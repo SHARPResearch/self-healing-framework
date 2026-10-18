@@ -17,8 +17,17 @@ features. Chosen deliberately: the app already has 4+ genuinely distinct page do
 components/data/types together than being split across four parallel folders. If you're
 following Doc2 literally for another part of this repo, this folder is the documented exception.
 
-**Status**: every route is a real page now, all built on mock data (no backend, WebSocket, LLM
-or auth is wired up). `ComingSoonPage`/`StubRoute` are gone — there is nothing left to stub.
+**Status**: every route is a real page. The pages split into live ones and mock ones:
+- **Live** (from `services/ml-backend`, with a mock fallback): Dashboard (service grid, stat cards,
+  drift banner, anomaly trend), Models (`LiveModelDetailDialog`: version history, rollback, restore,
+  validity check) and the new **Model lifecycle** page (`features/lifecycle/`, live only, no mock).
+- **Wiring**: `src/lib/api.ts` (typed REST), `src/hooks/useLiveConnection.ts` (one app-wide
+  WebSocket on `/ws/events`, backoff 1 to 30 s, plus a 4 s REST poll; messages are batched every
+  250 ms) and `src/shared/store/liveStore.ts`. Pages use mock data only while `ready` is false; the
+  header `LiveStatusBadge` shows Live / Reconnecting / Offline. Vite proxies `/api` and `/ws` to
+  :8002 (ml-backend; main's `lib/api.ts` calls the decision engine on :8000 directly).
+- **Still mock**: Incidents, recovery actions, the remediation simulation, the copilot, auth and
+  settings.
 
 ```
 src/
@@ -302,7 +311,7 @@ face (third-party OnlineWebFonts CDN) but that token, the old `<link>` tags, and
 `font-display` class site were removed before Inter was adopted.
 
 **Build next**. The UI surface is complete; what's left is wiring it to something real.
-1. `src/hooks/useWebSocket.ts` — native WebSocket, exponential backoff reconnect (1s→2s→4s→max 30s)
+1. ~~WebSocket hook~~ done: `src/hooks/useLiveConnection.ts`
 2. Real API/WebSocket wiring to replace every `features/*/data/mockData.ts` — agree the JSON
    schema (`anomaly_score`, `action_receipt`, `drift_alert`) with `services/ml-backend`'s
    `app/api/websocket.py` first, write it down in `docs/API.md`
@@ -312,7 +321,7 @@ face (third-party OnlineWebFonts CDN) but that token, the old `<link>` tags, and
    on submit without validating anything. Nothing guards the authenticated routes.
 5. Settings and profile forms don't persist — every input is `defaultValue`, no submit handler.
    Needs a store plus a real config endpoint.
-6. Models promote/rollback buttons only append a local message; hook to P-06's
+6. ~~Models promote/rollback~~ done for live models (`LiveModelDetailDialog`); mock mode still only appends a local message; hook to P-06's
    `POST /models/{service_id}/promote|rollback`
 7. Playwright E2E once there's a real backend to test against
 8. `Sidebar`/`AppShell` don't auto-collapse below a breakpoint (checked at 390px). The marketing

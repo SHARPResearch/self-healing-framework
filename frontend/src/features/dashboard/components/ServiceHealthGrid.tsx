@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { Sparkline } from "@/shared/components/Sparkline";
 import { SeverityBadge } from "@/shared/components/SeverityBadge";
 import type { ServiceHealth } from "../types";
+import type { LiveServiceHealth } from "@/features/lifecycle/types";
 
 const STATUS_TEXT_CLASS: Record<ServiceHealth["status"], string> = {
   watch: "text-status-watch",
@@ -12,8 +13,9 @@ const STATUS_TEXT_CLASS: Record<ServiceHealth["status"], string> = {
   critical: "text-status-critical",
 };
 
-function ServiceTile({ service }: { service: ServiceHealth }) {
+function ServiceTile({ service }: { service: ServiceHealth | LiveServiceHealth }) {
   const isCritical = service.status === "critical";
+  const lifecycle = "phase" in service ? service : null;
 
   return (
     <Card
@@ -28,6 +30,12 @@ function ServiceTile({ service }: { service: ServiceHealth }) {
           <p className="text-sm font-medium">{service.displayName}</p>
           <p className="text-xs text-muted-foreground">{service.serviceId}</p>
           <SeverityBadge severity={service.status} className="mt-2" />
+          {lifecycle && (
+            <p className="mt-2 font-mono text-[11px] text-muted-foreground">
+              model v{lifecycle.modelVersion} · {lifecycle.phase}
+              {lifecycle.openQueries > 0 && <span className="text-status-warn"> · asking operator</span>}
+            </p>
+          )}
         </div>
         <div className="flex flex-col items-end gap-1">
           <p

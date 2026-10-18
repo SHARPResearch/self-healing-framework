@@ -158,4 +158,12 @@ class PostgresStore:
                 logging.getLogger(__name__).exception("save_decision failed: %s", e)
                 return False
 
+    async def get_decision(self, decision_id: str) -> dict | None:
+        """Fetch one decision_log row by id."""
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM decision_log WHERE id = $1", decision_id
+            )
+        return dict(row) if row else None
+
 postgres_store = PostgresStore()

@@ -3,7 +3,7 @@ import { Pause, Play, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { api } from "@/lib/api";
+import { api } from "@/lib/mlBackend";
 import { refreshLive } from "@/hooks/useLiveConnection";
 import { useLiveStore } from "@/shared/store/liveStore";
 

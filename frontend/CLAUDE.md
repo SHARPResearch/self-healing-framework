@@ -25,7 +25,7 @@ following Doc2 literally for another part of this repo, this folder is the docum
   WebSocket on `/ws/events`, backoff 1 to 30 s, plus a 4 s REST poll; messages are batched every
   250 ms) and `src/shared/store/liveStore.ts`. Pages use mock data only while `ready` is false; the
   header `LiveStatusBadge` shows Live / Reconnecting / Offline. Vite proxies `/api` and `/ws` to
-  :8000.
+  :8002 (ml-backend; main's `lib/api.ts` calls the decision engine on :8000 directly).
 - **Still mock**: Incidents, recovery actions, the remediation simulation, the copilot, auth and
   settings.
 

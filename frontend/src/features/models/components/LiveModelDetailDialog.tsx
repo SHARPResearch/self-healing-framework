@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { api } from "@/lib/api";
+import { api } from "@/lib/mlBackend";
 import { refreshLive } from "@/hooks/useLiveConnection";
 import { useLiveStore } from "@/shared/store/liveStore";
 import { Pill } from "@/features/lifecycle/components/Pill";

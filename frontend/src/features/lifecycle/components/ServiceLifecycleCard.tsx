@@ -3,7 +3,7 @@ import { Bug, Loader2, Rocket, Waves } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { api } from "@/lib/api";
+import { api } from "@/lib/mlBackend";
 import { SeverityBadge } from "@/shared/components/SeverityBadge";
 import { useLiveStore } from "@/shared/store/liveStore";
 import type { InjectionKind, LiveServiceHealth } from "../types";

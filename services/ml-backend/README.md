@@ -16,14 +16,14 @@ docker compose -f infrastructure/local/docker-compose.demo.yml up -d
 # 2. Backend
 cd services/ml-backend
 uv sync
-uv run uvicorn app.main:app --port 8000
+uv run uvicorn app.main:app --port 8002
 
 # 3. Frontend (second terminal)
 cd frontend
-pnpm dev        # http://localhost:5173, proxies /api and /ws to :8000
+pnpm dev        # http://localhost:5173, proxies /api and /ws to :8002
 ```
 
-`GET http://localhost:8000/api/health` should report `"db": true, "redis": true`. If Docker isn't
+`GET http://localhost:8002/api/health` should report `"db": true, "redis": true`. If Docker isn't
 running, the backend still starts: it falls back to an in-memory store and an in-process bus and
 logs a warning, so the UI keeps working.
 

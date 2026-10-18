@@ -2,7 +2,7 @@
 main.py — FastAPI app for the ml-backend (Doc1 §2: Telemetry Ingestion API, Streaming ML Engine,
 Model Registry client).
 
-Run:  uv run uvicorn app.main:app --port 8000
+Run:  uv run uvicorn app.main:app --port 8002
 """
 
 import logging

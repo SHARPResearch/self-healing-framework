@@ -1,0 +1,9 @@
+# services/service-b-orders/dependencies.yaml
+service: service-b-orders
+depends_on:
+  - target: service-a-auth
+    protocol: http
+    strength: 0.9
+  - target: service-c-inventory
+    protocol: grpc
+    strength: 0.7

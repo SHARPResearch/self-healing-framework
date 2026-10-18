@@ -8,7 +8,7 @@ import { ModelFilterBar, type ModelFilter } from "./components/ModelFilterBar";
 import { StatCard } from "@/features/dashboard/components/StatCard";
 import { applyModelUpdate } from "./lib/modelActions";
 import { LiveModelDetailDialog } from "./components/LiveModelDetailDialog";
-import { api } from "@/lib/api";
+import { api } from "@/lib/mlBackend";
 import { useLiveStore } from "@/shared/store/liveStore";
 import { pct } from "@/features/lifecycle/lib/format";
 import { CROSS_ENTITY_MEAN_F1, TUNED_ENTITY_F1, modelRuns as initialModelRuns } from "./data/mockData";

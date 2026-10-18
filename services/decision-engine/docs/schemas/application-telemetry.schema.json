@@ -1,0 +1,11 @@
+{
+  "service_id": "service-b-orders",
+  "timestamp": "2026-10-05T10:14:23Z",
+  "requests_per_sec": 145.2,
+  "latency_ms": { "p50": 82, "p95": 340, "p99": 2450 },
+  "error_rate": 0.034,
+  "status_codes": { "2xx": 138, "4xx": 4, "5xx": 3 },
+  "active_connections": 210,
+  "db_query_p95_ms": 120,
+  "cache_hit_rate": 0.91
+}

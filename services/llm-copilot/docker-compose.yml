@@ -1,0 +1,49 @@
+version: '3.9'
+
+services:
+  # LLM Copilot 
+  llm-copilot:
+    build: ./services/llm-copilot
+    ports:
+      - "8004:8004"
+    env_file:
+      - ./services/llm-copilot/.env
+    volumes:
+      - ./services/llm-copilot/data:/app/data
+    depends_on:
+      - postgres
+      - ollama
+    networks:
+      - self-healing
+
+  # PostgreSQL (Report Storage)
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: copilot_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - self-healing
+
+  # Ollama (Local LLM Provider) 
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - self-healing
+
+volumes:
+  postgres_data:
+  ollama_data:
+
+networks:
+  self-healing:
+    driver: bridge

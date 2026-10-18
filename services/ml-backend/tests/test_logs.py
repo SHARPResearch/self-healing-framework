@@ -51,15 +51,15 @@ def test_container_levels():
     assert container_level("1:M 18 Oct 2026 # Possible SECURITY ATTACK detected") == "warn"
 
 
-def test_alarm_log_collapses_an_episode_into_two_lines():
+def test_alarm_log_collapses_an_episode_into_two_lines_and_ignores_blips():
     a = AlarmLog()
     events = []
-    for step in range(1, 200):
-        alarm = 50 <= step < 70 or step == 75           # a burst, a gap under QUIET, a stray alarm
+    for step in range(1, 300):
+        alarm = 50 <= step < 70 or step == 75 or 150 <= step < 157   # burst, stray, a 7 event blip
         e = a.update(step, alarm, 0.9 if alarm else 0.1)
         if e:
             events.append((step, e[0]))
-    assert events == [(50, "raised"), (75 + AlarmLog.QUIET, "cleared")]
+    assert events == [(57, "raised"), (75 + AlarmLog.QUIET, "cleared")]
 
 
 def test_identical_lines_have_the_same_id_so_replays_do_not_duplicate():

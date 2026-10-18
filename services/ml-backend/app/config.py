@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     replay_window_rows: int = 6000
     score_push_every: int = 10            # push one anomaly_score message every N events per service
 
+    # Logs page: follow these containers' output (service name shown on the page -> container).
+    follow_container_logs: bool = True
+    log_containers: dict[str, str] = {"TimescaleDB": "selfheal-demo-timescaledb-1",
+                                      "Redis": "selfheal-demo-redis-1"}
+    log_http_access: bool = False         # also log every uvicorn access line (very chatty)
+
     # Set false in tests to skip the replay loop and backing services.
     start_replay: bool = True
     use_backing_services: bool = True

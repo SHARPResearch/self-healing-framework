@@ -25,6 +25,26 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def parse_log_filter(text: str) -> dict:
+    """
+    The Logs page filter box, Railway style: free text plus `service:`, `level:` and `source:`
+    terms, e.g. `checkpoint service:timescaledb level:error`. Repeated keys match any of the values.
+    """
+    out: dict = {"text": [], "service": [], "level": [], "source": []}
+    for token in text.split():
+        key, sep, value = token.partition(":")
+        if sep and value and key.lower().lstrip("@") in ("service", "level", "source"):
+            out[key.lower().lstrip("@")].append(value.lower())
+        else:
+            out["text"].append(token)
+    return out
+
+
+def _bucket_seconds(start: datetime, end: datetime, buckets: int = 60) -> int:
+    span = max((end - start).total_seconds(), 1.0)
+    return max(1, int(round(span / buckets)))
+
+
 class MemoryStore:
     kind = "memory"
 
@@ -35,6 +55,8 @@ class MemoryStore:
         self.versions: dict[tuple[str, int], dict] = {}
         self.queries: dict[str, dict] = {}
         self.changes: deque = deque(maxlen=2000)
+        self.logs: deque = deque(maxlen=20000)
+        self._log_ids: set[str] = set()
 
     async def start(self) -> bool:
         return True
@@ -59,6 +81,67 @@ class MemoryStore:
 
     async def write_change(self, c: dict) -> None:
         self.changes.append(c)
+
+    # -- logs ------------------------------------------------------------------------------------
+    async def write_logs(self, lines: list[dict]) -> None:
+        for line in lines:
+            if line["id"] in self._log_ids:
+                continue
+            if len(self.logs) == self.logs.maxlen:
+                self._log_ids.discard(self.logs[0]["id"])
+            self.logs.append(line)
+            self._log_ids.add(line["id"])
+
+    @staticmethod
+    def _log_matches(line: dict, f: dict) -> bool:
+        names = {line["service"].lower(), (line.get("service_id") or "").lower()}
+        if f["service"] and not names & set(f["service"]):
+            return False
+        if f["level"] and line["level"] not in f["level"]:
+            return False
+        if f["source"] and line["source"] not in f["source"]:
+            return False
+        hay = f"{line['message']} {line['service']}".lower()
+        return all(t.lower() in hay for t in f["text"])
+
+    async def query_logs(self, q: str = "", since: Optional[datetime] = None,
+                         until: Optional[datetime] = None, before: Optional[datetime] = None,
+                         limit: int = 500) -> list[dict]:
+        """Newest `limit` matching lines, returned oldest first (the order the page shows them)."""
+        f = parse_log_filter(q)
+        rows = [ln for ln in self.logs
+                if (since is None or ln["time"] >= since) and (until is None or ln["time"] <= until)
+                and (before is None or ln["time"] < before) and self._log_matches(ln, f)]
+        rows.sort(key=lambda ln: (ln["time"], ln["id"]))
+        return rows[-limit:]
+
+    async def log_histogram(self, q: str, since: datetime, until: datetime) -> dict:
+        f = parse_log_filter(q)
+        width = _bucket_seconds(since, until)
+        buckets: dict[int, dict] = {}
+        for ln in self.logs:
+            if since <= ln["time"] <= until and self._log_matches(ln, f):
+                key = int(ln["time"].timestamp() // width * width)
+                b = buckets.setdefault(key, {"info": 0, "warn": 0, "error": 0})
+                b[ln["level"] if ln["level"] in ("warn", "error") else "info"] += 1
+        return {"bucketSeconds": width, "buckets": [
+            {"time": datetime.fromtimestamp(k, timezone.utc).isoformat(), **v}
+            for k, v in sorted(buckets.items())]}
+
+    async def log_services(self) -> list[dict]:
+        counts: dict[str, dict] = {}
+        for ln in self.logs:
+            c = counts.setdefault(ln["service"], {"service": ln["service"], "source": ln["source"], "count": 0})
+            c["count"] += 1
+        return sorted(counts.values(), key=lambda c: c["service"])
+
+    async def latest_log_times(self) -> dict[str, datetime]:
+        out: dict[str, datetime] = {}
+        floor = datetime.min.replace(tzinfo=timezone.utc)
+        for ln in self.logs:
+            if ln["time"] > out.get(ln["service"], floor):
+                out[ln["service"]] = ln["time"]
+        return out
 
     async def recent_decisions(self, service_id: Optional[str], limit: int) -> list[dict]:
         rows = [d for d in self.decisions if service_id is None or d["service_id"] == service_id]
@@ -170,6 +253,114 @@ class PgStore(MemoryStore):
             "INSERT INTO change_events (time, service_id, kind, detail) VALUES ($1,$2,$3,$4::jsonb)",
             [(_now(), c["service_id"], c["kind"], json.dumps(c.get("detail") or {}, default=str))])
 
+    # -- logs ------------------------------------------------------------------------------------
+    @staticmethod
+    def _log_where(f: dict, args: list, since=None, until=None, before=None) -> str:
+        clauses: list[str] = []
+
+        def add(sql: str, *values) -> None:
+            base = len(args)
+            args.extend(values)
+            clauses.append(sql.format(*[f"${base + i + 1}" for i in range(len(values))]))
+
+        if since is not None:
+            add("time >= {}", since)
+        if until is not None:
+            add("time <= {}", until)
+        if before is not None:
+            add("time < {}", before)
+        if f["service"]:
+            add("(lower(service) = ANY({}) OR lower(coalesce(service_id, '')) = ANY({}))",
+                f["service"], f["service"])
+        if f["level"]:
+            add("level = ANY({})", f["level"])
+        if f["source"]:
+            add("source = ANY({})", f["source"])
+        for t in f["text"]:
+            add("(message ILIKE {} OR service ILIKE {})", f"%{t}%", f"%{t}%")
+        return (" WHERE " + " AND ".join(clauses)) if clauses else ""
+
+    async def write_logs(self, lines: list[dict]) -> None:
+        await super().write_logs(lines)
+        if self.pool is None or not lines:
+            return
+        try:                                  # debug only: a warning here would itself be a log line
+            async with self.pool.acquire() as conn:
+                await conn.executemany(
+                    "INSERT INTO service_logs (time, id, service, service_id, source, level, message,"
+                    " attrs) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb) ON CONFLICT DO NOTHING",
+                    [(ln["time"], ln["id"], ln["service"], ln.get("service_id"), ln["source"],
+                      ln["level"], ln["message"], json.dumps(ln.get("attrs") or {}, default=str))
+                     for ln in lines])
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("store: log write failed (%s)", exc)
+
+    @staticmethod
+    def _row_to_log(r) -> dict:
+        attrs = r["attrs"]
+        return {"id": r["id"], "time": r["time"], "service": r["service"], "service_id": r["service_id"],
+                "source": r["source"], "level": r["level"], "message": r["message"],
+                "attrs": json.loads(attrs) if isinstance(attrs, str) else (attrs or {})}
+
+    async def query_logs(self, q: str = "", since=None, until=None, before=None, limit: int = 500) -> list[dict]:
+        if self.pool is None:
+            return await super().query_logs(q, since, until, before, limit)
+        args: list = []
+        where = self._log_where(parse_log_filter(q), args, since, until, before)
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    f"SELECT * FROM (SELECT * FROM service_logs{where} ORDER BY time DESC, id DESC"
+                    f" LIMIT {int(limit)}) t ORDER BY time, id", *args)
+            return [self._row_to_log(r) for r in rows]
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("store: log query failed (%s)", exc)
+            return await super().query_logs(q, since, until, before, limit)
+
+    async def log_histogram(self, q: str, since, until) -> dict:
+        if self.pool is None:
+            return await super().log_histogram(q, since, until)
+        width = _bucket_seconds(since, until)
+        args: list = [float(width)]
+        where = self._log_where(parse_log_filter(q), args, since, until)
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT to_timestamp(floor(extract(epoch FROM time) / $1) * $1) AS bucket,"
+                    " count(*) FILTER (WHERE level = 'error') AS error,"
+                    " count(*) FILTER (WHERE level = 'warn') AS warn,"
+                    " count(*) FILTER (WHERE level NOT IN ('warn', 'error')) AS info"
+                    f" FROM service_logs{where} GROUP BY bucket ORDER BY bucket", *args)
+            return {"bucketSeconds": width, "buckets": [
+                {"time": r["bucket"].isoformat(), "info": r["info"], "warn": r["warn"],
+                 "error": r["error"]} for r in rows]}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("store: log histogram failed (%s)", exc)
+            return await super().log_histogram(q, since, until)
+
+    async def log_services(self) -> list[dict]:
+        if self.pool is None:
+            return await super().log_services()
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT service, min(source) AS source, count(*) AS count FROM service_logs"
+                    " GROUP BY service ORDER BY service")
+            return [{"service": r["service"], "source": r["source"], "count": r["count"]} for r in rows]
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("store: log services failed (%s)", exc)
+            return await super().log_services()
+
+    async def latest_log_times(self) -> dict:
+        if self.pool is None:
+            return await super().latest_log_times()
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch("SELECT service, max(time) AS t FROM service_logs GROUP BY service")
+            return {r["service"]: r["t"] for r in rows}
+        except Exception:  # noqa: BLE001
+            return await super().latest_log_times()
+
     async def score_trend(self, minutes: int) -> list[dict]:
         if self.pool is None:
             return await super().score_trend(minutes)
@@ -191,7 +382,7 @@ class PgStore(MemoryStore):
             async with self.pool.acquire() as conn:
                 out = {}
                 for table in ("metric_events", "lifecycle_decisions", "lifecycle_transitions",
-                              "operator_queries", "model_versions"):
+                              "operator_queries", "model_versions", "service_logs"):
                     out[table] = await conn.fetchval(f"SELECT count(*) FROM {table}")
                 return out
         except Exception:  # noqa: BLE001

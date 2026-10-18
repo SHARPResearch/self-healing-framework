@@ -108,6 +108,11 @@ class LogHub:
             out.append(self._incoming.popleft())
         return out
 
+    def start(self) -> None:
+        """(Re)arm after a stop, e.g. when a test client restarts the app lifespan."""
+        self._stopping.clear()
+        self.install()
+
     def install(self) -> None:
         for name in ("app", "uvicorn.error", "uvicorn.access"):
             lg = logging.getLogger(name)

@@ -32,6 +32,7 @@ import json
 import logging
 import sys
 import time
+import zlib
 from dataclasses import replace
 from pathlib import Path
 
@@ -80,6 +81,15 @@ ALL_VARIANTS = {**VARIANTS, **DETECTOR_VARIANTS}
 OPERATOR_ERROR = {"cadal_hitl": 0.0, "cadal_hitl_noisy": 0.2}
 OPERATOR_DELAY = 60          # events between a query and its answer (an hour at SMD's rate)
 OPERATOR_INCIDENT_SHARE = 0.1
+
+
+def operator_seed(entity_id: str, scenario: str, seed: int = 0) -> int:
+    """
+    A different, reproducible answer-noise stream per run. A shared seed would draw the same few
+    numbers in every run, and with only one to three queries per run, Random(0)'s first ten
+    draws (all >= 0.25) would never flip an answer at a 20% error rate.
+    """
+    return zlib.crc32(f"{entity_id}|{scenario}|{seed}".encode())
 
 
 class SimulatedOperator:
@@ -185,14 +195,14 @@ def warm_up_rows(entity_id: str, train: list[dict], hst_cfg=HST_CFG, base: Lifec
 
 def run_one(entity_id, model, warm_state, calib, recent, null, rows, labels, injections, cfg,
             hst_cfg=HST_CFG, trace: dict | None = None, ref: dict | None = None,
-            operator_error: float | None = None):
+            operator_error: float | None = None, operator_seed: int = 0):
     events = change_events_for(injections, entity_id)
     mgr = DynamicModelManager(entity_id, cfg, hst_cfg, model=model,
                               change_source=ReplayChangeEventSource(events))
     mgr.start_from(warm_state, calib["prequential" if cfg.learns_while_serving else "frozen"], recent,
                    null if cfg.policy == "cadal" else None, ref_stats=ref)
     alarms, latency, scores, versions, thresholds = [], [], [], [], []
-    operator = (SimulatedOperator(labels, operator_error)
+    operator = (SimulatedOperator(labels, operator_error, seed=operator_seed)
                 if cfg.operator_queries and operator_error is not None else None)
     t0 = time.perf_counter()
     for x in rows:
@@ -277,7 +287,7 @@ def main() -> None:
                 summary, curve, decisions = run_one(
                     entity_id, model, warm_state, calib, recent, null, rows, labels, injections,
                     replace(ALL_VARIANTS[variant], threshold_method=args.threshold), hst_cfg, trace, ref,
-                    OPERATOR_ERROR.get(variant))
+                    OPERATOR_ERROR.get(variant), operator_seed(entity_id, scenario, args.seed))
                 if trace:
                     (out / "traces").mkdir(exist_ok=True)
                     np.savez_compressed(out / "traces" / f"{entity_id}_{scenario}_{variant}.npz", **trace)

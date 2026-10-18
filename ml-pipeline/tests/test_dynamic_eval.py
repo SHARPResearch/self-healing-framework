@@ -45,3 +45,15 @@ def test_stream_metrics_reports_post_drift_section_and_curve():
 def test_length_mismatch_is_rejected():
     with pytest.raises(ValueError):
         stream_metrics([True], [0, 1], None, 0.03)
+
+
+def test_simulated_operator_noise_differs_per_run():
+    import random
+    from evaluate_dynamic import operator_seed
+
+    seeds = {operator_seed(e, s) for e in ("machine-1-1", "machine-2-2") for s in ("none", "silent")}
+    assert len(seeds) == 4
+    # with one seed shared by every run, a 20% error rate never fired on a run's first few answers
+    flips = sum(random.Random(seed).random() < 0.2
+                for seed in (operator_seed(f"machine-{i}", "silent") for i in range(200)))
+    assert 20 <= flips <= 60

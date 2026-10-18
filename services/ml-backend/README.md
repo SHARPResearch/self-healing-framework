@@ -37,9 +37,9 @@ that machine's test split, forward and then backward, so the replay can run inde
 | service-a-auth | machine-2-9, row 0 | deploy → promote |
 | service-b-orders | machine-3-10, row 15250 | deploy → promote; a silent change is repaired by re-baselining |
 | service-c-inventory | machine-1-2, row 9250 | silent change → ask the operator |
-| service-d-shipping | machine-2-8, row 0 | silent change → ask; incident → resume |
+| service-d-shipping | machine-2-8, row 0 | incident → resume (a silent change asks only early in the replay) |
 | service-e-payments | machine-2-2, row 0 | incident → resume |
-| service-f-search | machine-1-5, row 0 | incident → resume |
+| service-f-search | machine-1-5, row 0 | incident → resume (sometimes hold or ask) |
 
 How the windows were chosen:
 - Each one is the label-free stretch of its machine's test split where the warm-up model alarms at
@@ -47,7 +47,9 @@ How the windows were chosen:
   something.
 - The mapping comes from rehearsing every candidate offline. Each scenario was run to its decision,
   and the model's alarm rate was then checked over the next two days of data. After every promotion
-  in the table it stayed between 0% and 1.5%.
+  in the table it stayed between 0% and 1.5%. The scenarios were also injected at five different
+  points of the replay: deploys promoted every time on Auth, Orders and Inventory, a silent change on
+  Inventory asked 4 times out of 5, and an incident on Payments resumed every time.
 - Other scenarios still run on every service and show real behaviour. For example, a deploy on
   Payments is held, because some of its metrics keep trending ("still moving") and CADAL won't learn
   a regime that hasn't settled.
@@ -88,7 +90,7 @@ Demo injections (`POST /api/demo/{service}/{kind}`):
 | GET | `/models` | `ModelRun[]`, plus `detector, thresholdMethod, phase, productionVersion, versionCount, rebaselined, openQueries, lastDecision` |
 | GET | `/models/{id}` | the `ModelRun` fields, plus `versions, transitions, decisions, queries` |
 | POST | `/models/{id}/promote` | body `{version?, operator}`; verified manual promotion |
-| POST | `/models/{id}/rollback` | body `{version?, operator}`; rolls back to the previous production version by default |
+| POST | `/models/{id}/rollback` | body `{version?, operator}`; by default undoes the most recent promotion |
 | POST | `/models/{id}/validity-check` | opens an operator-triggered quarantine |
 | GET | `/lifecycle/decisions?service_id=&limit=` | the decision log, newest first |
 | GET | `/queries?status=open` | operator queries |

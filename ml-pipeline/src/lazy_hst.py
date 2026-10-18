@@ -26,18 +26,34 @@ scaling, see docs/Component_2_Dynamic_Model_Updating.md).
 
 from __future__ import annotations
 
-import random
-
 from river import anomaly
 
 PADDING = 0.15  # same as river's make_padded_tree
 
 
-class LazyNode:
-    __slots__ = ("feature", "threshold", "l_mass", "r_mass", "left", "right")
+_MASK = (1 << 64) - 1
 
-    def __init__(self, feature, threshold):
+
+def _mix(x: int) -> int:
+    """splitmix64 finaliser: a fast, well-distributed 64-bit hash."""
+    x = (x + 0x9E3779B97F4A7C15) & _MASK
+    x = ((x ^ (x >> 30)) * 0xBF58476D1CE4E5B9) & _MASK
+    x = ((x ^ (x >> 27)) * 0x94D049BB133111EB) & _MASK
+    return x ^ (x >> 31)
+
+
+def _node_uniforms(seed: int, tree: int, heap_idx: int) -> tuple[float, float]:
+    """Two deterministic U[0, 1) draws for one node, a pure function of (seed, tree, heap_idx)."""
+    key = _mix(_mix(_mix(seed & _MASK) ^ tree) ^ heap_idx)
+    return key / 2.0 ** 64, _mix(key) / 2.0 ** 64
+
+
+class LazyNode:
+    __slots__ = ("feature", "fidx", "threshold", "l_mass", "r_mass", "left", "right")
+
+    def __init__(self, feature, fidx, threshold):
         self.feature = feature        # None for a leaf
+        self.fidx = fidx              # index of `feature` in the model's feature list
         self.threshold = threshold
         self.l_mass = 0
         self.r_mass = 0
@@ -70,30 +86,46 @@ class LazyHalfSpaceTrees(anomaly.base.AnomalyDetector):
         self.counter = 0
         self._first_window = True
 
-    # ── structure ────────────────────────────────────────────────────────────
+    # -- structure -------------------------------------------------------------------------------
+    # A cell ("region") is two lists, lower and upper limit per feature index. Creating a node
+    # copies the root lists and applies at most `height` splits, and its split is drawn from
+    # splitmix64 hashes of (seed, tree, heap index): no RNG object and no dict per feature, which
+    # made applying a 2,800-node snapshot ~120 ms. Same rule as river's make_padded_tree: the feature
+    # is chosen with probability proportional to its range in the cell, the threshold uniformly in
+    # the cell's range shrunk by PADDING on both sides.
     def _limits_of(self, feature):
         return self.limits.get(feature, self.default_limits)
 
-    def _rng(self, tree: int, heap_idx: int) -> random.Random:
-        return random.Random(((self.seed or 0) * 1_000_003 + tree) * (1 << 24) + heap_idx)
+    def _root_region(self) -> tuple[list, list]:
+        return ([self._limits_of(f)[0] for f in self.features],
+                [self._limits_of(f)[1] for f in self.features])
 
-    def _make_node(self, tree: int, heap_idx: int, region: dict, depth: int) -> LazyNode:
+    def _make_node(self, tree: int, heap_idx: int, region: tuple[list, list], depth: int) -> LazyNode:
         if depth == self.height:
-            return LazyNode(None, None)
-        rng = self._rng(tree, heap_idx)
-        feats = self.features
-        feature = rng.choices(feats, weights=[region[f][1] - region[f][0] for f in feats])[0]
-        a, b = region[feature]
-        threshold = rng.uniform(a + PADDING * (b - a), b - PADDING * (b - a))
-        return LazyNode(feature, threshold)
+            return LazyNode(None, None, None)
+        lo, hi = region
+        u_feature, u_threshold = _node_uniforms(self.seed or 0, tree, heap_idx)
+        widths = [h - low for low, h in zip(lo, hi)]
+        target = u_feature * sum(widths)
+        fidx, acc = len(widths) - 1, 0.0
+        for i, w in enumerate(widths):
+            acc += w
+            if target < acc:
+                fidx = i
+                break
+        a, b = lo[fidx], hi[fidx]
+        threshold = a + PADDING * (b - a) + u_threshold * (1 - 2 * PADDING) * (b - a)
+        return LazyNode(self.features[fidx], fidx, threshold)
 
-    def _region(self, path: list[tuple[LazyNode, int]]) -> dict:
+    def _region(self, path: list[tuple[LazyNode, int]]) -> tuple[list, list]:
         """Feature limits of the cell reached by following `path` (node, went_right) from the root."""
-        region = {f: self._limits_of(f) for f in self.features}
+        lo, hi = self._root_lo[:], self._root_hi[:]
         for node, right in path:
-            lo, hi = region[node.feature]
-            region[node.feature] = (node.threshold, hi) if right else (lo, node.threshold)
-        return region
+            if right:
+                lo[node.fidx] = node.threshold
+            else:
+                hi[node.fidx] = node.threshold
+        return lo, hi
 
     def _child(self, tree: int, node: LazyNode, heap_idx: int, right: bool, path, create: bool):
         child = node.right if right else node.left
@@ -110,8 +142,9 @@ class LazyHalfSpaceTrees(anomaly.base.AnomalyDetector):
         if self.trees:
             return
         self.features = tuple(sorted(x))
-        root_region = {f: self._limits_of(f) for f in self.features}
-        self.trees = [self._make_node(t, 1, root_region, 0) for t in range(self.n_trees)]
+        self._root_lo, self._root_hi = self._root_region()
+        self.trees = [self._make_node(t, 1, (self._root_lo, self._root_hi), 0)
+                      for t in range(self.n_trees)]
 
     def _go_right(self, node: LazyNode, x: dict) -> bool:
         try:

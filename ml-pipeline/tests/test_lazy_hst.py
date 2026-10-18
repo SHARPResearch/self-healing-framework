@@ -14,18 +14,20 @@ def _rows(n, seed=0, shift=0.0):
 
 def _river_with_lazy_structure(lazy: LazyHalfSpaceTrees) -> HalfSpaceTrees:
     """A river HST whose (fully built) trees are exactly the lazy model's deterministic splits."""
-    def build(tree, idx, region, depth):
-        proto = lazy._make_node(tree, idx, region, depth)
+    def build(tree, idx, lo, hi, depth):
+        proto = lazy._make_node(tree, idx, (lo, hi), depth)
         if proto.feature is None:
             return HSTLeaf(l_mass=0, r_mass=0)
-        lo, hi = region[proto.feature]
-        left = build(tree, 2 * idx, {**region, proto.feature: (lo, proto.threshold)}, depth + 1)
-        right = build(tree, 2 * idx + 1, {**region, proto.feature: (proto.threshold, hi)}, depth + 1)
+        i = proto.fidx
+        left_hi, right_lo = hi[:], lo[:]
+        left_hi[i], right_lo[i] = proto.threshold, proto.threshold
+        left = build(tree, 2 * idx, lo[:], left_hi, depth + 1)
+        right = build(tree, 2 * idx + 1, right_lo, hi[:], depth + 1)
         return HSTBranch(left, right, proto.feature, proto.threshold, l_mass=0, r_mass=0)
 
     river = HalfSpaceTrees(n_trees=lazy.n_trees, height=lazy.height, window_size=lazy.window_size)
-    root_region = {f: lazy._limits_of(f) for f in lazy.features}
-    river.trees = [build(t, 1, dict(root_region), 0) for t in range(lazy.n_trees)]
+    lo, hi = lazy._root_region()
+    river.trees = [build(t, 1, lo[:], hi[:], 0) for t in range(lazy.n_trees)]
     river._tree_nodes = [list(t.iter_dfs()) for t in river.trees]
     return river
 

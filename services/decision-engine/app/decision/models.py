@@ -24,10 +24,12 @@ from app.rules.models import ActionType, RiskLevel, RuleGuardrail
 # Decision can carry the field with a stable schema.
 # ─────────────────────────────────────────────────────────────────────
 class PolicyOutcome(str, Enum):
-    AUTO_EXECUTE = "AUTO_EXECUTE"      # confidence ≥ 0.85 AND risk = LOW
-    SHADOW_MODE  = "SHADOW_MODE"       # 0.60 ≤ confidence < 0.85
-    HUMAN_LOOP   = "HUMAN_LOOP"        # risk = HIGH or repeat-failure ≥ 2
-    BLOCK        = "BLOCK"             # confidence < 0.60 or dependency conflict
+    AUTO_EXECUTE       = "AUTO_EXECUTE"        # confidence ≥ 0.85 AND risk = LOW
+    SHADOW_MODE        = "SHADOW_MODE"         # 0.60 ≤ confidence < 0.85
+    HUMAN_LOOP         = "HUMAN_LOOP"          # risk = HIGH or repeat-failure ≥ 2
+    BLOCK              = "BLOCK"               # confidence < 0.60 or dependency conflict
+    NO_RULE_MATCHED    = "NO_RULE_MATCHED"     # no rule matched (terminal — no retry)
+    PENDING_VALIDATION = "PENDING_VALIDATION"  # reserved for future
 
 
 # ─────────────────────────────────────────────────────────────────────

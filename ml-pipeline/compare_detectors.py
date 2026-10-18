@@ -40,7 +40,8 @@ from sklearn.metrics import matthews_corrcoef
 sys.path.insert(0, str(Path(__file__).parent.parent / "datasets" / "smd"))
 from preprocess import discover_entities, preprocess_entity  # noqa: E402
 
-from src.evaluate import evaluate, load_labels, oracle_best_f1, percentile_threshold, pr_auc  # noqa: E402
+from src.evaluate import evaluate, load_labels, oracle_best_f1, pr_auc  # noqa: E402
+from src.lifecycle_manager import LifecycleConfig, calibrated_threshold  # noqa: E402
 from src.lifecycle_manager import prepare_calibration  # noqa: E402
 from src.hst_model import DETECTOR_PRESETS, build_model, detector_config, freeze_scaler  # noqa: E402
 
@@ -51,7 +52,8 @@ FIELDS = ["entity", "split", "candidate", "pr_auc", "f1", "precision", "recall",
           "informedness", "oracle_f1", "warm_up_s", "score_eps", "n_nodes"]
 
 
-def run_candidate(name: str, train: list[dict], test: list[dict], labels: list[int]) -> dict:
+def run_candidate(name: str, train: list[dict], test: list[dict], labels: list[int],
+                  threshold_method: str = "percentile") -> dict:
     cfg = CANDIDATES[name]
     model = build_model(cfg)
     clamp = lambda v: float(min(max(v, 0.0), 1.0))  # noqa: E731
@@ -72,7 +74,7 @@ def run_candidate(name: str, train: list[dict], test: list[dict], labels: list[i
     scores = [clamp(model.score_one(r)) for r in test]
     score_eps = len(test) / (time.perf_counter() - t0)
 
-    threshold = percentile_threshold(calib, 97)
+    threshold = calibrated_threshold(model, calib, LifecycleConfig(threshold_method=threshold_method))
     m = evaluate(scores, labels, threshold=threshold)
     pred = [int(s >= threshold) for s in scores]
     normal = [p for p, y in zip(pred, labels) if not y]
@@ -111,6 +113,8 @@ def main() -> None:
     parser.add_argument("--entities", nargs="*", default=None)
     parser.add_argument("--candidates", nargs="*", default=list(CANDIDATES), choices=list(CANDIDATES))
     parser.add_argument("--out", default="outputs/detectors/detectors.csv")
+    parser.add_argument("--threshold", default="percentile", choices=["percentile", "pot"],
+                        help="97th percentile (default) or POT at q=0.01; POT rows are named <candidate>@pot")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
 
@@ -122,7 +126,8 @@ def main() -> None:
             done = {(r["entity"], r["candidate"]) for r in csv.DictReader(f)}
 
     for entity in args.entities or discover_entities("train"):
-        todo = [c for c in args.candidates if (entity, c) not in done]
+        suffix = "" if args.threshold == "percentile" else f"@{args.threshold}"
+        todo = [c for c in args.candidates if (entity, c + suffix) not in done]
         if not todo:
             continue
         train = pd.read_parquet(preprocess_entity(entity, split="train")).to_dict(orient="records")
@@ -130,7 +135,10 @@ def main() -> None:
         labels = load_labels(entity)
         split = "dev" if entity.startswith("machine-1-") else "held_out"
         for name in todo:
-            row = {"entity": entity, "split": split, **run_candidate(name, train, test, labels)}
+            row = {"entity": entity, "split": split,
+                   **run_candidate(name, train, test, labels, args.threshold)}
+            if args.threshold != "percentile":
+                row["candidate"] = f"{name}@{args.threshold}"
             new = not out.exists()
             with open(out, "a", newline="") as f:
                 w = csv.DictWriter(f, fieldnames=FIELDS)

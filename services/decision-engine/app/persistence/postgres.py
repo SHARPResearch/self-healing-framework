@@ -165,5 +165,37 @@ class PostgresStore:
                 "SELECT * FROM decision_log WHERE id = $1", decision_id
             )
         return dict(row) if row else None
+ 
+    async def list_decisions(
+        self,
+        limit: int = 50,
+        service_id: str | None = None,
+        anomaly_id: str | None = None,
+        policy_outcome: str | None = None,
+    ) -> list[dict]:
+        """List recent decision_log rows with optional filters."""
+        clauses = []
+        args = []
+        if service_id:
+            args.append(service_id)
+            clauses.append(f"service_id = ${len(args)}")
+        if anomaly_id:
+            args.append(anomaly_id)
+            clauses.append(f"anomaly_id = ${len(args)}")
+        if policy_outcome:
+            args.append(policy_outcome)
+            clauses.append(f"policy_outcome = ${len(args)}")
+
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        args.append(limit)
+        sql = f"""
+            SELECT * FROM decision_log
+            {where}
+            ORDER BY created_at DESC
+            LIMIT ${len(args)}
+        """
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(sql, *args)
+        return [dict(r) for r in rows]
 
 postgres_store = PostgresStore()

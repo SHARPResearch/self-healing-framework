@@ -26,7 +26,13 @@ class HSTStatePyfunc(mlflow.pyfunc.PythonModel):
         self.model = build_model(HSTConfig(**config["hst_params"]), with_scaler=config["with_scaler"])
         materialize(self.model, config["feature_names"])
         apply(self.model, state)
+        # A re-baselined version is the model *plus* the per-metric shifts it serves behind
+        # (src/lifecycle_manager.rebaselined); scoring raw inputs without them would be wrong.
+        self.shifts = dict(state.meta.get("shifts") or {})
 
     def predict(self, context, model_input, params=None):
+        from src.lifecycle_manager import rebaselined
+
         rows = model_input.to_dict(orient="records")
-        return [float(min(max(self.model.score_one(r), 0.0), 1.0)) for r in rows]
+        return [float(min(max(self.model.score_one(rebaselined(r, self.shifts)), 0.0), 1.0))
+                for r in rows]

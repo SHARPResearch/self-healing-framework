@@ -8,6 +8,7 @@ import { AnomalyScoreChart } from "./components/AnomalyScoreChart";
 import { ServiceHealthGrid } from "./components/ServiceHealthGrid";
 import { IncidentFeed } from "./components/IncidentFeed";
 import { DriftAlertBanner } from "./components/DriftAlertBanner";
+import { useLiveDashboard } from "./lib/liveDashboard";
 import {
   anomalyScoreTrend,
   driftAlertServices,
@@ -26,6 +27,7 @@ export function DashboardPage() {
   const serviceOverrides = useRemediationStore((s) => s.serviceOverrides);
   const recoveryActionsDelta = useRemediationStore((s) => s.recoveryActionsDelta);
   const liveIncidents = useRemediationStore((s) => s.liveIncidents);
+  const live = useLiveDashboard();
 
   const liveServices = services.map((s) =>
     serviceOverrides[s.serviceId] ? { ...s, status: serviceOverrides[s.serviceId], driftDetected: false } : s,
@@ -67,7 +69,7 @@ export function DashboardPage() {
   return (
     <AppShell pageTitle="Dashboard">
       <div className="space-y-6">
-        <DriftAlertBanner affectedServices={driftAlertServices} />
+        <DriftAlertBanner affectedServices={live ? live.driftServices : driftAlertServices} />
 
         <div className="flex items-center justify-between gap-3">
           <p className="text-sm text-muted-foreground">
@@ -79,18 +81,25 @@ export function DashboardPage() {
         <RlPolicyEvaluationBanner />
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          {liveStatCards.map((card) => (
+          {(live ? live.statCards : liveStatCards).map((card) => (
             <StatCard key={card.label} {...card} />
           ))}
         </div>
 
         <div className="grid grid-cols-1 gap-4 rounded-xl border border-border/60 p-4 lg:grid-cols-2">
           <ActionsBarChart data={liveRecoveryActionsByDay} changePct={66.9} />
-          <AnomalyScoreChart data={liveAnomalyScoreTrend} changePct={58.3} />
+          {live ? (
+            <AnomalyScoreChart
+              data={live.trend}
+              description="Fleet mean anomaly score, live. Each label is a replay step."
+            />
+          ) : (
+            <AnomalyScoreChart data={liveAnomalyScoreTrend} changePct={58.3} />
+          )}
         </div>
 
         <div className="grid grid-cols-1 gap-6 rounded-xl border border-border/60 p-4 xl:grid-cols-[2fr_1fr]">
-          <ServiceHealthGrid services={liveServices} />
+          <ServiceHealthGrid services={live ? live.services : liveServices} />
           <IncidentFeed incidents={liveIncidentFeed} />
         </div>
       </div>

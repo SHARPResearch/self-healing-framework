@@ -17,7 +17,7 @@ class TelemetryContextBuilder:
         metrics: Dict[str, Any],
         logs: List[str],
         service_name: str,
-        time_range: Dict[str, datetime]
+        time_range: Dict[str, Any]  # Changed from datetime to Any
     ) -> Dict[str, Any]:
         """
         Build structured context from telemetry data.
@@ -26,17 +26,27 @@ class TelemetryContextBuilder:
             metrics: Prometheus metrics data
             logs: Application logs
             service_name: Name of the service
-            time_range: Time range for the context
+            time_range: Time range for the context (can be strings or datetime objects)
         
         Returns:
             Structured context dictionary
         """
         try:
+            # FIX: Handle both string and datetime objects for time_range
+            start_time = time_range.get("start")
+            end_time = time_range.get("end")
+            
+            # Convert to ISO format if they are datetime objects, otherwise keep as strings
+            if hasattr(start_time, "isoformat"):
+                start_time = start_time.isoformat()
+            if hasattr(end_time, "isoformat"):
+                end_time = end_time.isoformat()
+            
             context = {
                 "service": service_name,
                 "time_range": {
-                    "start": time_range["start"].isoformat(),
-                    "end": time_range["end"].isoformat()
+                    "start": str(start_time),
+                    "end": str(end_time)
                 },
                 "metrics_summary": self._summarize_metrics(metrics),
                 "log_highlights": self._extract_log_highlights(logs),
@@ -44,11 +54,11 @@ class TelemetryContextBuilder:
                 "context_text": self._generate_context_text(metrics, logs, service_name)
             }
             
-            logger.info(f" Built context for {service_name}")
+            logger.info(f"Built context for {service_name}")
             return context
             
         except Exception as e:
-            logger.error(f" Failed to build context: {e}")
+            logger.error(f"Failed to build context: {e}")
             return {"error": str(e)}
 
     def _summarize_metrics(self, metrics: Dict[str, Any]) -> Dict[str, Any]:

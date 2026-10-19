@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useLiveStore } from "@/shared/store/liveStore";
-import type { AnomalyTrendPoint, ServiceHealth, StatCardData } from "../types";
+import type { AnomalyTrendPoint, DailyMetricPoint, ServiceHealth, StatCardData } from "../types";
 
 const TREND_POINTS = 60;
 
@@ -14,12 +14,15 @@ export function useLiveDashboard(): {
   statCards: StatCardData[];
   trend: AnomalyTrendPoint[];
   driftServices: string[];
+  /** Lifecycle decisions by action since the last reset, for the bar chart. */
+  actions: DailyMetricPoint[];
 } | null {
   const ready = useLiveStore((s) => s.ready);
   const order = useLiveStore((s) => s.serviceOrder);
   const byId = useLiveStore((s) => s.services);
   const scores = useLiveStore((s) => s.scores);
   const summary = useLiveStore((s) => s.summary);
+  const decisions = useLiveStore((s) => s.decisions);
 
   return useMemo(() => {
     if (!ready) return null;
@@ -71,11 +74,21 @@ export function useLiveDashboard(): {
       },
     ];
 
+    const count = (action: string) => decisions.filter((d) => d.action === action).length;
+    const actions: DailyMetricPoint[] = [
+      { label: "Promote", value: count("promote") },
+      { label: "Roll back", value: count("rollback") },
+      { label: "Ask operator", value: count("ask") },
+      { label: "Hold", value: count("hold") },
+      { label: "Resume", value: count("resume") },
+    ];
+
     return {
+      actions,
       services,
       statCards,
       trend,
       driftServices: services.filter((s) => s.driftDetected).map((s) => s.displayName),
     };
-  }, [ready, order, byId, scores, summary]);
+  }, [ready, order, byId, scores, summary, decisions]);
 }

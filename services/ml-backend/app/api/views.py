@@ -43,7 +43,7 @@ def service_health(fleet: ServiceFleet, rt: ServiceRuntime) -> dict:
         "alarm": rt.last_alarm,
         "modelVersion": mgr.registry.production_version,
         "openQueries": len(mgr.open_queries),
-        "smdEntity": rt.entity,
+        "smdEntity": rt.entity + (f" (rows {rt.window_start}+)" if rt.window_start else ""),
     }
 
 

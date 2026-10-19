@@ -1,0 +1,28 @@
+{
+  "decision_id": "dec-2026-10-20-0001",
+  "timestamp": "2026-10-20T14:30:00Z",
+  "service": "payment-svc",
+  "triggering_anomaly": {
+    "anomaly_score": 0.88,
+    "metric": "cpu_utilization",
+    "deviation_magnitude": 2.4,
+    "detected_at": "2026-10-20T14:28:15Z"
+  },
+  "dependency_context": {
+    "root_cause_service": "inventory-svc",
+    "blast_radius": 4,
+    "risk_level": "HIGH",
+    "propagation_type": "upstream"
+  },
+  "rule_matched": "UPSTREAM_PROPAGATION_SCALE_OUT",
+  "validation_outcome": "AUTO_EXECUTE",
+  "confidence_score": 0.92,
+  "action_taken": {
+    "type": "scale_out",
+    "target": "inventory-svc",
+    "parameters": {"replicas": 5}
+  },
+  "execution_status": "SUCCESS",
+  "recovery_time_sec": 12.5,
+  "telemetry_snapshot_url": "/api/telemetry-history?decision_id=dec-2026-10-20-0001"
+}

@@ -15,6 +15,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
+        extra="ignore",  # <--- THIS IS THE FIX: Tells Pydantic to ignore extra .env variables
     )
 
     # LLM Settings 
@@ -24,12 +25,16 @@ class Settings(BaseSettings):
     gemini_api_key: Optional[str] = None
     gemini_model: str = "gemini-1.5-flash"
 
+    # Embedding Settings (For Vector Store)
+    embedding_provider: str = "ollama"
+    embedding_model: str = "nomic-embed-text"
+
     # Component 2 Integration 
     component2_base_url: str = "http://localhost:8002"
-    component2_webhook_secret: str = "change_this_secret"
+    component2_webhook_secret: str = "test_secret_123"
 
     # Database 
-    postgres_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/copilot_db"
+    database_url: str = "sqlite:///./data/copilot.db"
     vector_db_path: str = "./data/chroma_db"
 
     # Security 

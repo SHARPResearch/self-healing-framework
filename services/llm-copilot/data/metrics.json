@@ -1,0 +1,14 @@
+[
+  {
+    "query_id": "34d4ebfc-7cc6-4c98-b9ac-1be7e752678b",
+    "timestamp": "2026-10-20T00:40:16.720708",
+    "metrics": {
+      "context_relevance": 0.25,
+      "response_quality": 0.8,
+      "context_utilization": 0.7
+    },
+    "metadata": {
+      "query": "Why is payment-svc experiencing high CPU and errors?"
+    }
+  }
+]

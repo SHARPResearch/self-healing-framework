@@ -6,6 +6,7 @@ Conversational RAG Pipeline - Translates natural language to telemetry queries.
 from typing import Dict, Any, List
 from loguru import logger
 import json
+import hashlib
 
 from app.agents.telemetry.context_builder import context_builder
 from app.agents.telemetry.vectorizer import vectorizer
@@ -31,7 +32,7 @@ class ConversationalRAGPipeline:
             Dict with response, sources, and metadata
         """
         try:
-            logger.info(f" Processing query: {user_query[:100]}...")
+            logger.info(f"Processing query: {user_query[:100]}...")
             
             # Step 1: Retrieve relevant telemetry from vector store
             retrieved_contexts = self._retrieve_context(user_query, n_results=3)
@@ -63,11 +64,11 @@ class ConversationalRAGPipeline:
                 }
             }
             
-            logger.info(f" Generated response with {len(retrieved_contexts)} sources")
+            logger.info(f"Generated response with {len(retrieved_contexts)} sources")
             return result
             
         except Exception as e:
-            logger.error(f" RAG pipeline failed: {e}")
+            logger.error(f"RAG pipeline failed: {e}")
             return {
                 "query": user_query,
                 "response": f"Sorry, I encountered an error: {str(e)}",
@@ -100,7 +101,7 @@ class ConversationalRAGPipeline:
             return contexts
             
         except Exception as e:
-            logger.error(f" Context retrieval failed: {e}")
+            logger.error(f"Context retrieval failed: {e}")
             return []
 
     def _build_augmented_prompt(self, query: str, contexts: List[Dict[str, Any]]) -> str:
@@ -163,10 +164,13 @@ class ConversationalRAGPipeline:
                 # Prepare for storage
                 documents.append(chunk["text"])
                 metadatas.append(chunk["metadata"])
-                ids.append(vectorizer.generate_document_id({
-                    **chunk["metadata"],
-                    "chunk_index": i
-                }))
+                
+                # FIX: Generate UNIQUE IDs using hash of chunk content + index
+                chunk_hash = hashlib.sha256(
+                    (chunk["text"] + str(i) + str(chunk["metadata"])).encode()
+                ).hexdigest()[:16]
+                doc_id = f"{telemetry_data.get('service', 'unknown')}_{chunk_hash}"
+                ids.append(doc_id)
             
             # Add to vector store
             if documents:
@@ -177,11 +181,11 @@ class ConversationalRAGPipeline:
                     embeddings=None  # Let ChromaDB compute embeddings
                 )
             
-            logger.info(f" Ingested {len(chunks)} chunks from telemetry data")
+            logger.info(f"Ingested {len(chunks)} chunks from telemetry data")
             return len(chunks)
             
         except Exception as e:
-            logger.error(f" Telemetry ingestion failed: {e}")
+            logger.error(f"Telemetry ingestion failed: {e}")
             return 0
 
 

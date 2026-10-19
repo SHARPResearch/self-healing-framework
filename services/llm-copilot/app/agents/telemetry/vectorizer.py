@@ -22,17 +22,17 @@ class TelemetryVectorizer:
             from sentence_transformers import SentenceTransformer
             # Use a lightweight, fast model
             self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-            logger.info(" Embedding model initialized (all-MiniLM-L6-v2)")
+            logger.info("Embedding model initialized (all-MiniLM-L6-v2)")
         except Exception as e:
-            logger.warning(f" Failed to load embedding model: {e}")
-            logger.info(" Using fallback: simple hash-based embeddings")
+            logger.warning(f"Failed to load embedding model: {e}")
+            logger.info("Using fallback: simple hash-based embeddings")
             self.embedding_model = None
 
     def vectorize_context(self, context: Dict[str, Any]) -> List[float]:
         """Convert context to vector embedding."""
         try:
-            # Extract text representation
-            context_text = context.get("context_text", "")
+            # FIX: Extract text representation - handle both "text" and "context_text" keys
+            context_text = context.get("text", context.get("context_text", ""))
             
             if self.embedding_model:
                 # Use sentence-transformers
@@ -43,7 +43,7 @@ class TelemetryVectorizer:
                 return self._fallback_embedding(context_text)
                 
         except Exception as e:
-            logger.error(f" Vectorization failed: {e}")
+            logger.error(f"Vectorization failed: {e}")
             return [0.0] * 384  # Return zero vector
 
     def _fallback_embedding(self, text: str) -> List[float]:

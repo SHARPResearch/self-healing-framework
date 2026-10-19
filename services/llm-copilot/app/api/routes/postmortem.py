@@ -7,7 +7,7 @@ from loguru import logger
 from app.core.events import RecoveryEventPayload, PostMortemResponse
 from app.agents.reporting.postmortem_gen import postmortem_generator
 
-router = APIRouter(prefix="/api/postmortem", tags=["Reporting Agent (Function 2)"])
+router = APIRouter(prefix="/api/postmortem", tags=["Reporting Agent"])
 
 
 @router.post("/generate", response_model=PostMortemResponse, summary="Generate Post-Mortem Report")

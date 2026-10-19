@@ -26,15 +26,21 @@ app = FastAPI(
     description="""
     ## Component 5 — Multi-Agent LLM System
     
-    This component provides:
-    - **Security Agent**: Systemic masking guardrails (PII scrubbing)
-    - **Reporting Agent**: Automated Markdown post-mortem generation
-    - **RCA Agent**: Root Cause Analysis
-    - **Conversational Agent**: RAG-based natural language querying (coming in PP2)
+    A fully integrated **Multi-Agent RAG System** that bridges the technical complexity of microservice telemetry with cross-functional stakeholders.
     
-    ### PP1 Functions
-    1. **Function 1**: `/api/security/mask` — Zero-leakage PII scrubbing
-    2. **Function 2**: `/api/postmortem/generate` — Automated post-mortem reports
+    ###  Multi-Agent Architecture
+    - ** Security Agent**: Systemic masking guardrails (Zero-Leakage PII scrubbing before LLM/Vector Store).
+    - ** Telemetry Agent**: Ingestion, chunking, and semantic embedding of raw metrics/logs into ChromaDB.
+    - ** Conversational Agent**: RAG-based natural language querying with deterministic PromQL/SQL translation.
+    - ** RCA Agent**: Root Cause Analysis using dependency graph context from Component 2.
+    - ** Reporting Agent**: Asynchronous Markdown post-mortem generation triggered by recovery events.
+    - ** Evaluation Agent**: LLM-as-a-Judge quality scoring, privacy verification, and metric export.
+    
+    ###  Extended Capabilities (Full System)
+    - **RAG Ingestion**: `POST /api/chat/ingest` (Vectorize and store telemetry)
+    - **Copilot Chat**: `POST /api/chat/query` (Natural language insights)
+    - **Orchestrator**: `GET /api/agents` (View registered agents and pipelines)
+    - **Quality Metrics**: `GET /api/chat/metrics` (View RAG evaluation scores & privacy pass rates)
     """,
     version="0.1.0",
     docs_url="/docs",

@@ -42,7 +42,7 @@ export function ModelRegistryTable({ runs, updatingIds, onSelect, onUpdate, live
             <TableHead className="text-right">Mean score</TableHead>
             <TableHead className="text-right">Drift events</TableHead>
             <TableHead className="text-right">{live ? "Alarm rate" : "F1"}</TableHead>
-            <TableHead>Run</TableHead>
+            <TableHead>{live ? "Detector" : "Run"}</TableHead>
             <TableHead className="text-right">Action</TableHead>
           </TableRow>
         </TableHeader>
@@ -97,7 +97,7 @@ export function ModelRegistryTable({ runs, updatingIds, onSelect, onUpdate, live
                   )}
                 </TableCell>
                 <TableCell className="font-mono text-xs text-muted-foreground">
-                  {run.runId.slice(0, 8)}
+                  {live ? (run.detector ?? run.modelType) : run.runId.slice(0, 8)}
                 </TableCell>
                 <TableCell className="text-right">
                   {isDriftAlerted && (

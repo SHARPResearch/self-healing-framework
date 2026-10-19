@@ -104,7 +104,15 @@ export function DashboardPage() {
         </div>
 
         <div className="grid grid-cols-1 gap-4 rounded-xl border border-border/60 p-4 lg:grid-cols-2">
-          <ActionsBarChart data={liveRecoveryActionsByDay} changePct={66.9} />
+          {live ? (
+            <ActionsBarChart
+              data={live.actions}
+              title="Lifecycle decisions"
+              description="What CADAL decided after each quarantine since the last reset: promote, roll back, ask the operator, hold or resume."
+            />
+          ) : (
+            <ActionsBarChart data={liveRecoveryActionsByDay} changePct={66.9} />
+          )}
           {live ? (
             <AnomalyScoreChart
               data={live.trend}

@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
-import { PlusCircle, RotateCcw, Route, X } from "lucide-react";
+// PlusCircle, RotateCcw and Route come back with the commented-out action buttons below.
+import { X } from "lucide-react";
 import { RuntimeIcon } from "./RuntimeIcon";
 import { AnomalyScoreBars } from "./AnomalyScoreBars";
 import { SeverityBadge } from "@/shared/components/SeverityBadge";
@@ -18,7 +19,6 @@ export function ServiceDetailPanel({
   number,
   activityLog,
   onClose,
-  onAction,
 }: ServiceDetailPanelProps) {
   return (
     <motion.div

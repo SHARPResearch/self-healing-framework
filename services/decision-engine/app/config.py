@@ -31,6 +31,15 @@ class Settings:
     SNAPSHOT_BEFORE_SEC: int = int(os.getenv("SNAPSHOT_BEFORE_SEC", "180"))
     SNAPSHOT_AFTER_SEC: int = int(os.getenv("SNAPSHOT_AFTER_SEC", "180"))
 
+    # ── Decision pipeline ──────────────────────────────────────
+    DECISION_POLL_INTERVAL_SEC: int = int(os.getenv("DECISION_POLL_INTERVAL_SEC", "10"))
+    DECISION_WINDOW_SEC: int = int(os.getenv("DECISION_WINDOW_SEC", "300"))
+    
+    # ── Incident lifecycle ─────────────────────────────────────
+    # How long a service must be healthy before its incident is closed.
+    # Prevents flapping (unhealthy → healthy → unhealthy within 30s).
+    INCIDENT_RECOVERY_HOLD_SEC: int = int(os.getenv("INCIDENT_RECOVERY_HOLD_SEC", "30"))
+    
     # ── Internal telemetry source (mock endpoints on our own app) ──
     TELEMETRY_SOURCE_URL: str = os.getenv("TELEMETRY_SOURCE_URL", "http://localhost:8000")
 

@@ -36,9 +36,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from app.core.graph_store import GraphStore
-from app.core.centrality import CentralityCalculator
-from app.core.blast_radius import BlastRadiusAnalyzer
+from app.core.graph_store import GraphStore # Get graph from GraphStore().graph()
+from app.core.centrality import CentralityCalculator #Get centrality from CentralityCalculator(graph).compute()
+from app.core.blast_radius import BlastRadiusAnalyzer #Get blast radius from BlastRadiusAnalyzer(graph).size(sid), .factor(sid), .reverse_reachable(sid)
 
 log = logging.getLogger(__name__)
 
@@ -62,6 +62,22 @@ def normalize_health(raw: str | None) -> str:
     if not raw:
         return "healthy"
     return _HEALTH_ALIASES.get(str(raw).lower(), "healthy")
+
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+#  Input — Before Flatten 
+#  {    "cpu": {        "usage_pct": 95    },    "memory": {        "pct": 82    },    "uptime_seconds": 3600}
+
+
+#          |
+
+#  _flatten_infra(infra)
+
+#          |
+        
+#  Output — After Flatten 
+#  {    "cpu.usage_pct": 95,    "memory.pct": 82,    "uptime_seconds": 3600}
+# ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -147,14 +163,29 @@ class AnomalyContext:
 
     @property
     def service_health(self) -> str:
-        """Normalized health from service catalog OR graph."""
+        """
+        Normalized health, in priority order:
+        1. Mock scenario's CURRENT_SCENARIO (this is the live source of truth)
+        2. Service catalog entry (from set_services_catalog)
+        3. Graph node health
+        """
+        # 1. Try the mock scenario (the live truth during demos)
+        try:
+            from app.api.routes.mock_data import _health
+            return normalize_health(_health(self.service_id))
+        except Exception:
+            pass
+
+        # 2. Fall back to catalog
         raw = self.service.get("health") or self.service.get("status")
-        if not raw:
-            # fall back to graph node
-            g = GraphStore().graph()
-            if self.service_id in g:
-                raw = g.nodes[self.service_id].get("health")
-        return normalize_health(raw)
+        if raw:
+            return normalize_health(raw)
+
+        # 3. Fall back to graph
+        g = GraphStore().graph()
+        if self.service_id in g:
+            raw = g.nodes[self.service_id].get("health")
+        return normalize_health(raw or "healthy")
 
     # ── the metric-path resolver used by the condition evaluator ──
     def resolve(self, path: str) -> Any:
@@ -162,12 +193,18 @@ class AnomalyContext:
         Resolve a dotted path like 'anomaly.score' or 'infra.cpu.usage_pct'
         or 'graph.downstream' into an actual value.
 
+        -> Any
         Returns None if any segment is missing.
         """
         root, _, rest = path.partition(".")
 
         # ── top-level namespaces ─────────────────────────────────
         if root == "anomaly":
+            # Aliases: rules use `anomaly.score`, but the DB row has `anomaly_score`
+            if rest == "score":
+                return self.anomaly.get("anomaly_score", self.anomaly.get("score"))
+            if rest == "id":
+                return self.anomaly.get("id")
             return _dig(self.anomaly, rest)
         if root == "service":
             if rest == "id":
@@ -238,9 +275,18 @@ class AnomalyContext:
 
 
 def _dig(d: dict[str, Any], dotted: str) -> Any:
-    """Walk a dotted path into a dict. Returns None on any miss."""
+    """
+    Walk a dotted path into a dict.
+
+    First tries the full dotted key (e.g. "latency_ms.p99" created by
+    _flatten_app). If that misses, walks segment by segment.
+    """
     if not dotted:
         return d
+    # 1. Flattened key — dict may literally contain "latency_ms.p99"
+    if dotted in d:
+        return d[dotted]
+    # 2. Walk segment by segment
     cur: Any = d
     for part in dotted.split("."):
         if not isinstance(cur, dict) or part not in cur:
@@ -287,13 +333,16 @@ class ContextBuilder:
             upstream = list(g.successors(sid))       # what sid calls
             downstream = list(g.predecessors(sid))   # what calls sid
 
-        # ── neighbor health ──────────────────────────────────────
-        up_healthy = sum(
-            1 for n in upstream if normalize_health(self._node_health(n)) == "healthy"
-        )
-        down_healthy = sum(
-            1 for n in downstream if normalize_health(self._node_health(n)) == "healthy"
-        )
+        # ── neighbor health — prefer mock scenario, fall back to graph ──
+        def _health_of(nid: str) -> str:
+            try:
+                from app.api.routes.mock_data import _health
+                return normalize_health(_health(nid))
+            except Exception:
+                return normalize_health(self._node_health(nid))
+
+        up_healthy = sum(1 for n in upstream if _health_of(n) == "healthy")
+        down_healthy = sum(1 for n in downstream if _health_of(n) == "healthy")
 
         # ── neighbor anomaly count (from recent anomalies list) ──
         recent = recent_anomalies or []

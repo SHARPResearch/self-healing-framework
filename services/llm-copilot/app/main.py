@@ -5,6 +5,9 @@ Main FastAPI Application Entry Point.
 Component 5 of the Self-Healing AI-Driven Failure Prediction Framework.
 Owner: Rukshan E A Y (IT23263512)
 """
+
+from app.api.routes import chat
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
@@ -52,6 +55,7 @@ app.include_router(health.router)
 app.include_router(security.router)
 app.include_router(postmortem.router)
 app.include_router(webhooks.router)
+app.include_router(chat.router)
 
 
 # Lifecycle Events 
@@ -70,7 +74,7 @@ async def shutdown_event():
     logger.info("LLM Copilot shutdown complete")
 
 
-# ─── Root Endpoint ────────────────────────────────────────
+# Root Endpoint 
 @app.get("/", tags=["Root"])
 async def root():
     return {
@@ -83,4 +87,14 @@ async def root():
             "POST /api/security/mask — Function 1: Systemic Masking Guardrail",
             "POST /api/postmortem/generate — Function 2: Automated Post-Mortem Generator",
         ],
+    }
+
+# Agent registry 
+@app.get("/api/agents", tags=[" Agent Registry"])
+async def list_agents():
+    """List all registered agents."""
+    from app.agents.orchestrator.agent_registry import agent_registry
+    return {
+        "agents": agent_registry.list_agents(),
+        "total": len(agent_registry.list_agents())
     }

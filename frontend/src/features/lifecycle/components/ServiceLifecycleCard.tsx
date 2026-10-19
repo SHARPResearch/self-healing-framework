@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Bug, Loader2, Rocket, Waves } from "lucide-react";
+import { Bug, Loader2, Rocket, ScanSearch, Waves } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -11,10 +11,13 @@ import { ACTION_LABEL, ACTION_TONE, PHASE_LABEL, PHASE_TONE, TONE_TEXT, VERDICT_
 import { LiveScoreChart } from "./LiveScoreChart";
 import { Pill } from "./Pill";
 
-const INJECTIONS: { kind: InjectionKind; label: string; icon: typeof Rocket; hint: string }[] = [
+type Action = InjectionKind | "check";
+
+const INJECTIONS: { kind: Action; label: string; icon: typeof Rocket; hint: string }[] = [
   { kind: "deploy", label: "Deploy", icon: Rocket, hint: "Persistent shift plus a deployment change event" },
-  { kind: "silent_change", label: "Silent change", icon: Waves, hint: "Persistent shift with no change event" },
+  { kind: "silent_change", label: "Silent", icon: Waves, hint: "Persistent shift with no change event" },
   { kind: "incident", label: "Incident", icon: Bug, hint: "Transient spike on a few metrics" },
+  { kind: "check", label: "Check", icon: ScanSearch, hint: "Ask CADAL to validate this model now (operator triggered validity check)" },
 ];
 
 const SEVERITY_STROKE = {
@@ -27,12 +30,18 @@ const SEVERITY_STROKE = {
 export function ServiceLifecycleCard({ service }: { service: LiveServiceHealth }) {
   const points = useLiveStore((s) => s.scores[service.serviceId]) ?? [];
   const lastDecision = useLiveStore((s) => s.decisions.find((d) => d.serviceId === service.serviceId));
-  const [pending, setPending] = useState<InjectionKind | null>(null);
+  const [pending, setPending] = useState<Action | null>(null);
+  const [note, setNote] = useState<string | null>(null);
 
-  const inject = async (kind: InjectionKind) => {
+  const run = async (kind: Action) => {
     setPending(kind);
+    setNote(null);
     try {
-      await api.inject(service.serviceId, kind);
+      if (kind === "check") await api.validityCheck(service.serviceId);
+      else await api.inject(service.serviceId, kind);
+    } catch (e) {
+      // 409: a check is already running, which is what the presenter wants anyway
+      setNote(e instanceof Error ? e.message : String(e));
     } finally {
       setTimeout(() => setPending(null), 600);
     }
@@ -75,7 +84,7 @@ export function ServiceLifecycleCard({ service }: { service: LiveServiceHealth }
           )}
         </p>
 
-        <div className="grid grid-cols-3 gap-1.5">
+        <div className="grid grid-cols-4 gap-1.5">
           {INJECTIONS.map(({ kind, label, icon: Icon, hint }) => (
             <Button
               key={kind}
@@ -84,13 +93,14 @@ export function ServiceLifecycleCard({ service }: { service: LiveServiceHealth }
               className="h-7 px-1.5 text-xs"
               title={hint}
               disabled={pending !== null}
-              onClick={() => inject(kind)}
+              onClick={() => run(kind)}
             >
               {pending === kind ? <Loader2 className="size-3 animate-spin" /> : <Icon className="size-3" />}
               {label}
             </Button>
           ))}
         </div>
+        {note && <p className="text-[11px] text-muted-foreground">{note}</p>}
       </CardContent>
     </Card>
   );

@@ -3,6 +3,7 @@ routes.py — REST API under /api (contract documented in services/ml-backend/RE
 """
 
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -10,6 +11,7 @@ from pydantic import BaseModel
 
 from app.api import views
 from app.bus import envelope
+from app.logs import public as public_log
 from app.runtime import runtime
 
 router = APIRouter(prefix="/api")
@@ -154,6 +156,44 @@ async def answer_query(query_id: str, body: AnswerBody) -> dict:
             await runtime.drain(rt)
             return {"decision": views._decision(decision), "model": views.model_run(runtime.fleet, rt)}
     raise HTTPException(404, f"unknown query {query_id}")
+
+
+# -- logs ---------------------------------------------------------------------------------------
+def _utc(value: Optional[datetime]) -> Optional[datetime]:
+    if value is not None and value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+@router.get("/logs")
+async def logs(q: str = "", since: Optional[datetime] = None, until: Optional[datetime] = None,
+               before: Optional[datetime] = None, limit: int = Query(500, ge=1, le=2000)) -> dict:
+    """
+    Log lines oldest first: the newest `limit` that match. `q` is the page's filter box (free text
+    plus service:, level: and source: terms). Pass the oldest returned time as `before` to page
+    further back; `hasMore` says whether anything older matched.
+    """
+    await runtime.flush_logs()
+    rows = await runtime.store.query_logs(q, _utc(since), _utc(until), _utc(before), limit + 1)
+    has_more = len(rows) > limit
+    return {"lines": [public_log(r) for r in rows[-limit:]], "hasMore": has_more}
+
+
+@router.get("/logs/histogram")
+async def logs_histogram(q: str = "", since: Optional[datetime] = None,
+                         until: Optional[datetime] = None) -> dict:
+    """Matching lines per time bucket and level, for the bar strip above the log table."""
+    await runtime.flush_logs()
+    end = _utc(until) or datetime.now(timezone.utc)
+    start = _utc(since) or end - timedelta(hours=1)
+    return await runtime.store.log_histogram(q, start, end)
+
+
+@router.get("/logs/services")
+async def logs_services() -> list[dict]:
+    """Every service that has logged, with its line count (the page's service filter)."""
+    await runtime.flush_logs()
+    return await runtime.store.log_services()
 
 
 # -- demo controls ------------------------------------------------------------------------------

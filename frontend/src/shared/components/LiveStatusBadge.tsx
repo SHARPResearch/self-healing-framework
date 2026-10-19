@@ -6,7 +6,7 @@ const LABEL = {
   live: "Live",
   connecting: "Connecting",
   reconnecting: "Reconnecting",
-  offline: "Offline: sample data",
+  offline: "Offline",
 } as const;
 
 const DOT = {
@@ -23,7 +23,7 @@ export function LiveStatusBadge() {
 
   const detail =
     status === "offline"
-      ? "services/ml-backend is not reachable on :8002, so pages show their bundled sample data. It reconnects automatically."
+      ? "services/ml-backend is not reachable on :8002. Model lifecycle and Logs need it and wait for it; Dashboard and Models fall back to their other data sources. It reconnects automatically."
       : health
         ? `Store: ${health.store === "timescaledb" ? "TimescaleDB" : "in memory"} · Redis: ${health.redis ? "on" : "off"} · ${health.services} services at ${health.eventsPerSec} events/s${health.paused ? " (paused)" : ""}`
         : "Waiting for ml-backend.";

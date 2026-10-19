@@ -17,15 +17,22 @@ runbook and the full REST/WebSocket contract.
 - `app/runtime.py`: the replay loop. It drains each outbox into the store and the bus.
 - `app/store.py`: `PgStore` (asyncpg), with `MemoryStore` as the fallback.
 - `app/bus.py`: Redis Pub/Sub + Stream, with an in-process fallback.
+- `app/logs.py`: the Logs page stream (container `docker logs -f` threads, Python logging, one line per
+  lifecycle event). The hub only appends to a deque from any thread; the replay loop flushes it into
+  `service_logs` and the bus. Store failures for logs log at DEBUG on purpose: a warning would itself
+  become a log line and feed back.
 - `app/api/`: `routes.py` (REST), `websocket.py`, and `views.py` (JSON shaped like the frontend's
   types).
 
 **Gotchas**
-- Each service replays a calm, label-free 6000-row window of its SMD test split, ping-ponged so
-  there is no wrap-around jump. The windows and the service mapping in `fleet.py` were chosen by
-  rehearsing the scenarios offline, including each model's alarm rate after the decision. Replaying
-  whole test splits (`REPLAY_WINDOW_ROWS=0`) brings in the real labelled anomalies, so every service
-  starts drifting and asking within minutes. Re-rehearse before changing the mapping.
+- Each service replays a 6000-row window of its SMD test split, ping-ponged so there is no
+  wrap-around jump. The windows and the mapping in `fleet.py` came from offline sweeps: alarm rate
+  alone was not enough, because most windows also open a drift check every 20 to 40 s (the score
+  level varies across the window). Only the machine-3-10 and machine-1-2 windows are quiet, so those
+  are the three services the demo injects into. Re-measure before changing the mapping.
+- A day-long injected incident gets learned: a 1500 event incident followed by a validity check was
+  promoted on two of three services. That is the documented limitation (labels needed), not a bug.
+  Keep `DEMO_INCIDENT_EVENTS` at 720 or less.
 - `DEMO_SAMPLES_PER_DAY=1440` is the evaluated lifecycle; only the replay speed (60 eps) is demo
   specific. Smaller values shorten the quarantine. At 960 the PCA challenger is fitted on 480 rows of
   38 metrics, which pushes the learnable floor to ~1.0, and bad challengers get promoted. Don't quote

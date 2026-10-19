@@ -8,6 +8,7 @@ so values differ meaningfully across the graph.
 Scenario endpoints let you flip the entire mesh into different failure
 modes for demoing the decision engine.
 """
+# from collections import defaultdict
 from fastapi import APIRouter, Query
 from datetime import datetime, timezone, timedelta
 from typing import Literal
@@ -378,6 +379,7 @@ SCENARIOS = {
     },
 }
 CURRENT_SCENARIO = "all_healthy"
+# ANOMALY_SEQUENCE = defaultdict(int)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -446,11 +448,21 @@ def _anomaly(sid: str):
         ("error_rate",          p["base_err"] * m["err"], p["base_err"]),
     ])
 
-    # ✅ STABLE ID: same scenario + same service = same anomaly_id
-    stable_id = f"ANM-{CURRENT_SCENARIO}-{sid}"
+    # # Unique per anomaly occurrence, but still human-readable and grouped by day/service.
+    # # today = datetime.now(timezone.utc).strftime("%Y%m%d")
+    # # ANOMALY_SEQUENCE[(CURRENT_SCENARIO, sid, today)] += 1
+    # # occurrence = ANOMALY_SEQUENCE[(CURRENT_SCENARIO, sid, today)]
+    # # Stable per (scenario, service, hour)
+    # hour = datetime.now(timezone.utc).strftime("%Y%m%d%H")
+    # stable_id = f"ANM-{CURRENT_SCENARIO}-{sid}-{hour}"
+    
+    # ID placeholder. The anomaly sink overrides this with an
+    # incident-based ID: ANM-{service_id}-{incident_start}.
+    # This default is only used if _anomaly is called directly (e.g. debug).
+    default_id = f"ANM-{sid}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
 
     return {
-        "id": stable_id,   # ← was f"ANM-{datetime...}-{random.randint(...)}"
+        "id": default_id,
         "service_id": sid,
         "service_name": p["display_name"],
         "team": p["team"],

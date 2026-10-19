@@ -90,3 +90,17 @@ def test_oracle_best_f1_is_at_least_as_good_as_any_fixed_threshold():
 
     for t in [0.2, 0.4, 0.5, 0.6, 0.7]:
         assert oracle["f1"] >= evaluate(scores, labels, threshold=t)["f1"]
+
+
+def test_pot_threshold_recovers_a_known_tail_quantile():
+    import numpy as np
+    from src.evaluate import pot_threshold
+
+    rng = np.random.default_rng(0)
+    sample = rng.exponential(1.0, 20000)
+    # Exp(1): P(X > t) = 0.001 at t = ln(1000) = 6.91, beyond almost every sampled value used to
+    # fit, which is the point of extrapolating from the tail shape.
+    assert abs(pot_threshold(sample, q=0.001) - np.log(1000)) < 0.4
+    # Too few exceedances: falls back to the empirical quantile.
+    small = rng.exponential(1.0, 100)
+    assert pot_threshold(small, q=0.05) == np.quantile(small, 0.95)

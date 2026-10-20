@@ -161,6 +161,67 @@ CREATE INDEX IF NOT EXISTS idx_rules_enabled_priority
     ON rules (enabled, priority DESC);
 """
 
+# ─────────────────────────────────────────────────────────────────────
+# BATCH 2 — HYBRID RULE MANAGEMENT
+#   * ownership / lifecycle columns on `rules`
+#   * rule_audit — every write to a rule leaves a trace
+# All statements are idempotent (ADD COLUMN IF NOT EXISTS / CREATE ... IF
+# NOT EXISTS) so this is safe to run on every boot against an existing DB.
+# ─────────────────────────────────────────────────────────────────────
+RULES_HYBRID_DDL = """
+ALTER TABLE rules ADD COLUMN IF NOT EXISTS is_default     BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE rules ADD COLUMN IF NOT EXISTS is_template    BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE rules ADD COLUMN IF NOT EXISTS created_by     TEXT NOT NULL DEFAULT 'system';
+ALTER TABLE rules ADD COLUMN IF NOT EXISTS owner_org_id   TEXT;
+ALTER TABLE rules ADD COLUMN IF NOT EXISTS status         TEXT NOT NULL DEFAULT 'ACTIVE';
+ALTER TABLE rules ADD COLUMN IF NOT EXISTS parent_rule_id TEXT;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'rules_status_check'
+    ) THEN
+        ALTER TABLE rules ADD CONSTRAINT rules_status_check
+            CHECK (status IN ('DRAFT', 'ACTIVE', 'ARCHIVED'));
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'rules_parent_rule_fk'
+    ) THEN
+        ALTER TABLE rules ADD CONSTRAINT rules_parent_rule_fk
+            FOREIGN KEY (parent_rule_id) REFERENCES rules(id) ON DELETE SET NULL;
+    END IF;
+END
+$$;
+
+CREATE INDEX IF NOT EXISTS idx_rules_type
+    ON rules (is_template, is_default, status, priority DESC);
+
+-- Backfill: rules that predate the hybrid columns (created_by defaults to
+-- 'system' for every pre-existing row) are the shipped defaults and must be
+-- flagged as such. Without this they read as user rules and become deletable.
+-- Idempotent: re-running only touches rows still at is_default = FALSE, and
+-- never promotes a template.
+UPDATE rules
+   SET is_default = TRUE
+ WHERE created_by = 'system'
+   AND is_template = FALSE
+   AND is_default = FALSE;
+"""
+
+
+RULE_AUDIT_DDL = """
+CREATE TABLE IF NOT EXISTS rule_audit (
+    id         BIGSERIAL PRIMARY KEY,
+    rule_id    TEXT NOT NULL,
+    action     TEXT NOT NULL CHECK (action IN ('CREATE','UPDATE','DELETE','TOGGLE','RELOAD')),
+    actor      TEXT NOT NULL DEFAULT 'unknown',
+    diff       JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_rule_audit_rule
+    ON rule_audit (rule_id, created_at DESC);
+"""
+
 
 # ─────────────────────────────────────────────────────────────────────
 # BATCH 1 — Placeholders for later batches (schemas created now,
@@ -303,4 +364,13 @@ BATCH1_DDL = [
     ACTION_HISTORY_DDL,
     IN_FLIGHT_ACTIONS_DDL,
     INCIDENT_STATE_DDL,       
+]
+
+# ─────────────────────────────────────────────────────────────────────
+# BATCH 2 — Hybrid Rule Management. Runs AFTER Batch 1 so RULES_DDL has
+# already created the base table.
+# ─────────────────────────────────────────────────────────────────────
+BATCH2_DDL = [
+    RULES_HYBRID_DDL,
+    RULE_AUDIT_DDL,
 ]

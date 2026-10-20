@@ -677,11 +677,12 @@ def _timeseries(sid: str, points: int = 30, metric: str = "p99") -> list[dict]:
 # ─────────────────────────────────────────────────────────────────────
 # ENDPOINTS
 # ─────────────────────────────────────────────────────────────────────
-@router.get("/anomalies/recent")
-def anomalies(limit: int = Query(20, ge=1, le=200)):
-    out = [a for sid in SERVICE_IDS if (a := _anomaly(sid))]
-    out.sort(key=lambda x: x["detected_at"], reverse=True)
-    return out[:limit]
+# NOTE: GET /api/anomalies/recent used to live here as a mock, but the real
+# DB-backed handler in routes/anomaly_evidence.py owns that path now. Because
+# this router is included before it in main.py, keeping a duplicate here would
+# silently shadow the real one (Starlette: first matching route wins). The
+# /anomalies page needs the DB shape (snapshot_status, etc.), so the mock was
+# removed rather than renamed.
 
 
 @router.get("/infra")

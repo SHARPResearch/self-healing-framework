@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { AppShell } from "@/shared/layout/AppShell";
 import { DecisionDetailModal } from "./components/DecisionDetailModal";
 import { useDecisions } from "./data/useDecisions";
@@ -23,6 +24,26 @@ const OUTCOME_STYLES: Record<string, string> = {
 export function DecisionListPage() {
   const { items, loading, error } = useDecisions(5000);
   const [open, setOpen] = useState<ApiDecision | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Deep-link: /decisions?focus=<decision_id> (e.g. from the anomalies page).
+  // Once the list is loaded, open the matching decision. The param is cleared
+  // afterwards so closing the modal / refreshing doesn't re-open it.
+  useEffect(() => {
+    const focus = searchParams.get("focus");
+    if (!focus || items.length === 0) return;
+    const match = items.find((d) => d.decision_id === focus);
+    if (match) {
+      setOpen(match);
+      setSearchParams({}, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, items]);
+
+  const closeModal = () => {
+    setOpen(null);
+    if (searchParams.get("focus")) setSearchParams({}, { replace: true });
+  };
 
   return (
     <AppShell pageTitle="Decisions">
@@ -127,7 +148,7 @@ export function DecisionListPage() {
         </div>
       </div>
 
-      <DecisionDetailModal decision={open} onClose={() => setOpen(null)} />
+      <DecisionDetailModal decision={open} onClose={closeModal} />
     </AppShell>
   );
 }

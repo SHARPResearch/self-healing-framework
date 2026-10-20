@@ -57,3 +57,17 @@ async def force_capture(anomaly_id: str):
     await _capture_phase2(anomaly_id, anomaly["service_id"], anomaly["detected_at"])
 
     return {"ok": True, "anomaly_id": anomaly_id}
+
+@router.get("/with-decisions")
+async def anomalies_with_decisions(limit: int = 200):
+    """
+    List anomalies enriched with their decision (if any).
+    One row per anomaly. If a decision exists, decision_* fields are populated.
+    """
+    rows = await postgres_store.list_anomalies_with_decisions(limit=limit)
+    # Normalize datetimes to ISO strings for JSON
+    for r in rows:
+        for k, v in list(r.items()):
+            if hasattr(v, "isoformat"):
+                r[k] = v.isoformat()
+    return {"count": len(rows), "items": rows}

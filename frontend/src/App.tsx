@@ -15,6 +15,7 @@ import { NotFoundPage } from "@/shared/components/NotFoundPage";
 import { ProfilePage } from "@/features/profile/ProfilePage";
 import { RouteFallback } from "@/shared/components/RouteFallback";
 import { AnomalyListPage } from "@/features/anomalies/AnomalyListPage";
+import { DecisionListPage } from "@/features/decisions/DecisionListPage";
 
 /**
  * Lazy loaded so their weight stays out of the shared bundle: marketing pulls
@@ -50,6 +51,7 @@ function App() {
         <Route path="/services" element={<ServicesPage />} />
         <Route path="/dependency-graph" element={<DependencyGraphPage />} />
         <Route path="/anomalies" element={<AnomalyListPage />} />
+        <Route path="/decisions" element={<DecisionListPage />} />
         <Route path="/incidents" element={<IncidentsPage />} />
         <Route path="/models" element={<ModelsPage />} />
         <Route path="/model-lifecycle" element={<ModelLifecyclePage />} />

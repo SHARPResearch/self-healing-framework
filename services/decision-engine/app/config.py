@@ -43,6 +43,12 @@ class Settings:
     # ── Internal telemetry source (mock endpoints on our own app) ──
     TELEMETRY_SOURCE_URL: str = os.getenv("TELEMETRY_SOURCE_URL", "http://localhost:8000")
 
+    # ── Developer convenience ──────────────────────────────────────
+    # Auto-open the Swagger UI in the default browser when the server
+    # boots. Set OPEN_DOCS=0 to disable (e.g. in prod/CI).
+    OPEN_DOCS: bool = os.getenv("OPEN_DOCS", "1").lower() not in ("0", "false", "no")
+    DOCS_BASE_URL: str = os.getenv("DOCS_BASE_URL", "http://localhost:8000")
+
     def validate(self):
         """Fail-fast if any required secret is missing."""
         missing = []

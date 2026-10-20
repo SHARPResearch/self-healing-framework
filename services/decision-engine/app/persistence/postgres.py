@@ -328,4 +328,58 @@ class PostgresStore:
             )
         return [dict(r) for r in rows]
 
+    # ── RULE AUDIT ──────────────────────────────────────────────
+    async def save_rule_audit(
+        self,
+        rule_id: str,
+        action: str,
+        actor: str = "unknown",
+        diff: dict | None = None,
+    ) -> None:
+        """
+        Append one row to rule_audit. Never raises into the caller — audit
+        logging must not be able to break a rule write that already worked.
+        """
+        async with self.pool.acquire() as conn:
+            try:
+                await conn.execute(
+                    """
+                    INSERT INTO rule_audit (rule_id, action, actor, diff)
+                    VALUES ($1, $2, $3, $4)
+                    """,
+                    rule_id,
+                    action,
+                    actor or "unknown",
+                    json.dumps(diff) if diff is not None else None,
+                )
+            except Exception as e:
+                log.exception("save_rule_audit failed for %s: %s", rule_id, e)
+
+    async def list_rule_audit(
+        self,
+        rule_id: str,
+        limit: int = 100,
+    ) -> list[dict]:
+        """Audit history for one rule, newest first."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT id, rule_id, action, actor, diff, created_at
+                FROM rule_audit
+                WHERE rule_id = $1
+                ORDER BY created_at DESC
+                LIMIT $2
+                """,
+                rule_id,
+                limit,
+            )
+        out = []
+        for r in rows:
+            row = dict(r)
+            if hasattr(row.get("created_at"), "isoformat"):
+                row["created_at"] = row["created_at"].isoformat()
+            out.append(row)
+        return out
+
+
 postgres_store = PostgresStore()

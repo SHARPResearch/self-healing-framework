@@ -134,6 +134,69 @@ export interface ApiGraph {
   }>;
 }
 
+// ─── Decisions API ─────────────────────────────────────────────
+export interface ApiDecision {
+  decision_id: string;
+  anomaly_id: string;
+  service_id: string;
+  rule_id: string | null;
+  rule_version: number | null;
+  action: string;
+  action_params: Record<string, any>;
+  confidence: {
+    detection: number;
+    rule: number;
+    final: number;
+  };
+  severity: {
+    base_severity: number;
+    centrality: number;
+    blast_factor: number;
+    effective_severity: number;
+    normalized: number;
+    label: string;
+  };
+  base_risk: string;
+  blast_factor: number;
+  centrality: number;
+  selection: {
+    selected: any;
+    rejected: any[];
+    strategy: string;
+    reason: string;
+  };
+  context: {
+    service_health: string;
+    anomaly_kind: string;
+    upstream: string[];
+    downstream: string[];
+    blast_members: string[];
+  };
+  policy: {
+    outcome: string | null;
+    reason: string | null;
+  };
+  created_at: string;
+}
+
+export interface ApiDecisionsRecentResponse {
+  count: number;
+  decisions: ApiDecision[];
+}
+
+export async function fetchDecisions(limit = 50): Promise<ApiDecision[]> {
+  const res = await fetch(`${API_BASE}/api/decisions/recent?limit=${limit}`);
+  if (!res.ok) throw new Error(`Failed to fetch decisions: ${res.status}`);
+  const data: ApiDecisionsRecentResponse = await res.json();
+  return data.decisions;
+}
+
+export async function fetchDecision(decisionId: string): Promise<ApiDecision> {
+  const res = await fetch(`${API_BASE}/api/decisions/${decisionId}`);
+  if (!res.ok) throw new Error(`Failed to fetch decision: ${res.status}`);
+  return res.json();
+}
+
 // ─── API functions ─────────────────────────────────────────────────
 export async function fetchGraph(): Promise<ApiGraph> {
   return request<ApiGraph>("/api/graph/");

@@ -9,6 +9,7 @@ import {
   ListTree,
   Server,
   Settings,
+  Sliders,
   Zap,
 } from "lucide-react";
 
@@ -37,6 +38,7 @@ export const navGroups: NavGroup[] = [
       { label: "Dependency graph", to: "/dependency-graph", icon: GitBranch },
       { to: "/anomalies", label: "Anomalies", icon: AlertTriangle },
       { label: "Decisions", to: "/decisions", icon: Zap },
+      { label: "Rules", to: "/rules", icon: Sliders },
     ],
   },
   {

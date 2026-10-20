@@ -7,6 +7,7 @@ import {
   Server,
   Zap,
   Database,
+  ListFilter,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import type { Severity } from "@/shared/types";
@@ -466,19 +467,33 @@ export function GraphDetailPanel({
         <ArrowRight className="size-3.5" />
       </button>
       {anomaly && (
-        <button
-          type="button"
-          onClick={() => {
-            // anomalyId isn't in the current prop shape — pass it through
-            window.dispatchEvent(
-              new CustomEvent("open-anomaly", { detail: selected.serviceId }),
-            );
-          }}
-          className="mt-1 flex items-center gap-1.5 text-xs font-medium text-foreground/80 hover:text-foreground"
-        >
-          View evidence
-          <ArrowRight className="size-3.5" />
-        </button>
+        <>
+          <button
+            type="button"
+            onClick={() =>
+              navigate(
+                `/anomalies?service=${encodeURIComponent(selected.serviceId)}`,
+              )
+            }
+            className="mt-1 flex items-center gap-1.5 text-xs font-medium text-foreground/80 hover:text-foreground"
+          >
+            <ListFilter className="size-3.5" />
+            View anomalies
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              // anomalyId isn't in the current prop shape — pass it through
+              window.dispatchEvent(
+                new CustomEvent("open-anomaly", { detail: selected.serviceId }),
+              );
+            }}
+            className="mt-1 flex items-center gap-1.5 text-xs font-medium text-foreground/80 hover:text-foreground"
+          >
+            View evidence
+            <ArrowRight className="size-3.5" />
+          </button>
+        </>
       )}
     </div>
   );

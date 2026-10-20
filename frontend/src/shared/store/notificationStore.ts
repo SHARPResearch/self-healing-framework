@@ -6,6 +6,8 @@ interface NotificationState {
   notifications: AppNotification[];
   markRead: (id: string) => void;
   markAllRead: () => void;
+  /** Live events from services/ml-backend (drift decisions, operator queries). Newest first. */
+  add: (notification: AppNotification) => void;
 }
 
 /**
@@ -22,6 +24,8 @@ export const useNotificationStore = create<NotificationState>((set) => ({
     set((state) => ({
       notifications: state.notifications.map((n) => ({ ...n, read: true })),
     })),
+  add: (notification) =>
+    set((state) => ({ notifications: [notification, ...state.notifications].slice(0, 100) })),
 }));
 
 export function selectUnreadCount(state: NotificationState): number {

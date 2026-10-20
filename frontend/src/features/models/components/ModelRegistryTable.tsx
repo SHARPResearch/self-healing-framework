@@ -17,6 +17,8 @@ interface ModelRegistryTableProps {
   updatingIds: Set<string>;
   onSelect: (run: ModelRun) => void;
   onUpdate: (run: ModelRun) => void;
+  /** Live runs from ml-backend: the F1 column becomes the recent alarm rate (no labels online). */
+  live?: boolean;
 }
 
 function ScoreBar({ value, decimals }: { value: number; decimals: number }) {
@@ -28,7 +30,7 @@ function ScoreBar({ value, decimals }: { value: number; decimals: number }) {
   );
 }
 
-export function ModelRegistryTable({ runs, updatingIds, onSelect, onUpdate }: ModelRegistryTableProps) {
+export function ModelRegistryTable({ runs, updatingIds, onSelect, onUpdate, live = false }: ModelRegistryTableProps) {
   return (
     <div className="overflow-x-auto rounded-xl border border-border/60">
       <Table>
@@ -39,14 +41,14 @@ export function ModelRegistryTable({ runs, updatingIds, onSelect, onUpdate }: Mo
             <TableHead className="text-right">Version</TableHead>
             <TableHead className="text-right">Mean score</TableHead>
             <TableHead className="text-right">Drift events</TableHead>
-            <TableHead className="text-right">F1</TableHead>
-            <TableHead>Run</TableHead>
+            <TableHead className="text-right">{live ? "Alarm rate" : "F1"}</TableHead>
+            <TableHead>{live ? "Detector" : "Run"}</TableHead>
             <TableHead className="text-right">Action</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {runs.map((run) => {
-            const isDriftAlerted = run.metrics.cumulativeDriftCount > 0;
+            const isDriftAlerted = live || run.metrics.cumulativeDriftCount > 0;
             const isUpdating = updatingIds.has(run.runId);
 
             return (
@@ -71,7 +73,12 @@ export function ModelRegistryTable({ runs, updatingIds, onSelect, onUpdate }: Mo
                 <TableCell>
                   <StageBadge stage={run.stage} />
                 </TableCell>
-                <TableCell className="text-right font-mono">v{run.version}</TableCell>
+                <TableCell className="text-right font-mono">
+                  v{run.version}
+                  {live && run.versionCount ? (
+                    <span className="ml-1 text-xs text-muted-foreground">/ {run.versionCount}</span>
+                  ) : null}
+                </TableCell>
                 <TableCell className="text-right">
                   <ScoreBar value={run.metrics.rollingMeanScore} decimals={2} />
                 </TableCell>
@@ -81,14 +88,16 @@ export function ModelRegistryTable({ runs, updatingIds, onSelect, onUpdate }: Mo
                   </span>
                 </TableCell>
                 <TableCell className="text-right">
-                  {run.stage === "WARM_UP" ? (
+                  {live ? (
+                    <ScoreBar value={run.metrics.warnRate} decimals={3} />
+                  ) : run.stage === "WARM_UP" ? (
                     <span className="font-mono text-xs text-muted-foreground">--</span>
                   ) : (
                     <ScoreBar value={run.metrics.evalF1} decimals={4} />
                   )}
                 </TableCell>
                 <TableCell className="font-mono text-xs text-muted-foreground">
-                  {run.runId.slice(0, 8)}
+                  {live ? (run.detector ?? run.modelType) : run.runId.slice(0, 8)}
                 </TableCell>
                 <TableCell className="text-right">
                   {isDriftAlerted && (
@@ -100,7 +109,8 @@ export function ModelRegistryTable({ runs, updatingIds, onSelect, onUpdate }: Mo
                         e.stopPropagation();
                         onUpdate(run);
                       }}
-                      aria-label={`Update ${run.serviceName} model`}
+                      aria-label={live ? `Run a validity check on ${run.serviceName}` : `Update ${run.serviceName} model`}
+                      title={live ? "Run a validity check" : undefined}
                       className="h-7 px-2"
                     >
                       {isUpdating ? (

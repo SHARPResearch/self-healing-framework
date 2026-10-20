@@ -14,6 +14,7 @@ Usage:
 """
 
 import argparse
+import os
 from pathlib import Path
 
 import pandas as pd
@@ -38,12 +39,22 @@ def preprocess_entity(entity_id: str, split: str) -> Path:
     if not raw_path.exists():
         raise FileNotFoundError(f"{raw_path} not found — run ./download.sh first")
 
-    df = pd.read_csv(raw_path, header=None, names=COLUMN_NAMES)
-    df = df.rename(columns=CANONICAL_MAP)
-
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     out_path = PROCESSED_DIR / f"{entity_id}_{split}.parquet"
-    df.to_parquet(out_path, index=False)
+    # The output is a pure function of the raw file: reuse it when it is up to date. Rewriting it
+    # on every call let parallel evaluation workers read a half-written file and crash.
+    if out_path.exists() and out_path.stat().st_mtime >= raw_path.stat().st_mtime:
+        return out_path
+
+    df = pd.read_csv(raw_path, header=None, names=COLUMN_NAMES)
+    df = df.rename(columns=CANONICAL_MAP)
+    # Write to a private temp file, then rename into place: readers only ever see a whole file.
+    tmp_path = out_path.with_suffix(f".{os.getpid()}.tmp")
+    df.to_parquet(tmp_path, index=False)
+    try:
+        os.replace(tmp_path, out_path)
+    except PermissionError:  # Windows: another process has it open; its copy is identical
+        tmp_path.unlink(missing_ok=True)
     return out_path
 
 

@@ -61,6 +61,13 @@ class ConditionOp(str, Enum):
     CONTAINS = "contains"
 
 
+class RuleStatus(str, Enum):
+    """Lifecycle of a rule. Only ACTIVE rules are evaluated by the engine."""
+    DRAFT    = "DRAFT"
+    ACTIVE   = "ACTIVE"
+    ARCHIVED = "ARCHIVED"
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Condition AST
 # ─────────────────────────────────────────────────────────────────────
@@ -148,6 +155,74 @@ class Rule(BaseModel):
     guardrails: RuleGuardrail = Field(default_factory=RuleGuardrail)
 
     tags: list[str] = Field(default_factory=list)
+
+    # ── ownership / lifecycle (Component 2 — Hybrid Rule Management) ──
+    is_default: bool = Field(
+        False, description="SHARP-owned rule: cannot be deleted, action is frozen"
+    )
+    is_template: bool = Field(
+        False, description="Read-only starting point offered by SHARP"
+    )
+    created_by: str = "system"
+    owner_org_id: str | None = None
+    status: RuleStatus = RuleStatus.ACTIVE
+    parent_rule_id: str | None = Field(
+        None, description="Set when this rule was cloned from another rule"
+    )
+
+    # Populated on read only — never written back by upsert()
+    created_at: str | None = None
+    updated_at: str | None = None
+
+    @field_validator("id")
+    @classmethod
+    def _id_slug(cls, v: str) -> str:
+        if not v or not v.replace("-", "").replace("_", "").isalnum():
+            raise ValueError("rule id must be slug-like (a-z, 0-9, -, _)")
+        return v
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Level 2 — partial customization payload (thresholds / priority only)
+# ─────────────────────────────────────────────────────────────────────
+class RuleCustomizationPayload(BaseModel):
+    """
+    Safe subset of a rule. This is what PATCH /api/rules/{id} accepts.
+
+    `then` and `id` are deliberately present so the API can *detect* an
+    attempt to change the shape of a rule and reject it with a 400 rather
+    than silently dropping it (or a 422 from an unknown field). They are
+    only ever applied to non-default rules.
+    """
+    priority: int | None = None
+    when: RuleCondition | None = None
+    then: RuleAction | None = None
+    applies_to: RuleAppliesTo | None = None
+    guardrails: RuleGuardrail | None = None
+    enabled: bool | None = None
+    description: str | None = None
+    status: RuleStatus | None = None
+    tags: list[str] | None = None
+    id: str | None = None
+
+    model_config = {"extra": "forbid"}
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Level 3 — full custom rule payload
+# ─────────────────────────────────────────────────────────────────────
+class CreateCustomRulePayload(BaseModel):
+    """Everything the Advanced Rule Builder can produce."""
+    id: str
+    description: str
+    when: RuleCondition
+    then: RuleAction
+    guardrails: RuleGuardrail = Field(default_factory=RuleGuardrail)
+    applies_to: RuleAppliesTo = Field(default_factory=RuleAppliesTo)
+    priority: int = 100
+    tags: list[str] = Field(default_factory=list)
+    status: RuleStatus = RuleStatus.ACTIVE
+    parent_rule_id: str | None = None
 
     @field_validator("id")
     @classmethod

@@ -10,12 +10,45 @@ formerly `component-1-2-pipeline/` at repo root. Full spec: `docs/Component_1_2_
 PR-AUC, percentile threshold, oracle best F1), `src/pipeline.py` (shared `train_and_evaluate()`
 / `warm_up_and_score()` / `warm_up_calibrate_and_score()`, used by `train.py`,
 `sweep_hyperparams.py`, `train_all.py`, and `calibrate.py`) are implemented and tested (`tests/`).
-Component 2 (streaming ingestion + ADWIN drift detection + MLflow rollback) is a teammate's work
-and intentionally not started — `main.py` is still the uv-init placeholder, and
-`src/data_pipeline.py` / `src/mlflow_lifecycle.py` exist only as reserved, docstring-only stub
-files (no functions, no classes) marking out that territory so there's no filename collision
-when the real implementation lands. See each file's docstring for what it's meant to contain and
-which guide part it maps to.
+Component 2 (dynamic model updating, owned by Shalon) is implemented as CADAL, the Change-Aware
+Drift Attribution Lifecycle: `src/lifecycle_manager.py` (`DynamicModelManager`, every policy in the
+ablation), `src/drift_attribution.py` (pure verdict rules), `src/drift_detectors.py`,
+`src/change_events.py`, `src/hst_state.py` (sparse snapshots), `src/mlflow_lifecycle.py`
+(registry), `src/publishers.py`, plus `run_dynamic.py`, `evaluate_dynamic.py` and
+`summarize_dynamic.py`. Design and novelty: `../docs/Component_2_Dynamic_Model_Updating.md`;
+numbers: `RESULTS_COMPONENT2.md`. Things that look like knobs but were measured, so don't
+"simplify" them back:
+- CADAL serves a **frozen** model (`learn_gate_percentile=0`); every continuously learning
+  variant lost recall on SMD because HST's 250-event reference window absorbs long anomalies.
+- Each version is **calibrated the way it is served** (frozen vs prequential). Frozen calibration
+  of a learning model left promoted challengers silent.
+- Challenger learnability is a **frozen** stationarity test, with lines floored by a per-entity
+  null computed on training windows (`attribution_null`).
+- Rollback targets are **verified** on recent data, so the pre-deployment model is never restored
+  onto a new normal (the ping-pong failure of unconditional rollback).
+- Never pickle an HST for versioning (71 MB, ~6 s to load); use `hst_state.capture/apply`.
+  Challengers reuse the champion's tree structure (`reset(keep_scaler=True)`); building a fresh
+  HST costs ~16 s.
+- **Final configuration** (`RESULTS_COMPONENT2.md`, `docs/Component_2_Panel_Response.md`):
+  detector `detector_config("pca_s5")` (PCA reconstruction error, EWMA span 5, `src/detectors.py`)
+  with `LifecycleConfig(threshold_method="pot")`. Library defaults are still HST plus the
+  percentile so Component 1 scripts behave as before; `run_dynamic.py` defaults to the final
+  config. Every choice was made on the `machine-1-*` dev entities only, with held-out claims
+  checked on the other 20, NAB and RCAEval. Keep that split if you change anything.
+- **Re-baselining before retraining** (`fit_rebaseline`): it is held to the target alarm rate,
+  **not** the per-entity retrain noise floor (with PCA that floor reached ~0.6). Retraining
+  needs a change event (`retrain_requires_change`); without one, a day-long SMD incident was
+  "learned".
+- **PCA scores** are `spe / (1 + spe)` because the lifecycle clamps scores to [0, 1]. Smoothing
+  and POT work on the raw SPE (`raw_score` / `unsquash`); doing them on squashed scores lost
+  PR-AUC. PCA is degenerate on univariate data, so NAB uses `lazy_range_ens`. It needs clearly
+  more warm-up rows than metrics (RCAEval Sock Shop shows the failure).
+- `src/lazy_hst.py` is river's HST built on demand, verified event by event against river on the
+  same structure. Use it rather than river's `HalfSpaceTrees` anywhere memory matters (0.1 MB vs
+  370 MB).
+- `async_decisions=True` for serving, off for evaluation runs (deterministic).
+- Parallel evaluation workers: run them as `--shard i/n`. SMD preprocessing reuses and atomically
+  writes its parquet files; never rewrite shared data files from concurrent workers.
 
 **Tuning + calibration done, see `RESULTS.md` for full numbers and honest caveats**: threshold
 swept (0.7 guide default -> 0.4), hyperparameters swept one-at-a-time (baseline
@@ -40,11 +73,22 @@ baseline `height=15`'s 105.
 **Fixed gotcha**: the guide's Part 5 assumes `MLFLOW_TRACKING_URI=./mlruns` (a plain filesystem
 store), but `mlflow>=3` rejects that by default (`MlflowException: filesystem tracking backend
 ... is in maintenance mode`). `src/config.py`'s default is now `sqlite:///mlflow.db` instead —
-whoever builds Component 2's `mlflow_lifecycle.py` should keep using that URI, not the guide's
-literal `./mlruns`.
+Component 2's `MLflowRegistry` uses that URI too. MLflow 3 also deprecated registry *stages*
+(the guide's Production/Archived), so the registry uses the `production` alias plus status tags.
 
 `SMD_RAW_DIR` now points at `../datasets/smd/raw` (this repo's canonical dataset location) instead
 of a local copy — don't re-duplicate the ~466MB dataset here.
+
+**Operator in the loop (CADAL-HITL)**: `LifecycleConfig(operator_queries=True)` turns the
+"learnable but unexplained" hold into `ambiguous` / `ask`, and `DynamicModelManager.answer_query`
+applies the answer. `evaluate_dynamic.py` variants `cadal_hitl` and `cadal_hitl_noisy` use a
+`SimulatedOperator` seeded per run by `operator_seed`. With one shared seed, a 20% error rate
+never fires on runs that ask only one to three questions. Results are in `RESULTS_COMPONENT2.md`
+§9. A rule picked from held-out entities (don't ask on `drift_down`) was rejected because the dev
+entities showed the opposite pattern.
+
+**Used live by** `services/ml-backend`, which imports this package from source
+(`app/core/pipeline_path.py`). Lifecycle changes here change the demo, so re-run its tests.
 
 **Eventually lifts into** `services/ml-backend/app/ml/` per Doc3 Phase 2-3 — this pipeline's
 `HSTStreamProcessor` design already anticipates that (see the class docstring in

@@ -1,0 +1,150 @@
+{
+  "detector": "pca_s5",
+  "entity": "machine-1-1",
+  "memory": [
+    {
+      "services": 1,
+      "bytes_per_service": 33497
+    },
+    {
+      "services": 10,
+      "bytes_per_service": 34412
+    },
+    {
+      "services": 100,
+      "bytes_per_service": 34344
+    },
+    {
+      "services": 500,
+      "bytes_per_service": 34409
+    },
+    {
+      "services": 1000,
+      "bytes_per_service": 34408
+    }
+  ],
+  "serving_sync": [
+    {
+      "services": 1,
+      "events": 2400,
+      "events_per_s": 24353,
+      "latency_p50_ms": 0.019,
+      "latency_p99_ms": 0.047,
+      "latency_max_ms": 43.5,
+      "decisions": 1,
+      "decision_eval_ms_median": 43.2,
+      "serving_blocked_ms_max": 43.3
+    },
+    {
+      "services": 10,
+      "events": 24000,
+      "events_per_s": 22826,
+      "latency_p50_ms": 0.025,
+      "latency_p99_ms": 0.044,
+      "latency_max_ms": 53.2,
+      "decisions": 10,
+      "decision_eval_ms_median": 41.7,
+      "serving_blocked_ms_max": 53.0
+    },
+    {
+      "services": 50,
+      "events": 120000,
+      "events_per_s": 21703,
+      "latency_p50_ms": 0.028,
+      "latency_p99_ms": 0.052,
+      "latency_max_ms": 53.7,
+      "decisions": 50,
+      "decision_eval_ms_median": 41.1,
+      "serving_blocked_ms_max": 53.5
+    },
+    {
+      "services": 100,
+      "events": 240000,
+      "events_per_s": 19625,
+      "latency_p50_ms": 0.028,
+      "latency_p99_ms": 0.077,
+      "latency_max_ms": 81.4,
+      "decisions": 100,
+      "decision_eval_ms_median": 42.3,
+      "serving_blocked_ms_max": 81.1
+    }
+  ],
+  "serving_async": [
+    {
+      "services": 1,
+      "events": 2400,
+      "events_per_s": 32585,
+      "latency_p50_ms": 0.027,
+      "latency_p99_ms": 0.043,
+      "latency_max_ms": 5.0,
+      "decisions": 1,
+      "decision_eval_ms_median": 62.0,
+      "serving_blocked_ms_max": 0.1
+    },
+    {
+      "services": 10,
+      "events": 24000,
+      "events_per_s": 24657,
+      "latency_p50_ms": 0.025,
+      "latency_p99_ms": 0.046,
+      "latency_max_ms": 61.6,
+      "decisions": 10,
+      "decision_eval_ms_median": 514.4,
+      "serving_blocked_ms_max": 0.2
+    },
+    {
+      "services": 50,
+      "events": 120000,
+      "events_per_s": 21774,
+      "latency_p50_ms": 0.027,
+      "latency_p99_ms": 0.052,
+      "latency_max_ms": 222.8,
+      "decisions": 50,
+      "decision_eval_ms_median": 590.7,
+      "serving_blocked_ms_max": 0.2
+    },
+    {
+      "services": 100,
+      "events": 240000,
+      "events_per_s": 20551,
+      "latency_p50_ms": 0.029,
+      "latency_p99_ms": 0.068,
+      "latency_max_ms": 147.5,
+      "decisions": 100,
+      "decision_eval_ms_median": 618.1,
+      "serving_blocked_ms_max": 0.4
+    }
+  ],
+  "horizontal": [
+    {
+      "workers": 1,
+      "services": 200,
+      "events": 120000,
+      "events_per_s_streaming": 35093,
+      "wall_s_including_startup": 7.2
+    },
+    {
+      "workers": 2,
+      "services": 200,
+      "events": 120000,
+      "events_per_s_streaming": 45989,
+      "wall_s_including_startup": 6.9
+    },
+    {
+      "workers": 4,
+      "services": 200,
+      "events": 120000,
+      "events_per_s_streaming": 69878,
+      "wall_s_including_startup": 7.7
+    }
+  ],
+  "river_bytes_per_model": 367985581,
+  "snapshot_bytes": [
+    5027,
+    4687,
+    5310,
+    3953
+  ],
+  "replica_sync_ms_median": 24.6,
+  "replica_sync_ms_max": 28.8
+}

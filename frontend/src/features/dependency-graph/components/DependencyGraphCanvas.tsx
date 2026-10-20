@@ -23,7 +23,21 @@ interface Transform {
 
 const IDENTITY_TRANSFORM: Transform = { x: 0, y: 0, k: 1 };
 
-export function DependencyGraphCanvas() {
+/** Scale applied when deep-linking into a single node via ?highlight=. */
+const HIGHLIGHT_SCALE = 1.2;
+
+interface DependencyGraphCanvasProps {
+  /**
+   * When set, the canvas selects this service on load (as if clicked) and
+   * centers the viewport on it. Driven by the `?highlight=` URL param — see
+   * DependencyGraphPage.
+   */
+  highlightServiceId?: string | null;
+}
+
+export function DependencyGraphCanvas({
+  highlightServiceId,
+}: DependencyGraphCanvasProps = {}) {
   const { ref, size } = useResizeObserver<HTMLDivElement>({
     width: 900,
     height: 520,
@@ -80,6 +94,33 @@ export function DependencyGraphCanvas() {
   }, [baseLayout, manualPositions]);
 
   const focused = selected ?? hovered;
+
+  // Deep-link entry point: when the page passes a ?highlight= service id, select
+  // it and center the viewport on it once the layout is ready. The applied ref
+  // guards against re-centering every time the 3s poll re-runs the layout, so
+  // the user can freely pan/zoom afterwards without being snapped back.
+  const appliedHighlightRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!highlightServiceId) {
+      appliedHighlightRef.current = null;
+      return;
+    }
+    if (appliedHighlightRef.current === highlightServiceId) return;
+    if (layout.nodes.length === 0) return;
+
+    const node = layout.nodes.find(
+      (n) => n.serviceId === highlightServiceId,
+    );
+    if (!node) return;
+
+    appliedHighlightRef.current = highlightServiceId;
+    setSelected(node);
+    setTransform({
+      x: size.width / 2 - node.x * HIGHLIGHT_SCALE,
+      y: size.height / 2 - node.y * HIGHLIGHT_SCALE,
+      k: HIGHLIGHT_SCALE,
+    });
+  }, [highlightServiceId, layout.nodes, size.width, size.height]);
 
   // Which nodes/edges to highlight vs dim while a node is selected, hovered, or focused.
   const connected = useMemo(() => {

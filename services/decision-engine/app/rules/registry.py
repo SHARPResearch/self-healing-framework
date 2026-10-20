@@ -20,9 +20,9 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from app.rules.models import Rule
+from app.rules.models import Rule, RuleStatus
 from app.rules.repository import rule_repository
-from app.rules.seeds import SEED_RULES
+from app.rules.seeds import SEED_RULES, SEED_TEMPLATES
 
 log = logging.getLogger(__name__)
 
@@ -39,9 +39,21 @@ class RuleRegistry:
 
     # ── reads ─────────────────────────────────────────────────────
     def all(self) -> list[Rule]:
-        """All enabled rules, sorted by priority DESC."""
+        """
+        All *evaluatable* rules, sorted by priority DESC.
+
+        Excludes:
+            * disabled rules
+            * templates (read-only starting points — never fire)
+            * non-ACTIVE rules (DRAFT / ARCHIVED)
+        """
         return sorted(
-            (r for r in self._rules.values() if r.enabled),
+            (
+                r for r in self._rules.values()
+                if r.enabled
+                and not r.is_template
+                and r.status == RuleStatus.ACTIVE
+            ),
             key=lambda r: (-r.priority, r.id),
         )
 
@@ -69,17 +81,40 @@ class RuleRegistry:
         return await self.load_from_db()
 
     async def seed_if_empty(self) -> int:
-        """Insert SEED_RULES if the table is empty. Returns number inserted."""
-        existing = await rule_repository.count()
-        if existing > 0:
-            log.info("Rules table already has %d rows; skipping seed", existing)
+        """Insert any SEED_RULES / SEED_TEMPLATES whose id is not yet present.
+
+        Originally this only ran on an empty table, which meant an existing
+        deployment never picked up newly-added defaults (e.g. an extra seed
+        rule, or the is_default flag on older rows). It is now idempotent per
+        id: only missing rules are inserted, and existing rows are left
+        untouched so operator edits are never clobbered.
+
+        Returns the number of rows inserted.
+        """
+        existing = await rule_repository.list_ids()
+        missing = [
+            raw
+            for raw in [*SEED_RULES, *SEED_TEMPLATES]
+            if raw.get("id") not in existing
+        ]
+        if not missing:
+            log.info(
+                "All %d default rules + %d templates already present; nothing to seed",
+                len(SEED_RULES),
+                len(SEED_TEMPLATES),
+            )
             return 0
 
-        log.info("Seeding %d starter rules into Postgres", len(SEED_RULES))
-        for raw in SEED_RULES:
+        log.info(
+            "Seeding %d missing rule(s) (%d defaults + %d templates defined)",
+            len(missing),
+            len(SEED_RULES),
+            len(SEED_TEMPLATES),
+        )
+        for raw in missing:
             rule = Rule.model_validate(raw)
-            await rule_repository.upsert(rule)
-        return len(SEED_RULES)
+            await rule_repository.upsert(rule, actor="system")
+        return len(missing)
 
 
 # Singleton

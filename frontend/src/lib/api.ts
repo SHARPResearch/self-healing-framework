@@ -197,6 +197,210 @@ export async function fetchDecision(decisionId: string): Promise<ApiDecision> {
   return res.json();
 }
 
+// ─── Rules API (Hybrid Rule Management) ────────────────────────────
+export type RuleStatus = "DRAFT" | "ACTIVE" | "ARCHIVED";
+
+export interface ApiRuleConditionLeaf {
+  metric: string;
+  op: ">" | ">=" | "<" | "<=" | "==" | "!=" | "in" | "not_in" | "contains";
+  value: unknown;
+}
+export interface ApiRuleConditionAll {
+  all: ApiRuleCondition[];
+}
+export interface ApiRuleConditionAny {
+  any: ApiRuleCondition[];
+}
+export type ApiRuleCondition =
+  | ApiRuleConditionLeaf
+  | ApiRuleConditionAll
+  | ApiRuleConditionAny;
+
+export interface ApiRuleThen {
+  action: string;
+  params: Record<string, unknown>;
+  base_confidence: number;
+  base_risk: "LOW" | "MEDIUM" | "HIGH";
+}
+
+export interface ApiRuleGuardrails {
+  cooldown_seconds: number;
+  max_per_hour: number;
+  idempotency_key: string | null;
+}
+
+export interface ApiRuleAppliesTo {
+  layers: string[];
+  services: string[];
+  exclude_services: string[];
+}
+
+export interface ApiRule {
+  id: string;
+  version: number;
+  priority: number;
+  description: string;
+  enabled: boolean;
+  applies_to: ApiRuleAppliesTo;
+  when: ApiRuleCondition;
+  then: ApiRuleThen;
+  guardrails: ApiRuleGuardrails;
+  tags: string[];
+  is_default: boolean;
+  is_template: boolean;
+  created_by: string;
+  owner_org_id?: string | null;
+  status: RuleStatus;
+  parent_rule_id: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface ApiRulesResponse {
+  count: number;
+  rules: ApiRule[];
+}
+
+export interface ApiRuleAuditEntry {
+  id: number;
+  rule_id: string;
+  action: "CREATE" | "UPDATE" | "DELETE" | "TOGGLE" | "RELOAD";
+  actor: string;
+  diff: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface ApiRuleValidateResult {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+  rule: ApiRule | null;
+  match_preview?: {
+    total_anomalies: number;
+    eligible_anomalies?: number;
+    matched_count: number;
+    matched_anomaly_ids?: string[];
+    evaluation_errors?: number;
+    message: string;
+  };
+}
+
+export type RuleListFilter =
+  | "all"
+  | "default"
+  | "custom"
+  | "templates"
+  | "archived";
+
+async function ruleRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, init);
+  if (!response.ok) {
+    let detail = `API request failed (${response.status}): ${path}`;
+    try {
+      const body = await response.json();
+      if (typeof body?.detail === "string") detail = body.detail;
+      else if (body?.detail?.message)
+        detail = `${body.detail.message}: ${(body.detail.errors ?? []).join("; ")}`;
+    } catch {
+      /* keep the default message */
+    }
+    throw new Error(detail);
+  }
+  return response.json() as Promise<T>;
+}
+
+export async function fetchRules(filter: RuleListFilter = "all"): Promise<ApiRule[]> {
+  const qs = filter === "all" ? "" : `?type=${filter}`;
+  const data = await ruleRequest<ApiRulesResponse>(`/api/rules${qs}`);
+  return data.rules;
+}
+
+export async function fetchRule(ruleId: string): Promise<ApiRule> {
+  return ruleRequest<ApiRule>(`/api/rules/${encodeURIComponent(ruleId)}`);
+}
+
+export async function toggleRule(
+  ruleId: string,
+  enabled?: boolean,
+  actor = "admin",
+): Promise<{ ok: boolean; enabled: boolean; rule: ApiRule }> {
+  const qs = enabled === undefined ? "" : `?enabled=${enabled}`;
+  return ruleRequest(`/api/rules/${encodeURIComponent(ruleId)}/toggle${qs}`, {
+    method: "POST",
+    headers: { "X-Actor": actor },
+  });
+}
+
+export async function patchRule(
+  ruleId: string,
+  patch: Partial<{
+    priority: number;
+    when: ApiRuleCondition;
+    applies_to: ApiRuleAppliesTo;
+    guardrails: ApiRuleGuardrails;
+    enabled: boolean;
+    description: string;
+    status: RuleStatus;
+    tags: string[];
+  }>,
+  actor = "admin",
+): Promise<{ ok: boolean; changed: string[]; rule: ApiRule }> {
+  return ruleRequest(`/api/rules/${encodeURIComponent(ruleId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", "X-Actor": actor },
+    body: JSON.stringify(patch),
+  });
+}
+
+export async function createCustomRule(
+  payload: Partial<ApiRule> & {
+    id: string;
+    description: string;
+    when: ApiRuleCondition;
+    then: ApiRuleThen;
+  },
+  actor = "user",
+): Promise<{ ok: boolean; rule: ApiRule; warnings: string[] }> {
+  return ruleRequest(`/api/rules/custom`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Actor": actor },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteRule(ruleId: string, actor = "admin"): Promise<void> {
+  await ruleRequest(`/api/rules/${encodeURIComponent(ruleId)}`, {
+    method: "DELETE",
+    headers: { "X-Actor": actor },
+  });
+}
+
+export async function validateRule(
+  ruleId: string,
+  payload: Record<string, unknown>,
+  test = false,
+  actor = "user",
+): Promise<ApiRuleValidateResult> {
+  const qs = test ? "?test=true" : "";
+  return ruleRequest(`/api/rules/${encodeURIComponent(ruleId)}/validate${qs}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Actor": actor },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchRuleAudit(ruleId: string): Promise<ApiRuleAuditEntry[]> {
+  const data = await ruleRequest<{ rule_id: string; count: number; entries: ApiRuleAuditEntry[] }>(
+    `/api/rules/${encodeURIComponent(ruleId)}/audit`,
+  );
+  return data.entries;
+}
+
+export async function fetchRuleTemplates(): Promise<ApiRule[]> {
+  const data = await ruleRequest<ApiRulesResponse>(`/api/rules/templates`);
+  return data.rules;
+}
+
 // ─── API functions ─────────────────────────────────────────────────
 export async function fetchGraph(): Promise<ApiGraph> {
   return request<ApiGraph>("/api/graph/");

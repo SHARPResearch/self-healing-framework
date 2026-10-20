@@ -1,6 +1,15 @@
 import { useEffect } from "react";
-import { X, AlertTriangle, Zap, ShieldCheck } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import {
+  X,
+  AlertTriangle,
+  Zap,
+  ShieldCheck,
+  ListFilter,
+  Network,
+} from "lucide-react";
 import type { ApiDecision } from "@/lib/api";
+import { Button } from "@/components/ui/button";
 import { SeverityGauge } from "./SeverityGauge";
 import { ConfidenceBar } from "./ConfidenceBar";
 import { DecisionFlow } from "./DecisionFlow";
@@ -11,6 +20,8 @@ interface Props {
 }
 
 export function DecisionDetailModal({ decision, onClose }: Props) {
+  const navigate = useNavigate();
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -21,6 +32,15 @@ export function DecisionDetailModal({ decision, onClose }: Props) {
 
   if (!decision) return null;
   const d = decision;
+
+  const goToAnomalies = () => {
+    onClose();
+    navigate(`/anomalies?service=${encodeURIComponent(d.service_id)}`);
+  };
+  const goToGraph = () => {
+    onClose();
+    navigate(`/dependency-graph?highlight=${encodeURIComponent(d.service_id)}`);
+  };
 
   return (
     <div
@@ -53,6 +73,20 @@ export function DecisionDetailModal({ decision, onClose }: Props) {
                 <p className="mt-0.5 font-mono text-[10px] text-muted-foreground">
                   anomaly: {d.anomaly_id}
                 </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={goToAnomalies}
+                  >
+                    <ListFilter className="size-3.5" />
+                    View anomalies
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={goToGraph}>
+                    <Network className="size-3.5" />
+                    View in Graph
+                  </Button>
+                </div>
               </div>
             </div>
             <button

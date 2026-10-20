@@ -204,7 +204,7 @@ class PostgresStore:
         async with self.pool.acquire() as conn:
             await conn.execute(sql, anomaly_id)
 
-        # ── DECISION LOG ────────────────────────────────────────────
+    # ── DECISION LOG ────────────────────────────────────────────
     
     async def save_decision(self, row: dict) -> bool:
         """
@@ -296,6 +296,36 @@ class PostgresStore:
         """
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(sql, *args)
+        return [dict(r) for r in rows]
+    
+    async def list_anomalies_with_decisions(
+        self,
+        limit: int = 100,
+    ) -> list[dict]:
+        """
+        Return anomalies joined with their decision (if any).
+        Each row: all anomaly_events columns + decision_* fields (nullable).
+        """
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT
+                    a.*,
+                    d.id               AS decision_id,
+                    d.rule_id          AS decision_rule_id,
+                    d.action           AS decision_action,
+                    d.final_conf       AS decision_final_conf,
+                    d.effective_severity AS decision_effective_severity,
+                    d.policy_outcome   AS decision_policy_outcome,
+                    d.policy_reason    AS decision_policy_reason,
+                    d.created_at       AS decision_created_at
+                FROM anomaly_events a
+                LEFT JOIN decision_log d ON d.anomaly_id = a.id
+                ORDER BY a.detected_at DESC
+                LIMIT $1
+                """,
+                limit,
+            )
         return [dict(r) for r in rows]
 
 postgres_store = PostgresStore()

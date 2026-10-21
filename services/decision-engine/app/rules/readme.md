@@ -437,34 +437,34 @@ the persistence layer, the REST API, and how to exercise it from Swagger.
 
 ## Files in this folder
 
-| File | Role |
-| --- | --- |
-| `context.py` | Builds the `AnomalyContext` fact sheet (see Part 1). |
-| `classifier.py` | Classifies the anomaly: `NORMAL` / `ISOLATED` / `UPSTREAM` / `CASCADING`. |
-| `engine.py` | Evaluates `when` trees against the context, emits ranked `RuleCandidate[]`. |
-| `root_cause.py` | Among many anomalies, finds the true source service. |
-| `models.py` | Pydantic models: `Rule`, `RuleAction`, condition tree (`All`/`Any`/`Leaf`), enums. |
-| `seeds.py` | `SEED_RULES` (8 defaults) + `SEED_TEMPLATES` (3 read-only starters). |
+| File            | Role                                                                                                            |
+| --------------- | --------------------------------------------------------------------------------------------------------------- |
+| `context.py`    | Builds the `AnomalyContext` fact sheet (see Part 1).                                                            |
+| `classifier.py` | Classifies the anomaly: `NORMAL` / `ISOLATED` / `UPSTREAM` / `CASCADING`.                                       |
+| `engine.py`     | Evaluates `when` trees against the context, emits ranked `RuleCandidate[]`.                                     |
+| `root_cause.py` | Among many anomalies, finds the true source service.                                                            |
+| `models.py`     | Pydantic models: `Rule`, `RuleAction`, condition tree (`All`/`Any`/`Leaf`), enums.                              |
+| `seeds.py`      | `SEED_RULES` (8 defaults) + `SEED_TEMPLATES` (3 read-only starters).                                            |
 | `repository.py` | Postgres CRUD: `upsert`, `patch_rule`, `toggle_rule`, `create_custom_rule`, `delete_custom_rule`, audit writes. |
-| `validation.py` | `validate_rule_payload()` / `count_matches()` — pre-flight checks for the UI builder. |
-| `registry.py` | In-memory `rule_registry`: loads evaluatable rules, hot-reloadable. |
+| `validation.py` | `validate_rule_payload()` / `count_matches()` — pre-flight checks for the UI builder.                           |
+| `registry.py`   | In-memory `rule_registry`: loads evaluatable rules, hot-reloadable.                                             |
 
 ## The three levels (hybrid model)
 
 The UI is built on a three-level mental model, and the data model enforces it:
 
-| Level | Who | Can do | Columns |
-| --- | --- | --- | --- |
-| 1. Default | SHARP | toggle on/off, customize thresholds | `is_default = TRUE` |
-| 2. Customized | Operator | edit priority/description/`applies_to`/guardrails. **Condition & action frozen.** | `is_default = TRUE`, `parent_rule_id` set |
-| 3. Custom | Operator | full control: build condition tree, pick action | `is_default = FALSE`, `created_by = <actor>` |
-| — Templates | SHARP | read-only starting points; **never fire** | `is_template = TRUE` |
+| Level         | Who      | Can do                                                                            | Columns                                      |
+| ------------- | -------- | --------------------------------------------------------------------------------- | -------------------------------------------- |
+| 1. Default    | SHARP    | toggle on/off, customize thresholds                                               | `is_default = TRUE`                          |
+| 2. Customized | Operator | edit priority/description/`applies_to`/guardrails. **Condition & action frozen.** | `is_default = TRUE`, `parent_rule_id` set    |
+| 3. Custom     | Operator | full control: build condition tree, pick action                                   | `is_default = FALSE`, `created_by = <actor>` |
+| — Templates   | SHARP    | read-only starting points; **never fire**                                         | `is_template = TRUE`                         |
 
 Key invariants enforced in code:
 
 - **Defaults and templates cannot be deleted.** `DELETE /api/rules/{id}` returns
   `403` for either. The frontend hides the delete button behind a "Protected"
-  badge. Default rules can still be *disabled* (toggled off).
+  badge. Default rules can still be _disabled_ (toggled off).
 - **Templates never fire.** `registry.all()` only returns rules where
   `enabled AND NOT is_template AND status == ACTIVE`.
 - **Default rule action is frozen.** PATCH rejects a change to `then`/`id` with
@@ -512,34 +512,34 @@ Base path `/api/rules`. All endpoints are tagged `rules` and appear in Swagger.
 Write endpoints accept an optional `X-Actor` header (default `unknown`) used to
 attribute the change in the audit log.
 
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `GET` | `/api/rules` | List rules. Filters: `?type=default\|custom\|templates\|all`, `?status=`, `?enabled=`. |
-| `GET` | `/api/rules/templates` | List only templates. |
-| `GET` | `/api/rules/meta/stats` | Registry counts (total/evaluatable/default/custom/templates). |
-| `GET` | `/api/rules/{rule_id}` | Fetch one rule. |
-| `GET` | `/api/rules/{rule_id}/audit` | Audit history (`?limit=`). |
-| `POST` | `/api/rules/custom` | Create a custom rule (body may include `status`). |
-| `PATCH` | `/api/rules/{rule_id}` | Customize a rule (priority/description/`applies_to`/guardrails). |
-| `POST` | `/api/rules/{rule_id}/toggle` | Enable/disable (`?enabled=` forces a value). |
-| `POST` | `/api/rules/{rule_id}/validate` | Validate a payload; `?test=true` also dry-runs against recent anomalies. |
-| `POST` | `/api/rules` | Upsert a rule by id (admin/seed path). |
-| `DELETE` | `/api/rules/{rule_id}` | Delete a **custom** rule (403 for default/template). |
-| `POST` | `/api/rules/reload` | Hot-reload the in-memory registry from Postgres. |
+| Method   | Path                            | Purpose                                                                                |
+| -------- | ------------------------------- | -------------------------------------------------------------------------------------- |
+| `GET`    | `/api/rules`                    | List rules. Filters: `?type=default\|custom\|templates\|all`, `?status=`, `?enabled=`. |
+| `GET`    | `/api/rules/templates`          | List only templates.                                                                   |
+| `GET`    | `/api/rules/meta/stats`         | Registry counts (total/evaluatable/default/custom/templates).                          |
+| `GET`    | `/api/rules/{rule_id}`          | Fetch one rule.                                                                        |
+| `GET`    | `/api/rules/{rule_id}/audit`    | Audit history (`?limit=`).                                                             |
+| `POST`   | `/api/rules/custom`             | Create a custom rule (body may include `status`).                                      |
+| `PATCH`  | `/api/rules/{rule_id}`          | Customize a rule (priority/description/`applies_to`/guardrails).                       |
+| `POST`   | `/api/rules/{rule_id}/toggle`   | Enable/disable (`?enabled=` forces a value).                                           |
+| `POST`   | `/api/rules/{rule_id}/validate` | Validate a payload; `?test=true` also dry-runs against recent anomalies.               |
+| `POST`   | `/api/rules`                    | Upsert a rule by id (admin/seed path).                                                 |
+| `DELETE` | `/api/rules/{rule_id}`          | Delete a **custom** rule (403 for default/template).                                   |
+| `POST`   | `/api/rules/reload`             | Hot-reload the in-memory registry from Postgres.                                       |
 
 `validate` returns:
 
 ```json
 {
-  "valid": true,
-  "errors": [],
-  "warnings": ["unknown metric root 'foo'"],
-  "rule": { "...": "normalized rule" },
-  "match_preview": {
-    "total_anomalies": 15,
-    "matched_count": 2,
-    "message": "matched 2 of 15 recent anomalies"
-  }
+    "valid": true,
+    "errors": [],
+    "warnings": ["unknown metric root 'foo'"],
+    "rule": { "...": "normalized rule" },
+    "match_preview": {
+        "total_anomalies": 15,
+        "matched_count": 2,
+        "message": "matched 2 of 15 recent anomalies"
+    }
 }
 ```
 
@@ -547,11 +547,11 @@ attribute the change in the audit log.
 
 FastAPI serves an interactive API checker with **no extra dependency**:
 
-| URL | What it is |
-| --- | --- |
-| `http://localhost:8000/docs` | **Swagger UI** — expand any endpoint, click "Try it out", send a real request, see the live response. Use this to exercise rule CRUD, toggle, validate and the debug endpoints. |
-| `http://localhost:8000/redoc` | ReDoc — clean read-only reference built from the same schema. |
-| `http://localhost:8000/openapi.json` | Raw OpenAPI 3 schema (feed to Postman/Insomnia or codegen). |
+| URL                                  | What it is                                                                                                                                                                      |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `http://localhost:8000/docs`         | **Swagger UI** — expand any endpoint, click "Try it out", send a real request, see the live response. Use this to exercise rule CRUD, toggle, validate and the debug endpoints. |
+| `http://localhost:8000/redoc`        | ReDoc — clean read-only reference built from the same schema.                                                                                                                   |
+| `http://localhost:8000/openapi.json` | Raw OpenAPI 3 schema (feed to Postman/Insomnia or codegen).                                                                                                                     |
 
 Start the server, then open `/docs`:
 
@@ -587,9 +587,9 @@ in-memory fake and the HTTP layer is driven through FastAPI's `TestClient`.
 
 ## Related files outside this folder
 
-| File | Why it matters here |
-| --- | --- |
-| `app/api/routes/rules.py` | The HTTP layer over this module (12 endpoints + ownership guards). |
-| `app/persistence/postgres.py` | `save_rule_audit()` / `list_rule_audit()`. |
-| `app/persistence/schemas.py` | `RULES_HYBRID_DDL` (columns + backfill) and `RULE_AUDIT_DDL`. |
-| `app/persistence/migrate.py` | Runs the hybrid + audit DDL on boot. |
+| File                          | Why it matters here                                                |
+| ----------------------------- | ------------------------------------------------------------------ |
+| `app/api/routes/rules.py`     | The HTTP layer over this module (12 endpoints + ownership guards). |
+| `app/persistence/postgres.py` | `save_rule_audit()` / `list_rule_audit()`.                         |
+| `app/persistence/schemas.py`  | `RULES_HYBRID_DDL` (columns + backfill) and `RULE_AUDIT_DDL`.      |
+| `app/persistence/migrate.py`  | Runs the hybrid + audit DDL on boot.                               |

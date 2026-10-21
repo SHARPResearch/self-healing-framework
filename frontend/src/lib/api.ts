@@ -401,6 +401,107 @@ export async function fetchRuleTemplates(): Promise<ApiRule[]> {
   return data.rules;
 }
 
+// ─── Runtime settings API ──────────────────────────────────────────
+export type SettingType = "int" | "bool" | "str";
+export type SettingSource = "db" | "env" | "default";
+
+export interface ApiEngineSetting {
+  key: string;
+  value: number | boolean | string;
+  source: SettingSource;
+  type: SettingType;
+  default: number | boolean | string;
+  min: number | null;
+  max: number | null;
+  live: boolean;
+  premium: boolean;
+  group: string;
+  label: string;
+  help: string;
+}
+
+export interface ApiSettingsResponse {
+  count: number;
+  groups: string[];
+  settings: ApiEngineSetting[];
+}
+
+export interface ApiSettingsUpdateResult {
+  ok: boolean;
+  changed: string[];
+  requires_restart: string[];
+  settings: ApiEngineSetting[];
+}
+
+export interface ApiSettingsAuditEntry {
+  id: number;
+  key: string;
+  old_value: unknown;
+  new_value: unknown;
+  actor: string;
+  created_at: string;
+}
+
+export interface ApiNotificationEntry {
+  id: string;
+  kind: string;
+  anomaly_id: string | null;
+  decision_id: string | null;
+  service_id: string | null;
+  recipient: string;
+  sender: string | null;
+  subject: string;
+  status: "PENDING" | "SENT" | "FAILED" | "SKIPPED";
+  error: string | null;
+  created_at: string;
+  sent_at: string | null;
+}
+
+/** The single hardcoded premium owner until real auth lands. */
+export const PREMIUM_ACTOR = "dinildulneth123@gmail.com";
+
+export async function fetchSettings(): Promise<ApiSettingsResponse> {
+  return ruleRequest<ApiSettingsResponse>(`/api/settings`);
+}
+
+export async function updateSettings(
+  patch: Record<string, number | boolean | string>,
+  actor = PREMIUM_ACTOR,
+): Promise<ApiSettingsUpdateResult> {
+  return ruleRequest<ApiSettingsUpdateResult>(`/api/settings`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", "X-Actor": actor },
+    body: JSON.stringify(patch),
+  });
+}
+
+export async function reloadSettings(
+  actor = PREMIUM_ACTOR,
+): Promise<{ ok: boolean; loaded: number }> {
+  return ruleRequest(`/api/settings/reload`, {
+    method: "POST",
+    headers: { "X-Actor": actor },
+  });
+}
+
+export async function fetchSettingsAudit(
+  limit = 50,
+): Promise<ApiSettingsAuditEntry[]> {
+  const data = await ruleRequest<{ count: number; entries: ApiSettingsAuditEntry[] }>(
+    `/api/settings/audit?limit=${limit}`,
+  );
+  return data.entries;
+}
+
+export async function fetchNotifications(
+  limit = 50,
+): Promise<ApiNotificationEntry[]> {
+  const data = await ruleRequest<{ count: number; entries: ApiNotificationEntry[] }>(
+    `/api/settings/notifications?limit=${limit}`,
+  );
+  return data.entries;
+}
+
 // ─── API functions ─────────────────────────────────────────────────
 export async function fetchGraph(): Promise<ApiGraph> {
   return request<ApiGraph>("/api/graph/");

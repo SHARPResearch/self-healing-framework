@@ -916,9 +916,14 @@ class DynamicModelManager:
         return self._decide({"action": action, "verdict": verdict, "trigger": "operator",
                              "reason": reason, "evidence": evidence, "query_id": query_id})
 
-    def request_validity_check(self, operator: str = "operator") -> bool:
-        """Open a quarantine now, as the scheduled check would (UI 'check model' button)."""
-        if self.cfg.policy != "cadal" or self.phase != "stable":
+    def request_validity_check(self, operator: str = "operator", restart: bool = False) -> bool:
+        """
+        Open a quarantine now, as the scheduled check would (UI 'check model' button).
+
+        With `restart`, a quarantine that is already collecting starts over from now, the way a
+        change event restarts it: the evidence then comes only from after the request.
+        """
+        if self.cfg.policy != "cadal" or not (self.phase == "stable" or (restart and self.phase == "quarantine")):
             return False
         self._open_quarantine("operator")
         return True

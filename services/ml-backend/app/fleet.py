@@ -190,7 +190,7 @@ class ServiceFleet:
                     x[f] = rt.medians[f] + (x[f] - rt.medians[f]) * inj.scales[k] + inj.deltas[k]
                 else:
                     x[f] = x[f] + inj.deltas[k]
-                if inj.kind == "incident":
+                if inj.kind in ("incident", "restart"):
                     x[f] += rt.rng.gauss(0, 0.08)
         return x
 
@@ -229,6 +229,20 @@ class ServiceFleet:
             rt.injections.append(Injection("incident", feats, tuple(0.45 for _ in feats),
                                            until_step=step + length))
             return {"kind": kind, "features": list(feats), "events": length}
+        if kind == "restart":
+            # A rollout restart: a deployment event, a short disturbance, then the old normal again.
+            # The change event opens a quarantine at once; once the blip is over, the early look
+            # finds the champion quiet and resumes without waiting the full quarantine.
+            varying = [c for c in rt.test_df.columns if float(rt.test_df[c].std()) > 1e-6]
+            feats = tuple(rt.rng.sample(varying, max(2, len(varying) // 8)))
+            length = settings.demo_restart_events
+            rt.injections.append(Injection("restart", feats, tuple(0.45 for _ in feats),
+                                           until_step=step + length))
+            event = ChangeEvent(service_id, "deployment", step=step,
+                                detail={"source": "demo", "restart": True, "features": list(feats)})
+            rt.changes.push(event)
+            return {"kind": kind, "change_event_id": event.event_id, "features": list(feats),
+                    "events": length}
         raise ValueError(f"unknown injection {kind!r}")
 
     # -- views -------------------------------------------------------------------------------------

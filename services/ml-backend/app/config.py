@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     # spikes often never trip the drift detector on a quiet service, so nothing visible happens; a
     # whole day gets learned as a new normal. 0 means a fifth of a day.
     demo_incident_events: int = 720
+    # Length of the demo "restart" blip: a rollout restart (deployment event) that disturbs the
+    # service for a few minutes and then returns to its old normal (~4 s on stage).
+    demo_restart_events: int = 240
     score_push_every: int = 10            # push one anomaly_score message every N events per service
 
     # Logs page: follow these containers' output (service name shown on the page -> container).

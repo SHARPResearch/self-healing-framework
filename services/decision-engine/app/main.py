@@ -46,6 +46,8 @@ from app.api.routes import (
     graph, health, mock_data, anomaly_evidence, telemetry_history,
     rules, decisions,                            
 )
+from app.api.routes import settings as settings_routes
+from app.core.runtime_settings import runtime_settings
 from app.rules.registry import rule_registry    
 
 logging.basicConfig(
@@ -71,6 +73,10 @@ async def lifespan(app: FastAPI):
     await neo4j_store.connect()
 
     await run_migrations()
+
+    # ★ Runtime settings — load DB overrides BEFORE any job is scheduled so
+    #   the first job registration uses the operator's values, not env defaults.
+    await runtime_settings.load()
 
     # Load seed topology into memory
     load_static_topology("seeds/topology.yaml")
@@ -108,6 +114,9 @@ async def lifespan(app: FastAPI):
     start_telemetry_puller(scheduler)
     start_anomaly_sink(scheduler)
     start_decision_pipeline(scheduler)
+
+    # Let runtime settings reschedule these jobs when intervals change live.
+    runtime_settings.bind_scheduler(scheduler)
     
     await resume_pending_snapshots(scheduler)   
     await pull_once()
@@ -145,6 +154,7 @@ app = FastAPI(
     ),
     openapi_tags=[
         {"name": "rules", "description": "Hybrid rule management: list, inspect, customize, toggle, create, validate and delete rules (default/custom/template)."},
+        {"name": "settings", "description": "Runtime-engine tunables: poll intervals, snapshot windows, notification toggles. Premium-only keys are gated per-actor."},
         {"name": "decisions", "description": "Decision log and one-off evaluation of an anomaly against the rule set."},
         {"name": "anomalies", "description": "Persisted anomaly events, their evidence bundles, and the decision join."},
         {"name": "graph", "description": "Service dependency graph, centrality and blast-radius queries."},
@@ -171,6 +181,10 @@ app.include_router(anomaly_evidence.router)
 app.include_router(telemetry_history.router)
 app.include_router(rules.router)  
 app.include_router(decisions.router)
+app.include_router(settings_routes.router)
+
+# Expose the scheduler for runtime rescheduling (settings, diagnostics).
+app.state.scheduler = scheduler
 
 @app.get("/api/debug/buffer")
 async def debug_buffer():

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Bug, Cpu, Loader2, Rocket, ScanSearch, Skull, Waves } from "lucide-react";
+import { Bug, Cpu, Loader2, Rocket, RotateCw, ScanSearch, Skull, Waves } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -17,6 +17,7 @@ const INJECTIONS: { kind: Action; label: string; icon: typeof Rocket; hint: stri
   { kind: "deploy", label: "Deploy", icon: Rocket, hint: "Persistent shift plus a deployment change event" },
   { kind: "silent_change", label: "Silent", icon: Waves, hint: "Persistent shift with no change event" },
   { kind: "incident", label: "Incident", icon: Bug, hint: "Transient spike on a few metrics" },
+  { kind: "restart", label: "Restart", icon: RotateCw, hint: "Rollout restart: deployment event plus a short spike, then back to normal" },
   { kind: "check", label: "Check", icon: ScanSearch, hint: "Ask CADAL to validate this model now (operator triggered validity check)" },
 ];
 
@@ -103,7 +104,7 @@ export function ServiceLifecycleCard({ service }: { service: LiveServiceHealth }
           )}
         </p>
 
-        <div className="grid grid-cols-4 gap-1.5">
+        <div className={cn("grid gap-1.5", live ? "grid-cols-4" : "grid-cols-5")}>
           {(live ? LIVE_ACTIONS : INJECTIONS).map(({ kind, label, icon: Icon, hint }) => (
             <Button
               key={kind}

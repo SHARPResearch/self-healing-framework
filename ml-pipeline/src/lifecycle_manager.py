@@ -46,7 +46,8 @@ import numpy as np
 from src.change_events import ChangeEvent, ChangeEventSource, NullChangeEventSource
 from src.config import HST_CFG, HSTConfig
 from src.drift_attribution import (
-    Action, Attribution, AttributionConfig, QuarantineEvidence, Verdict, attribute,
+    Action, Attribution, AttributionConfig, EarlyLookEvidence, QuarantineEvidence, Verdict,
+    attribute, early_attribute,
 )
 from src.drift_detectors import ScoreDriftMonitor
 from src.evaluate import pot_threshold
@@ -89,6 +90,12 @@ class LifecycleConfig:
     change_horizon: int = 720               # a change explains a shift whose quarantine opens within this many steps after it
     fit_frac: float = 0.5                   # quarantine buffer split: fit / calib / tail
     calib_frac: float = 0.3
+    # Sequential early stop (drift_attribution.early_attribute): look at the buffer part-way
+    # through and decide early only when an exact bound makes the outcome conclusive; otherwise
+    # the full-length decision runs unchanged. Off by default so the published runs reproduce.
+    early_stop: bool = False
+    early_looks: tuple[float, ...] = (0.5, 0.75)   # fractions of the quarantine length
+    early_alpha: float = 0.05               # one-sided error per look and rule (~0.1 per rule over 2 looks)
     cooldown: int = 250                     # ignore drift signals right after a decision
     scheduled_every: int = 2880             # time trigger + checkpoint cadence (2 days)
     scheduled_window: int = 720             # alarm-rate window for the scheduled validity check
@@ -316,6 +323,7 @@ class DynamicModelManager:
         self._q_trigger = ""
         self._q_target_len = 0
         self._q_start = 0
+        self._q_looks: list[int] = []           # buffer lengths at which to try an early decision
 
         self.decisions: list[dict] = []
         self.attribution_null: dict[int, dict[str, float]] = {}
@@ -327,6 +335,7 @@ class DynamicModelManager:
         self.decision_ms: list[float] = []     # time spent evaluating quarantines (any thread)
         self._executor: Optional[ThreadPoolExecutor] = None
         self._pending = None
+        self._pending_kind = ""                 # "decision" (closes the quarantine) or "look" (may not)
         self._deferred_change = False
         # Operator queries: query_id -> record; pending candidates stay in memory only.
         self.queries: dict[str, dict] = {}
@@ -390,8 +399,7 @@ class DynamicModelManager:
         decision = None
 
         if self._pending is not None and self._pending.done():
-            out, self._pending = self._pending.result(), None
-            decision = self._apply_outcome(out)
+            decision = self._take_pending(self._pending.result())
 
         decision = self._expire_queries() or decision
 
@@ -549,6 +557,8 @@ class DynamicModelManager:
         self._q_rows, self._q_alarms = [], []
         explained = trigger == "change_event" or self._change_in_horizon() is not None
         self._q_target_len = self.cfg.quarantine_with_change if explained else self.cfg.quarantine_silent
+        self._q_looks = sorted({int(round(f * self._q_target_len)) for f in self.cfg.early_looks
+                                if 0 < f < 1}) if self.cfg.early_stop else []
         self.publisher.publish_lifecycle({"service_id": self.service_id, "event": "quarantine_opened",
                                           "trigger": trigger, "step": self.step,
                                           "length": self._q_target_len})
@@ -565,6 +575,8 @@ class DynamicModelManager:
             self.monitor.update(score, self.step)
             if len(self._q_rows) >= self._q_target_len:
                 return self._close_quarantine()
+            if len(self._q_rows) in self._q_looks and self._pending is None:
+                return self._early_look()
             return None
         signal = self.monitor.update(score, self.step)
         if signal is not None and self.step >= self._cooldown_until:
@@ -589,8 +601,14 @@ class DynamicModelManager:
             "champion_state": capture(self.model),
             "champion_threshold": self.threshold, "champion_gate": self.learn_gate,
             "ref_stats": self.ref_stats, "null": self.attribution_null.get(n, {}),
-            "may_ask": self._may_ask(),
+            "may_ask": self._may_ask(), "q_start": self._q_start, "length": self._q_target_len,
         }
+
+    def quarantine_progress(self) -> Optional[dict]:
+        """How far the open quarantine is (events seen of its length, early-look points), or None."""
+        if self.phase == "stable":
+            return None
+        return {"seen": len(self._q_rows), "length": self._q_target_len, "looks": list(self._q_looks)}
 
     def _may_ask(self) -> bool:
         # One open question per service at a time: while the operator has not answered, a new
@@ -599,6 +617,75 @@ class DynamicModelManager:
             return False
         recent = [s for s in self._query_steps if self.step - s < self.cfg.query_budget_window]
         return len(recent) < self.cfg.query_budget
+
+    def _rebaseline_tail(self, model, ctx: dict, fit_rows: list[dict],
+                         tail_rows: list[dict]) -> tuple[dict, Optional[int]]:
+        """Shifts fitted on `fit_rows`, and how many tail events the re-baselined champion flags."""
+        if not (self.cfg.policy == "cadal" and self.cfg.rebaseline and ctx["ref_stats"]):
+            return {}, None
+        shifts = fit_rebaseline(ctx["ref_stats"], fit_rows, self.cfg.rebaseline_k)
+        if not shifts:
+            return {}, None
+        threshold = ctx["champion_threshold"]
+        return shifts, sum(_clamp(model.score_one(rebaselined(r, shifts))) >= threshold for r in tail_rows)
+
+    def _early_look(self) -> Optional[dict]:
+        """Try to decide the quarantine now; a look that is not conclusive leaves it collecting."""
+        ctx = self._quarantine_context()
+        if not self.cfg.async_decisions:
+            out = self._evaluate_early(self.model, ctx)
+            out["blocked_ms"] = out["eval_ms"]
+            return self._take_look(out)
+        if self._executor is None:
+            self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"cadal-{self.service_id}")
+        self._pending_kind = "look"             # keep collecting while it runs: phase stays quarantine
+        self._pending = self._executor.submit(self._evaluate_early, copy.deepcopy(self.model), ctx)
+        return None
+
+    def _evaluate_early(self, model, ctx: dict) -> dict:
+        """The early-look evidence (drift_attribution.early_attribute) on `model` as scratch space."""
+        t0 = time.perf_counter()
+        rows, alarms = ctx["rows"], ctx["alarms"]
+        m = len(rows)
+        n_fit = int(m * self.cfg.fit_frac)
+        n_calib = int(m * self.cfg.calib_frac)
+        tail_rows, tail_alarms = rows[n_fit + n_calib:], alarms[n_fit + n_calib:]
+        recent = alarms[m // 2:]
+        new_shifts, rebaseline_alarms = self._rebaseline_tail(model, ctx, rows[:n_fit], tail_rows)
+        apply(model, ctx["champion_state"])     # scoring advanced the smoothing state; undo it
+        evidence = EarlyLookEvidence(
+            trigger=ctx["trigger"], target_rate=self.cfg.target_rate, n_seen=m, n_full=ctx["length"],
+            recent_alarms=sum(recent), n_recent=len(recent),
+            tail_alarms=sum(tail_alarms), n_tail=len(tail_rows),
+            n_tail_full=ctx["length"] - int(ctx["length"] * self.cfg.fit_frac)
+            - int(ctx["length"] * self.cfg.calib_frac),
+            change_event_id=ctx["change_event_id"], rebaseline_tail_alarms=rebaseline_alarms,
+            tail_out_of_support_rate=out_of_support_rate(rows[:n_fit], tail_rows),
+            moving_floor=self.attribution_null.get(ctx["length"], {}).get("moving"),
+        )
+        result = early_attribute(evidence, self.cfg.attribution, self.cfg.early_alpha)
+        return {
+            **ctx, "look": True, "result": result, "new_shifts": new_shifts, "rollback_target": None,
+            "challenger_state": None, "challenger_threshold": None, "challenger_gate": None,
+            "new_ref_stats": None, "eval_ms": (time.perf_counter() - t0) * 1000,
+        }
+
+    def _take_look(self, out: dict) -> Optional[dict]:
+        """Apply an early look's outcome if it is conclusive and still about the open quarantine."""
+        current = self.phase == "quarantine" and out["q_start"] == self._q_start
+        conclusive = current and out["result"] is not None
+        if current:
+            self.publisher.publish_lifecycle({
+                "service_id": self.service_id, "event": "quarantine_look", "step": self.step,
+                "seen": len(out["rows"]), "length": out["length"], "conclusive": conclusive,
+                "verdict": out["result"].verdict.value if conclusive else None,
+                "action": out["result"].action.value if conclusive else None,
+            })
+        return self._apply_outcome(out) if conclusive else None
+
+    def _take_pending(self, out: dict) -> Optional[dict]:
+        kind, self._pending, self._pending_kind = self._pending_kind, None, ""
+        return self._take_look(out) if kind == "look" else self._apply_outcome(out)
 
     def _evaluate_quarantine(self, model, ctx: dict) -> dict:
         """
@@ -619,14 +706,8 @@ class DynamicModelManager:
         # Repair 1, re-baselining: keep the champion, shift the metrics whose level moved back
         # onto its baseline (estimated on the fit slice), and see whether it then finds the tail
         # normal again with its own threshold. Measured before the challenger touches the model.
-        new_shifts, rebaseline_tail = {}, None
-        if self.cfg.policy == "cadal" and self.cfg.rebaseline and ctx["ref_stats"]:
-            new_shifts = fit_rebaseline(ctx["ref_stats"], rows[:n_fit], self.cfg.rebaseline_k)
-            if new_shifts:
-                rebaseline_tail = sum(
-                    _clamp(model.score_one(rebaselined(r, new_shifts))) >= champion_threshold
-                    for r in tail_rows
-                ) / len(tail_rows)
+        new_shifts, rebaseline_alarms = self._rebaseline_tail(model, ctx, rows[:n_fit], tail_rows)
+        rebaseline_tail = None if rebaseline_alarms is None else rebaseline_alarms / len(tail_rows)
 
         # Repair 2, retraining: a challenger fitted on the new regime alone. Learnability is a
         # stationarity test, so it is measured frozen: fitted on the start of the buffer,
@@ -692,6 +773,9 @@ class DynamicModelManager:
         """Serve what the evaluation decided. Runs on the serving thread, in milliseconds."""
         t = time.perf_counter()
         result = out["result"]
+        result.evidence.setdefault("early", False)
+        result.evidence.setdefault("quarantine_events", len(out["rows"]))
+        result.evidence.setdefault("quarantine_length", out.get("length"))
         if result.action is Action.PROMOTE and result.evidence.get("repair") == "rebaseline":
             # The champion is served again, unchanged, behind the new input shifts.
             apply(self.model, out["champion_state"])
@@ -876,16 +960,17 @@ class DynamicModelManager:
         # champion meanwhile, and swap in the outcome on the first event after it is ready.
         if self._executor is None:
             self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"cadal-{self.service_id}")
+        # A look still running is about a shorter buffer than this decision: let it finish unused.
         self.phase = "deciding"
+        self._pending_kind = "decision"
         self._pending = self._executor.submit(self._evaluate_quarantine, copy.deepcopy(self.model), ctx)
         return None
 
     def wait_for_decision(self, timeout: Optional[float] = None) -> Optional[dict]:
-        """Block until a pending asynchronous decision is ready and apply it (tests, shutdown)."""
+        """Block until a pending asynchronous decision or look is ready and apply it (tests, shutdown)."""
         if self._pending is None:
             return None
-        out, self._pending = self._pending.result(timeout=timeout), None
-        return self._apply_outcome(out)
+        return self._take_pending(self._pending.result(timeout=timeout))
 
     def _snapshot(self) -> HSTState:
         return capture(self.model, meta={

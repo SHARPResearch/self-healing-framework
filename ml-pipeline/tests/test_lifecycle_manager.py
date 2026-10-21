@@ -575,3 +575,66 @@ def test_manual_rollback_and_validity_check_are_audited():
     assert mgr.request_validity_check() is True and mgr.phase == "quarantine"
     assert mgr.request_validity_check() is False     # already observing
     assert promoted > 1
+
+
+# ── sequential early stop ────────────────────────────────────────────────────────────────────────
+def _early_cfg(**kw):
+    return _cfg(early_stop=True, quarantine_with_change=400, quarantine_silent=400, **kw)
+
+
+def test_early_stop_promotes_a_deployment_level_shift_before_the_full_quarantine():
+    pub = RecordingPublisher()
+    mgr = _manager(_early_cfg(), events=[ChangeEvent("svc", "deployment", step=301)], publisher=pub)
+    results = _run(mgr, _shifted_stream())
+    promote = next(d for d in mgr.decisions if d["action"] == "promote")
+    ev = promote["evidence"]
+    assert ev["early"] and ev["repair"] == "rebaseline"
+    assert ev["quarantine_events"] < ev["quarantine_length"] == 400
+    assert "decided early" in promote["reason"]
+    looks = [p for p in pub.payloads if p.get("event") == "quarantine_look"]
+    assert looks and looks[-1]["conclusive"] and looks[-1]["seen"] == ev["quarantine_events"]
+    assert sum(r.alarm for r in results[-300:]) / 300 < 0.15
+
+
+def test_without_early_stop_the_same_shift_waits_the_full_quarantine():
+    mgr = _manager(_cfg(quarantine_with_change=400), events=[ChangeEvent("svc", "deployment", step=301)])
+    _run(mgr, _shifted_stream())
+    promote = next(d for d in mgr.decisions if d["action"] == "promote")
+    assert promote["evidence"]["early"] is False and promote["evidence"]["quarantine_events"] == 400
+
+
+def test_early_stop_never_promotes_a_silent_shift():
+    mgr = _manager(_early_cfg())
+    _run(mgr, _shifted_stream())
+    assert mgr.decisions
+    assert not any(d["action"] == "promote" and d["evidence"].get("early") for d in mgr.decisions)
+
+
+def test_early_stop_never_learns_a_transient_burst():
+    rng = random.Random(5)
+    rows = [_normal(rng) for _ in range(300)]
+    rows += [{f: rng.random() for f in FEATURES} for _ in range(60)]
+    rows += [_normal(rng) for _ in range(900)]
+    mgr = _manager(_early_cfg())
+    _run(mgr, rows)
+    assert all(d["action"] != "promote" for d in mgr.decisions)
+    assert mgr.registry.production().version == 1
+
+
+def test_async_early_looks_match_sync_and_report_progress():
+    events = [ChangeEvent("svc", "deployment", step=301)]
+    sync, asyn = _manager(_early_cfg(), events=events), _manager(_early_cfg(async_decisions=True), events=events)
+    progress = []
+    for x in _shifted_stream():
+        sync.process(x)
+        asyn.process(x)
+        if asyn.quarantine_progress():
+            progress.append(asyn.quarantine_progress())
+        if asyn._pending is not None:
+            asyn.wait_for_decision(timeout=60)
+    summary = lambda m: [(d["verdict"], d["evidence"].get("early"), d["evidence"].get("quarantine_events"))
+                         for d in m.decisions]
+    assert summary(asyn) == summary(sync)
+    assert any(early and verdict == "concept_drift" for verdict, early, _ in summary(asyn))
+    assert progress and progress[0]["length"] == 400 and progress[0]["looks"] == [200, 300]
+    assert asyn.quarantine_progress() is None

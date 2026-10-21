@@ -142,7 +142,7 @@ class EarlyLookEvidence:
     n_full: int                               # the quarantine's full length
     recent_alarms: int                        # champion alarms over the most recent half of the buffer
     n_recent: int
-    tail_alarms: int                          # champion alarms over the tail slice (fit/calib/tail split)
+    tail_alarms: int                          # champion alarms on the events held out from the shift fit
     n_tail: int
     change_event_id: Optional[str] = None
     n_tail_full: Optional[int] = None         # the tail the full-length decision would use

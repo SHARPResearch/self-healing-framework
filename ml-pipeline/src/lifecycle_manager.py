@@ -648,8 +648,9 @@ class DynamicModelManager:
         rows, alarms = ctx["rows"], ctx["alarms"]
         m = len(rows)
         n_fit = int(m * self.cfg.fit_frac)
-        n_calib = int(m * self.cfg.calib_frac)
-        tail_rows, tail_alarms = rows[n_fit + n_calib:], alarms[n_fit + n_calib:]
+        # Re-baselining keeps the champion's own threshold, so unlike a challenger it needs no
+        # calibration slice: every event after the fit slice is held out from it and tests it.
+        tail_rows, tail_alarms = rows[n_fit:], alarms[n_fit:]
         recent = alarms[m // 2:]
         new_shifts, rebaseline_alarms = self._rebaseline_tail(model, ctx, rows[:n_fit], tail_rows)
         apply(model, ctx["champion_state"])     # scoring advanced the smoothing state; undo it

@@ -16,18 +16,22 @@ function toSeverity(sev?: string): Severity {
 
 type Filter = "all" | "captured" | "pending" | "failed";
 
+const POLL_MS = 3000;
+
 export function AnomalyListPage() {
   const [items, setItems] = useState<ApiDbAnomaly[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const [openId, setOpenId] = useState<string | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [nowTick, setNowTick] = useState(0);
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
 
   // Decisions for the same anomalies, joined client-side by anomaly_id so each
   // row can show its decision and deep-link to the decision detail modal.
-  const { items: decisions } = useDecisions(5000);
+  const { items: decisions } = useDecisions(POLL_MS);
   const decisionByAnomaly = useMemo(() => {
     const map = new Map<string, (typeof decisions)[number]>();
     for (const d of decisions) {
@@ -57,6 +61,7 @@ export function AnomalyListPage() {
         if (!alive) return;
         setItems(list);
         setError(null);
+        setLastUpdated(new Date());
       } catch (e: any) {
         if (!alive) return;
         setError(String(e.message ?? e));
@@ -65,11 +70,17 @@ export function AnomalyListPage() {
       }
     };
     load();
-    const id = setInterval(load, 5000);
+    const id = setInterval(load, POLL_MS);
     return () => {
       alive = false;
       clearInterval(id);
     };
+  }, []);
+
+  // Re-render every second so "updated Xs ago" ticks without refetching.
+  useEffect(() => {
+    const id = setInterval(() => setNowTick((n) => n + 1), 1000);
+    return () => clearInterval(id);
   }, []);
 
   const filtered = useMemo(() => {
@@ -101,6 +112,7 @@ export function AnomalyListPage() {
               window captured around it. Click a row to see the evidence.
             </p>
           </div>
+          <LiveIndicator lastUpdated={lastUpdated} nowTick={nowTick} />
         </div>
 
         {/* Filter tabs */}
@@ -235,6 +247,38 @@ export function AnomalyListPage() {
       />
     </AppShell>
   );
+}
+
+function LiveIndicator({
+  lastUpdated,
+  nowTick,
+}: {
+  lastUpdated: Date | null;
+  nowTick: number;
+}) {
+  void nowTick; // re-render trigger for the relative-time label
+  const ago = lastUpdated ? relativeTime(lastUpdated) : "—";
+  return (
+    <div className="flex shrink-0 items-center gap-2 rounded-full border border-green-500/30 bg-green-500/10 px-3 py-1">
+      <span className="relative flex size-2">
+        <span className="absolute inline-flex size-full animate-ping rounded-full bg-green-500 opacity-75" />
+        <span className="relative inline-flex size-2 rounded-full bg-green-500" />
+      </span>
+      <span className="text-xs font-medium text-green-600">Live</span>
+      <span className="font-mono text-[10px] text-green-700/70">
+        updated {ago}
+      </span>
+    </div>
+  );
+}
+
+function relativeTime(d: Date): string {
+  const secs = Math.max(0, Math.floor((Date.now() - d.getTime()) / 1000));
+  if (secs < 5) return "just now";
+  if (secs < 60) return `${secs}s ago`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  return `${Math.floor(mins / 60)}h ago`;
 }
 
 function StatusPill({ status }: { status: string }) {

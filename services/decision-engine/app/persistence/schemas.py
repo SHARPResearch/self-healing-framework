@@ -374,3 +374,70 @@ BATCH2_DDL = [
     RULES_HYBRID_DDL,
     RULE_AUDIT_DDL,
 ]
+
+
+# ─────────────────────────────────────────────────────────────────────
+# BATCH 3 — Runtime-editable engine settings + notification log
+#   * engine_settings — one row per tunable knob (key/value). Values can
+#     be changed at runtime by an end user; a DB row overrides the .env
+#     default. Missing rows → the coded/env default is used.
+#   * settings_audit — every settings write leaves a trace.
+#   * notifications   — every email the engine attempts to send is logged
+#     here (single source of truth for "what was the user told?").
+# All statements are idempotent so this is safe on every boot.
+# ─────────────────────────────────────────────────────────────────────
+SETTINGS_DDL = """
+CREATE TABLE IF NOT EXISTS engine_settings (
+    key         TEXT PRIMARY KEY,
+    value       JSONB NOT NULL,
+    updated_by  TEXT NOT NULL DEFAULT 'system',
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+"""
+
+
+SETTINGS_AUDIT_DDL = """
+CREATE TABLE IF NOT EXISTS settings_audit (
+    id         BIGSERIAL PRIMARY KEY,
+    key        TEXT NOT NULL,
+    old_value  JSONB,
+    new_value  JSONB,
+    actor      TEXT NOT NULL DEFAULT 'unknown',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_settings_audit_key
+    ON settings_audit (key, created_at DESC);
+"""
+
+
+NOTIFICATIONS_DDL = """
+CREATE TABLE IF NOT EXISTS notifications (
+    id            TEXT PRIMARY KEY,             -- NTF-{ulid-ish}
+    kind          TEXT NOT NULL,                -- ANOMALY_DETECTED / DECISION_MADE
+    anomaly_id    TEXT,
+    decision_id   TEXT,
+    service_id    TEXT,
+    recipient     TEXT NOT NULL,
+    sender        TEXT,
+    subject       TEXT NOT NULL,
+    body          TEXT,
+    status        TEXT NOT NULL DEFAULT 'PENDING',  -- PENDING / SENT / FAILED / SKIPPED
+    error         TEXT,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    sent_at       TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_notifications_created
+    ON notifications (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notifications_kind
+    ON notifications (kind, created_at DESC);
+"""
+
+
+# ─────────────────────────────────────────────────────────────────────
+# BATCH 3 — Runtime engine settings + notifications. Runs after Batch 2.
+# ─────────────────────────────────────────────────────────────────────
+BATCH3_DDL = [
+    SETTINGS_DDL,
+    SETTINGS_AUDIT_DDL,
+    NOTIFICATIONS_DDL,
+]

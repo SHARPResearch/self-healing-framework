@@ -638,3 +638,14 @@ def test_async_early_looks_match_sync_and_report_progress():
     assert any(early and verdict == "concept_drift" for verdict, early, _ in summary(asyn))
     assert progress and progress[0]["length"] == 400 and progress[0]["looks"] == [200, 300]
     assert asyn.quarantine_progress() is None
+
+
+def test_validity_check_can_restart_an_open_quarantine():
+    rng = random.Random(9)
+    mgr = _manager(_cfg())
+    assert mgr.request_validity_check() is True
+    _run(mgr, [_normal(rng) for _ in range(50)])
+    assert mgr.quarantine_progress()["seen"] == 50
+    assert mgr.request_validity_check() is False                 # already observing
+    assert mgr.request_validity_check(restart=True) is True      # starts over from now
+    assert mgr.quarantine_progress()["seen"] == 0 and mgr._q_trigger == "operator"

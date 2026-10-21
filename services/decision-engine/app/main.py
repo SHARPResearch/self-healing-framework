@@ -23,6 +23,8 @@
 #     print("✅ Topology loaded from seeds/topology.yaml")
 
 import logging
+import threading
+import webbrowser
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -44,6 +46,8 @@ from app.api.routes import (
     graph, health, mock_data, anomaly_evidence, telemetry_history,
     rules, decisions,                            
 )
+from app.api.routes import settings as settings_routes
+from app.core.runtime_settings import runtime_settings
 from app.rules.registry import rule_registry    
 
 logging.basicConfig(
@@ -69,6 +73,10 @@ async def lifespan(app: FastAPI):
     await neo4j_store.connect()
 
     await run_migrations()
+
+    # ★ Runtime settings — load DB overrides BEFORE any job is scheduled so
+    #   the first job registration uses the operator's values, not env defaults.
+    await runtime_settings.load()
 
     # Load seed topology into memory
     load_static_topology("seeds/topology.yaml")
@@ -106,11 +114,21 @@ async def lifespan(app: FastAPI):
     start_telemetry_puller(scheduler)
     start_anomaly_sink(scheduler)
     start_decision_pipeline(scheduler)
+
+    # Let runtime settings reschedule these jobs when intervals change live.
+    runtime_settings.bind_scheduler(scheduler)
     
     await resume_pending_snapshots(scheduler)   
     await pull_once()
     
     log.info("✅ Decision Engine startup complete")
+
+    if settings.OPEN_DOCS:
+        docs_url = settings.DOCS_BASE_URL.rstrip("/") + "/docs"
+        threading.Thread(
+            target=webbrowser.open, args=(docs_url,), daemon=True
+        ).start()
+        log.info("Opening Swagger UI: %s", docs_url)
 
     yield
 
@@ -123,6 +141,29 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Decision Engine — Cloud (Neon + Tiger + Aura)",
+    version="0.1.0",
+    description=(
+        "SHARP's decision engine: ingests telemetry and anomalies, evaluates the "
+        "hybrid rule set, and produces remediation decisions.\n\n"
+        "**Interactive API checker**\n\n"
+        "- Swagger UI: [`/docs`](/docs) — try every endpoint live (send real requests).\n"
+        "- ReDoc: [`/redoc`](/redoc) — clean read-only reference.\n"
+        "- Raw schema: [`/openapi.json`](/openapi.json).\n\n"
+        "Rule write endpoints accept an optional `X-Actor` header to attribute the "
+        "change in the rule audit log (defaults to `unknown`)."
+    ),
+    openapi_tags=[
+        {"name": "rules", "description": "Hybrid rule management: list, inspect, customize, toggle, create, validate and delete rules (default/custom/template)."},
+        {"name": "settings", "description": "Runtime-engine tunables: poll intervals, snapshot windows, notification toggles. Premium-only keys are gated per-actor."},
+        {"name": "decisions", "description": "Decision log and one-off evaluation of an anomaly against the rule set."},
+        {"name": "anomalies", "description": "Persisted anomaly events, their evidence bundles, and the decision join."},
+        {"name": "graph", "description": "Service dependency graph, centrality and blast-radius queries."},
+        {"name": "history", "description": "Historical infra/app telemetry snapshots per service or anomaly."},
+        {"name": "mock", "description": "Mock/simulation endpoints used by the frontend when the live stack is unavailable."},
+        {"name": "health", "description": "Liveness probe."},
+    ],
+    docs_url="/docs",
+    redoc_url="/redoc",
     lifespan=lifespan,
 )
 
@@ -140,6 +181,10 @@ app.include_router(anomaly_evidence.router)
 app.include_router(telemetry_history.router)
 app.include_router(rules.router)  
 app.include_router(decisions.router)
+app.include_router(settings_routes.router)
+
+# Expose the scheduler for runtime rescheduling (settings, diagnostics).
+app.state.scheduler = scheduler
 
 @app.get("/api/debug/buffer")
 async def debug_buffer():

@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from app.api import views
 from app.bus import envelope
+from app.config import settings
 from app.logs import public as public_log
 from app.runtime import runtime
 
@@ -26,7 +27,12 @@ def _service(service_id: str):
 
 @router.get("/health")
 async def health() -> dict:
-    return {"status": "ok", "store": runtime.store.kind,
+    return {"status": "ok", "mode": "prometheus" if runtime.live else "replay",
+            "watcher": runtime.changes is not None, "liveActions": runtime.actions is not None,
+            "namespace": settings.k8s_namespace if runtime.live else None,
+            "scrapeSeconds": settings.live_scrape_seconds if runtime.live else None,
+            "lifecycleDayMinutes": settings.live_lifecycle_day_minutes if runtime.live else None,
+            "store": runtime.store.kind,
             "db": runtime.store.kind == "timescaledb" and getattr(runtime.store, "pool", None) is not None,
             "redis": runtime.bus.redis_ok, "services": len(runtime.fleet.services),
             "tick": runtime.tick, "eventsPerSec": runtime.events_per_sec, "paused": runtime.paused,
@@ -199,7 +205,8 @@ async def logs_services() -> list[dict]:
 # -- demo controls ------------------------------------------------------------------------------
 @router.get("/demo/state")
 async def demo_state() -> dict:
-    return {"eventsPerSec": runtime.events_per_sec, "paused": runtime.paused, "tick": runtime.tick,
+    return {"mode": "prometheus" if runtime.live else "replay",
+            "eventsPerSec": runtime.events_per_sec, "paused": runtime.paused, "tick": runtime.tick,
             "services": [{"serviceId": rt.service_id, "displayName": rt.display_name,
                           "smdEntity": rt.entity, "step": rt.manager.step,
                           "injections": [i.kind for i in rt.injections]}
@@ -209,6 +216,8 @@ async def demo_state() -> dict:
 @router.post("/demo/{service_id}/{kind}")
 async def demo_inject(service_id: str, kind: Literal["deploy", "silent_change", "incident"]) -> dict:
     _service(service_id)
+    if runtime.live:
+        raise HTTPException(409, "synthetic injections are replay only; use POST /api/live/{service}/{action}")
     return await runtime.inject(service_id, kind)
 
 
@@ -219,6 +228,8 @@ class SpeedBody(BaseModel):
 
 @router.post("/demo/speed")
 async def demo_speed(body: SpeedBody) -> dict:
+    if body.eventsPerSec is not None and runtime.live:
+        raise HTTPException(409, "live mode follows the Prometheus scrape interval; speed is replay only")
     if body.eventsPerSec is not None:
         runtime.events_per_sec = max(0.5, min(200.0, body.eventsPerSec))
     if body.paused is not None:
@@ -226,6 +237,22 @@ async def demo_speed(body: SpeedBody) -> dict:
     await runtime.bus.publish(envelope("demo_speed", None, {"eventsPerSec": runtime.events_per_sec,
                                                             "paused": runtime.paused}))
     return {"eventsPerSec": runtime.events_per_sec, "paused": runtime.paused}
+
+
+@router.post("/live/{service_id}/{action}")
+async def live_action(service_id: str, action: str) -> dict:
+    """A real scenario on the live cluster: rollout, traffic_up/traffic_reset, or a Chaos Mesh fault."""
+    from app.live_actions import ACTIONS
+    if not runtime.live:
+        raise HTTPException(409, "live actions need TELEMETRY_MODE=prometheus")
+    if action not in ACTIONS:
+        raise HTTPException(422, f"unknown action {action!r}; expected one of {list(ACTIONS)}")
+    if not action.startswith("traffic"):
+        _service(service_id)
+    try:
+        return await runtime.live_action(service_id, action)
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc))
 
 
 @router.post("/demo/reset")

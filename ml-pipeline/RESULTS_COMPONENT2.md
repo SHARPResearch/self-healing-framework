@@ -290,3 +290,61 @@ Threats specific to this section:
 - This run includes the one-open-query and expiry-cooldown limits. Its `cadal_hitl` results are
   identical to an earlier run without them: with answers arriving after 60 events, the limits
   never applied.
+
+## 10. Live Online Boutique on Kubernetes (`outputs/live_chaos/20261021T084825Z/`)
+
+Twelve Chaos Mesh faults (CPU stress, memory stress, pod kill, network delay; 3 min each, 7 min
+apart) on payment, cart and product catalog, scored from Prometheus every 5 s
+(`evaluate_live_chaos.py`):
+
+| policy | faults | detected | median time to detect | incidents learned |
+|---|---|---|---|---|
+| static | 12 | 11 | 10 to 15 s | 0 |
+| cadal | 12 | 11 | 10 to 15 s | 0 |
+| cadal_early | 12 | 11 | 10 to 15 s | 0 |
+
+- Missed: network delay on product catalog, because no latency metric is collected.
+- After a pod restarts, the service settles at a new level and alarms linger (cart: 296 false
+  alarms per hour outside the faults). CADAL held every time, so nothing wrong was learned, but
+  it did not repair the baseline either. Treating restarts as change events is the next step.
+
+## 11. Sequential early stop (`outputs/final/smd_early/`)
+
+Every quarantine used to wait its full length (1,440 events, one day at SMD's rate). With
+`early_stop=True`, CADAL looks at 50% and 75% of the buffer and decides early only when an exact
+one-sided Clopper-Pearson bound (alpha 0.05 per look and rule) makes the outcome conclusive
+(`drift_attribution.early_attribute`). Only two outcomes may be decided early:
+
+- **resume**: the champion's alarm rate on the recent half of the buffer is bounded below the
+  stale line, so the shift did not persist;
+- **promote by re-baselining**, only when a change event explains the shift: the champion is
+  still stale (lower bound at or above the stale line), the tail is not moving, and the
+  re-baselined champion's alarm rate on every event held out from the shift fit is bounded at
+  or below the line the full-length decision would apply.
+
+Retraining, asking the operator and holding an incident always wait for the full quarantine.
+
+All 28 entities, 4 scenarios, `cadal` vs `cadal_early`, same detector and seed:
+
+| scenario | MCC cadal | MCC cadal_early | W / T / L | p |
+|---|---|---|---|---|
+| deploy | 0.144 | 0.153 | 11 / 14 / 3 | 0.12 |
+| none | 0.280 | 0.278 | 0 / 26 / 2 | n/a |
+| noop_deploy | 0.314 | 0.298 | 5 / 17 / 6 | 0.41 |
+| silent | 0.096 | 0.096 | 4 / 18 / 6 | 0.70 |
+
+- **Faster, not worse.** The mean quarantine falls from 1,440 to 1,172 events (−19%), with
+  4.3 early decisions per run. No scenario is significantly worse.
+- **Deployments.** 20 of 49 deployment promotions are decided early, and the mean wait for a
+  deployment promotion falls from 1,440 to 1,176 events (−18%). Recovery after the shift is faster
+  (2,640 vs 2,839 events), and MCC is slightly higher (not significant).
+- **Most early decisions are resumes** (464 of 486). They keep the champion, so they cannot teach
+  the model anything wrong.
+- **The cost to watch.** On the 20 held-out entities `noop_deploy` drops from 0.297 to 0.264
+  (4 / 10 / 6, p = 0.19): an early resume after a deployment closes a quarantine in which the
+  full decision would sometimes have replaced a model made stale by SMD's real drift. The 8
+  development entities show the opposite (+0.028), so the rule was not tuned to this held-out
+  result.
+- **Live**: 0 incidents learned with early stop on the Online Boutique campaign (section 10).
+- In the demo backend (`CADAL_EARLY_STOP`, on by default) a Deploy on Orders is promoted at the
+  50% look, after 720 of 1,440 events.

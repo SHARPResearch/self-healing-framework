@@ -122,6 +122,25 @@ def test_quarantine_progress_and_early_looks_are_reported(client):
     assert next(s for s in client.get("/api/services").json() if s["serviceId"] == SERVICE)["quarantine"] is None
 
 
+@pytest.fixture()
+def search_client():
+    # The stage service for the restart scenario (fleet.DEMO_SERVICES).
+    runtime.fleet = ServiceFleet([("service-f-search", "Search Service", "machine-3-10", 3000)])
+    with TestClient(app) as c:
+        yield c
+
+
+def test_restart_blip_is_resumed_early_and_nothing_is_learned(search_client):
+    warm(search_client)
+    info = search_client.post("/api/demo/service-f-search/restart").json()
+    assert info["kind"] == "restart" and info["change_event_id"]
+    decision = run_until_decision(search_client, {"resume", "promote", "hold", "ask"}, service="service-f-search")
+    ev = decision["evidence"]
+    assert (decision["verdict"], decision["action"]) == ("no_change", "resume")
+    assert ev["early"] and ev["quarantine_events"] < ev["quarantine_length"]
+    assert runtime.fleet.services["service-f-search"].manager.registry.production_version == 1
+
+
 def test_silent_change_asks_the_operator_and_the_answer_promotes(client):
     warm(client)
     client.post(f"/api/demo/{SERVICE}/silent_change")

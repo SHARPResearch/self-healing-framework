@@ -58,7 +58,10 @@ export const navGroups: NavGroup[] = [
   },
   {
     label: "Assistant",
-    items: [{ label: "Copilot", to: "/copilot", icon: Bot }],
+    items: [
+      { label: "Copilot", to: "/copilot", icon: Bot },
+      { label: "Post-mortems", to: "/post-mortems", icon: ScrollText },
+    ],
   },
   {
     label: "Administration",

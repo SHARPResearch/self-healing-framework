@@ -10,5 +10,161 @@
     "metadata": {
       "query": "Why is payment-svc experiencing high CPU and errors?"
     }
+  },
+  {
+    "query_id": "cf358de1-131d-4661-a715-0c919d4ffd33",
+    "timestamp": "2026-10-21T00:14:53.091405",
+    "metrics": {
+      "context_relevance": 0.6153846153846154,
+      "response_quality": 0.8,
+      "context_utilization": 0.7
+    },
+    "metadata": {
+      "query": "What caused the order service to experience high error rates and database timeouts?"
+    }
+  },
+  {
+    "query_id": "512c5381-426a-4fee-9ecc-0328c679df55",
+    "timestamp": "2026-10-21T21:32:23.962446",
+    "metrics": {
+      "context_relevance": 0.0,
+      "response_quality": 0.8,
+      "context_utilization": 0.7
+    },
+    "metadata": {
+      "query": "Root Cause Analysis"
+    }
+  },
+  {
+    "query_id": "4a088912-c672-4e59-acbc-3c6fa41ae87c",
+    "timestamp": "2026-10-21T21:33:51.792276",
+    "metrics": {
+      "context_relevance": 0.2,
+      "response_quality": 0.8,
+      "context_utilization": 0.7
+    },
+    "metadata": {
+      "query": "Why is the payment service experiencing high CPU and errors?"
+    }
+  },
+  {
+    "query_id": "b9f0f707-73e2-4b09-b165-4d0aaa9243f4",
+    "timestamp": "2026-10-21T21:39:34.946829",
+    "metrics": {
+      "context_relevance": 0.0,
+      "response_quality": 0.8,
+      "context_utilization": 0.7
+    },
+    "metadata": {
+      "query": "Root Cause Analysis"
+    }
+  },
+  {
+    "query_id": "137a32af-54ab-41b7-9425-2203fa8e466e",
+    "timestamp": "2026-10-21T21:49:18.396630",
+    "metrics": {
+      "context_relevance": 0.0,
+      "response_quality": 0.8,
+      "context_utilization": 0.7
+    },
+    "metadata": {
+      "query": "Root Cause Analysis"
+    }
+  },
+  {
+    "query_id": "5c0a14b1-c619-43c7-a3c9-59060c2b5f4c",
+    "timestamp": "2026-10-21T21:53:20.397647",
+    "metrics": {
+      "context_relevance": 0.0,
+      "response_quality": 0.8,
+      "context_utilization": 0.7
+    },
+    "metadata": {
+      "query": "Summarize Incident"
+    }
+  },
+  {
+    "query_id": "c318678d-fb05-4320-90db-3b3447d1b82a",
+    "timestamp": "2026-10-21T21:55:32.491466",
+    "metrics": {
+      "context_relevance": 0.0,
+      "response_quality": 0.8,
+      "context_utilization": 0.7
+    },
+    "metadata": {
+      "query": "Explain Alert"
+    }
+  },
+  {
+    "query_id": "71072d48-8bab-4ef7-8650-18449813b349",
+    "timestamp": "2026-10-21T22:12:29.005445",
+    "metrics": {
+      "context_relevance": 0.2,
+      "response_quality": 0.8,
+      "context_utilization": 0.7
+    },
+    "metadata": {
+      "query": "Why is the payment service experiencing high CPU and errors?"
+    }
+  },
+  {
+    "query_id": "70b40014-8d78-414a-b0a8-76db7c020afd",
+    "timestamp": "2026-10-21T22:15:30.860010",
+    "metrics": {
+      "context_relevance": 0.0,
+      "response_quality": 0.8,
+      "context_utilization": 0.7
+    },
+    "metadata": {
+      "query": "Root Cause Analysis"
+    }
+  },
+  {
+    "query_id": "93992a9d-d02f-4d21-8c8f-15c7a6007d47",
+    "timestamp": "2026-10-21T22:19:02.684940",
+    "metrics": {
+      "context_relevance": 0.0,
+      "response_quality": 0.8,
+      "context_utilization": 0.7
+    },
+    "metadata": {
+      "query": "Root Cause Analysis"
+    }
+  },
+  {
+    "query_id": "0fd5f955-5e90-4b50-9e16-0fe07bc49d4a",
+    "timestamp": "2026-10-21T22:22:03.194386",
+    "metrics": {
+      "context_relevance": 0.0,
+      "response_quality": 0.8,
+      "context_utilization": 0.7
+    },
+    "metadata": {
+      "query": "Explain Alert"
+    }
+  },
+  {
+    "query_id": "ef581be8-65b5-4945-a5b4-27e493bb1c70",
+    "timestamp": "2026-10-21T22:24:19.185413",
+    "metrics": {
+      "context_relevance": 0.0,
+      "response_quality": 0.8,
+      "context_utilization": 0.7
+    },
+    "metadata": {
+      "query": "Suggest Remediation"
+    }
+  },
+  {
+    "query_id": "ea7368d1-ff84-49fc-b55a-54367781a10d",
+    "timestamp": "2026-10-21T22:26:23.336455",
+    "metrics": {
+      "context_relevance": 0.0,
+      "response_quality": 0.8,
+      "context_utilization": 0.7
+    },
+    "metadata": {
+      "query": "Summarize Incident"
+    }
   }
 ]

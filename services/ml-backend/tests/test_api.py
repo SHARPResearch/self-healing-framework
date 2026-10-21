@@ -141,6 +141,27 @@ def test_restart_blip_is_resumed_early_and_nothing_is_learned(search_client):
     assert runtime.fleet.services["service-f-search"].manager.registry.production_version == 1
 
 
+@pytest.fixture()
+def inventory_client():
+    # The stage service for the silent scenario (fleet.DEMO_SILENT_CURSOR).
+    runtime.fleet = ServiceFleet([("service-c-inventory", "Inventory Service", "machine-1-2", 12000)])
+    with TestClient(app) as c:
+        yield c
+
+
+def test_staged_silent_change_reaches_the_operator_question_even_mid_quarantine(inventory_client):
+    sid = "service-c-inventory"
+    warm(inventory_client)
+    mgr = runtime.fleet.services[sid].manager
+    assert mgr.request_validity_check()                  # the service is busy with its own check
+    warm(inventory_client, 300)
+    inventory_client.post(f"/api/demo/{sid}/silent_change")
+    assert mgr.phase == "quarantine" and mgr.quarantine_progress()["seen"] == 0
+    decision = run_until_decision(inventory_client, {"ask", "hold", "promote", "resume"}, service=sid)
+    assert (decision["verdict"], decision["action"]) == ("ambiguous", "ask")
+    assert decision["evidence"]["quarantine_events"] == settings.demo_samples_per_day
+
+
 def test_silent_change_asks_the_operator_and_the_answer_promotes(client):
     warm(client)
     client.post(f"/api/demo/{SERVICE}/silent_change")

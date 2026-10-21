@@ -41,8 +41,8 @@ def make_fleet() -> ServiceFleet:
         return LiveFleet()
     return ServiceFleet()
 
-LIFECYCLE_TYPES = {"quarantine_opened", "change_observed", "lifecycle_decision", "operator_query",
-                   "query_answered", "query_expired"}
+LIFECYCLE_TYPES = {"quarantine_opened", "quarantine_look", "change_observed", "lifecycle_decision",
+                   "operator_query", "query_answered", "query_expired"}
 
 
 class Runtime:
@@ -235,6 +235,7 @@ class Runtime:
                 "severity": self.fleet.severity(rt), "version": res.version,
                 "phase": res.phase, "threshold": 0.5,
                 "trigger": getattr(rt.manager, "_q_trigger", None) if res.phase != "stable" else None,
+                "quarantine": rt.manager.quarantine_progress(),
             }))
         episode = self._alarms.setdefault(rt.service_id, AlarmLog()).update(
             res.step, bool(res.alarm), display)
@@ -319,6 +320,14 @@ class Runtime:
         if event == "quarantine_opened":
             self.log(sid, f"quarantine opened (trigger: {d.get('trigger')}), observing {d.get('length')} "
                      "events while the serving model keeps scoring", "info", {"trigger": d.get("trigger")})
+        elif event == "quarantine_look":
+            seen, length = d.get("seen"), d.get("length")
+            if d.get("conclusive"):
+                self.log(sid, f"early look at {seen} of {length} events: conclusive "
+                         f"({d.get('verdict')}), deciding now", "info", {"seen": seen, "length": length})
+            else:
+                self.log(sid, f"early look at {seen} of {length} events: not conclusive yet, "
+                         "quarantine continues", "info", {"seen": seen, "length": length})
         elif event == "change_observed":
             self.log(sid, f"change event {d.get('change_event_id')} reached the lifecycle", "info")
         elif event == "lifecycle_decision":

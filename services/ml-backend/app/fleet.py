@@ -119,7 +119,8 @@ class ServiceRuntime:
 
 def lifecycle_config() -> LifecycleConfig:
     base = LifecycleConfig(policy="cadal", threshold_method=settings.threshold_method,
-                           operator_queries=True, async_decisions=True)
+                           operator_queries=True, async_decisions=True,
+                           early_stop=settings.cadal_early_stop)
     demo = base.for_sampling(settings.demo_samples_per_day)
     return replace(demo, query_ttl=settings.query_ttl_events, query_budget=3)
 

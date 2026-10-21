@@ -145,6 +145,7 @@ class EarlyLookEvidence:
     tail_alarms: int                          # champion alarms over the tail slice (fit/calib/tail split)
     n_tail: int
     change_event_id: Optional[str] = None
+    n_tail_full: Optional[int] = None         # the tail the full-length decision would use
     rebaseline_tail_alarms: Optional[int] = None   # re-baselined champion on the same tail
     tail_out_of_support_rate: Optional[float] = None
     moving_floor: Optional[float] = None
@@ -179,15 +180,15 @@ def binom_bounds(k: int, n: int, alpha: float) -> tuple[float, float]:
 
 
 def early_attribute(ev: EarlyLookEvidence, cfg: AttributionConfig = AttributionConfig(),
-                    alpha: float = 0.005) -> Optional[Attribution]:
+                    alpha: float = 0.05) -> Optional[Attribution]:
     """
     Decide a quarantine before its full length, but only when the answer is already conclusive.
 
     A group-sequential test: at a few looks part-way through, each rule fires only if an exact
-    one-sided (1 - alpha) bound on the relevant alarm rate clears the same line the full decision
-    uses. Anything less certain returns None and the quarantine keeps collecting; the full-length
-    attribute() then decides exactly as before. Only the two outcomes that need no new model are
-    allowed early:
+    one-sided (1 - alpha) bound on the relevant alarm rate clears the line the full-length
+    decision would apply (for re-baselining, the line at the full tail size). Anything less
+    certain returns None and the quarantine keeps collecting; the full-length attribute() then
+    decides exactly as before. Only the two outcomes that need no new model are allowed early:
 
       resume     the champion is quiet again on the recent half of the buffer: the shift did not
                  persist and nothing is learned.
@@ -226,7 +227,7 @@ def early_attribute(ev: EarlyLookEvidence, cfg: AttributionConfig = AttributionC
         return None
     tail_lower, _ = binom_bounds(ev.tail_alarms, ev.n_tail, alpha)
     _, rebaseline_upper = binom_bounds(ev.rebaseline_tail_alarms, ev.n_tail, alpha)
-    rebaseline_line = _rebaseline_line(cfg, r0, ev.n_tail)
+    rebaseline_line = _rebaseline_line(cfg, r0, ev.n_tail_full or ev.n_tail)
     moving_line = _moving_line(cfg, ev.moving_floor)
     evidence.update({
         "champion_tail_alarm_lower": round(tail_lower, 4),

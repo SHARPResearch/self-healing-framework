@@ -177,4 +177,59 @@ export async function runScenario<
   });
 }
 
+// ─── Copilot & Post-Mortem API ─────────────────────────────────
+export interface CopilotQueryRequest {
+  query: string;
+  context?: Record<string, unknown>;
+}
+
+export interface CopilotSource {
+  id: number;
+  text: string;
+  metadata: Record<string, unknown>;
+  similarity: number;
+}
+
+export interface CopilotQueryResponse {
+  query_id: string;
+  response: string;
+  sources: CopilotSource[];
+  metrics: Record<string, number>;
+  metadata: Record<string, unknown>;
+}
+
+export interface PostMortemReport {
+  decision_id: string;
+  markdown_report: string;
+  generated_at: string;
+  generation_latency_sec: number;
+  status: string;
+}
+
+const getCopilotBase = () => import.meta.env.VITE_COPILOT_API_BASE ?? API_BASE;
+
+export async function postCopilotQuery(
+  payload: CopilotQueryRequest,
+): Promise<CopilotQueryResponse> {
+  const response = await fetch(`${getCopilotBase()}/api/chat/query`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw new Error(`Copilot API request failed (${response.status})`);
+  return response.json() as Promise<CopilotQueryResponse>;
+}
+
+export async function fetchPostMortems(): Promise<PostMortemReport[]> {
+  const response = await fetch(`${getCopilotBase()}/api/postmortem`);
+  if (!response.ok) throw new Error(`Post-mortems API request failed (${response.status})`);
+  return response.json() as Promise<PostMortemReport[]>;
+}
+
+export async function fetchPostMortem(decisionId: string): Promise<PostMortemReport> {
+  const response = await fetch(`${getCopilotBase()}/api/postmortem/${encodeURIComponent(decisionId)}`);
+  if (!response.ok) throw new Error(`Post-mortem detail API request failed (${response.status})`);
+  return response.json() as Promise<PostMortemReport>;
+}
+
 export const API_URL = API_BASE;

@@ -1,6 +1,5 @@
 # Environment
 env*
-.env
 
 # Python
 __pycache__/
@@ -28,9 +27,9 @@ mlflow-artifacts/
 .pytest_cache/
 
 # IDE
-.vscode/*
 !.vscode/extensions.json
 
 # OS
 .DS_Store
 Thumbs.db
+config.bat

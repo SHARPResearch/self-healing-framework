@@ -49,6 +49,20 @@ class Settings:
     OPEN_DOCS: bool = os.getenv("OPEN_DOCS", "1").lower() not in ("0", "false", "no")
     DOCS_BASE_URL: str = os.getenv("DOCS_BASE_URL", "http://localhost:8000")
 
+    # ── Email notifications (SMTP) ─────────────────────────────────
+    # Sending account, e.g. aquacore.it@gmail.com with a Gmail App Password.
+    SMTP_HOST: str = os.getenv("SMTP_HOST", "smtp.gmail.com")
+    SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
+    SMTP_USER: str = os.getenv("SMTP_USER", "")
+    SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "")
+    SMTP_FROM: str = os.getenv("SMTP_FROM", os.getenv("SMTP_USER", ""))
+    SMTP_USE_TLS: bool = os.getenv("SMTP_USE_TLS", "1").lower() not in ("0", "false", "no")
+    # Master switch — a missing SMTP_PASSWORD forces dry-run (log only).
+    NOTIFY_ENABLED: bool = os.getenv("NOTIFY_ENABLED", "1").lower() not in ("0", "false", "no")
+    NOTIFY_RECIPIENT: str = os.getenv("NOTIFY_RECIPIENT", "dinildulneth123@gmail.com")
+    NOTIFY_ON_ANOMALY: bool = os.getenv("NOTIFY_ON_ANOMALY", "1").lower() not in ("0", "false", "no")
+    NOTIFY_ON_DECISION: bool = os.getenv("NOTIFY_ON_DECISION", "1").lower() not in ("0", "false", "no")
+
     def validate(self):
         """Fail-fast if any required secret is missing."""
         missing = []

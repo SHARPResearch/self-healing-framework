@@ -25,7 +25,7 @@ export type QueryAnswer = "new_normal" | "incident";
 
 export type QueryStatus = "open" | "answered" | "expired";
 
-export type InjectionKind = "deploy" | "silent_change" | "incident";
+export type InjectionKind = "deploy" | "silent_change" | "incident" | "restart";
 
 /** Real scenarios on the live cluster (POST /api/live/{service}/{action}). */
 export type LiveAction =

@@ -99,6 +99,17 @@ async def poll_and_decide():
                         "Pipeline: NO_MATCH recorded for %s (%s, kind=%s, saved=%s)",
                         anomaly.get("id"), sid, ctx.kind, saved,
                     )
+                    try:
+                        from app.notifications.emailer import notify_decision_made
+                        from app.decision.log import row_to_decision
+                        await notify_decision_made(
+                            row_to_decision({**no_match_row, "created_at": now}),
+                            anomaly,
+                        )
+                    except Exception:
+                        log.exception(
+                            "notify_decision_made failed for %s", anomaly.get("id")
+                        )
                     continue
 
                 # Build decision
@@ -122,6 +133,16 @@ async def poll_and_decide():
                         decision.severity.effective_severity,
                         decision.severity.label,
                     )
+                    try:
+                        from app.notifications.emailer import notify_decision_made
+                        from app.decision.log import row_to_decision
+                        await notify_decision_made(
+                            row_to_decision(decision.to_log_row()), anomaly
+                        )
+                    except Exception:
+                        log.exception(
+                            "notify_decision_made failed for %s", anomaly.get("id")
+                        )
                 else:
                     log.warning(
                         "Pipeline: failed to persist decision for %s",

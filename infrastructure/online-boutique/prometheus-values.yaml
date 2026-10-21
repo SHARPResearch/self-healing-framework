@@ -1,0 +1,50 @@
+# kube-prometheus-stack for the SHARP live demo on minikube (namespace: monitoring).
+# Only Prometheus, kube-state-metrics, node-exporter and the cAdvisor scrape are needed: SHARP
+# queries Prometheus directly, so Grafana and Alertmanager are off to save memory on a laptop.
+# The 5 s scrape matches ml-backend's LIVE_SCRAPE_SECONDS (accelerated lifecycle pacing).
+grafana:
+  enabled: false
+alertmanager:
+  enabled: false
+prometheus:
+  prometheusSpec:
+    scrapeInterval: 5s
+    evaluationInterval: 15s
+    retention: 6h
+    resources:
+      requests:
+        cpu: 200m
+        memory: 600Mi
+      limits:
+        memory: 1500Mi
+    # pick up ServiceMonitors/PodMonitors from every namespace, not just this release's
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+kubelet:
+  serviceMonitor:
+    interval: 5s
+    cAdvisorInterval: 5s
+kube-state-metrics:
+  resources:
+    requests:
+      cpu: 20m
+      memory: 64Mi
+prometheus-node-exporter:
+  resources:
+    requests:
+      cpu: 20m
+      memory: 32Mi
+prometheusOperator:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 100Mi
+# minikube does not expose these control plane components; skipping avoids permanently down targets
+kubeEtcd:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false

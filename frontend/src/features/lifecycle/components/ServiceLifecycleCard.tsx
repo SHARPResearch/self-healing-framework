@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 import { api } from "@/lib/mlBackend";
 import { SeverityBadge } from "@/shared/components/SeverityBadge";
 import { useLiveStore } from "@/shared/store/liveStore";
-import type { InjectionKind, LiveAction, LiveServiceHealth } from "../types";
+import type { InjectionKind, LiveAction, LiveServiceHealth, QuarantineProgress } from "../types";
 import { ACTION_LABEL, ACTION_TONE, PHASE_LABEL, PHASE_TONE, TONE_TEXT, VERDICT_LABEL } from "../lib/format";
 import { LiveScoreChart } from "./LiveScoreChart";
 import { Pill } from "./Pill";
@@ -79,12 +79,21 @@ export function ServiceLifecycleCard({ service }: { service: LiveServiceHealth }
 
         <LiveScoreChart points={points} stroke={SEVERITY_STROKE[service.status]} />
 
+        {service.phase !== "stable" && service.quarantine && service.quarantine.length > 0 && (
+          <QuarantineBar progress={service.quarantine} />
+        )}
+
         <p className="min-h-8 text-xs leading-4 text-muted-foreground">
           {lastDecision ? (
             <>
               <span className={cn("font-medium", TONE_TEXT[ACTION_TONE[lastDecision.action]])}>
                 {VERDICT_LABEL[lastDecision.verdict] ?? lastDecision.verdict} → {ACTION_LABEL[lastDecision.action]}
               </span>{" "}
+              {earlyPercent(lastDecision.evidence) !== null && (
+                <span className="font-medium text-foreground">
+                  decided early at {earlyPercent(lastDecision.evidence)}%{" "}
+                </span>
+              )}
               <span className="line-clamp-1" title={lastDecision.reason}>
                 {lastDecision.reason}
               </span>
@@ -113,5 +122,36 @@ export function ServiceLifecycleCard({ service }: { service: LiveServiceHealth }
         {note && <p className="text-[11px] text-muted-foreground">{note}</p>}
       </CardContent>
     </Card>
+  );
+}
+
+/** Share of the quarantine CADAL waited before an early decision, or null for a full-length one. */
+function earlyPercent(evidence: Record<string, unknown>): number | null {
+  const seen = Number(evidence.quarantine_events);
+  const length = Number(evidence.quarantine_length);
+  if (!evidence.early || !seen || !length) return null;
+  return Math.round((100 * seen) / length);
+}
+
+function QuarantineBar({ progress }: { progress: QuarantineProgress }) {
+  const pct = Math.min(100, (100 * progress.seen) / progress.length);
+  return (
+    <div className="space-y-1" title="Events collected in quarantine; ticks mark CADAL's early looks">
+      <div className="relative h-1.5 overflow-hidden rounded-full bg-muted">
+        <div className="h-full bg-foreground/70 transition-[width]" style={{ width: `${pct}%` }} />
+        {progress.looks.map((look) => (
+          <span
+            key={look}
+            className="absolute top-0 h-full w-px bg-background"
+            style={{ left: `${(100 * look) / progress.length}%` }}
+          />
+        ))}
+      </div>
+      <p className="font-mono text-[10px] text-muted-foreground">
+        quarantine {progress.seen} / {progress.length} events
+        {progress.looks.length > 0 &&
+          ` · early looks at ${progress.looks.map((l) => Math.round((100 * l) / progress.length)).join("%, ")}%`}
+      </p>
+    </div>
   );
 }

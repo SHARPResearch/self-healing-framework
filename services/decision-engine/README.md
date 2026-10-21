@@ -1,7 +1,3 @@
-Here's the full replacement. Copy the whole thing into services/decision-engine/README.md.
-
-markdown
-
 # Decision Engine — Component 2
 
 Context-aware, dependency-driven decision engine for the Self-Healing

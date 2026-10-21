@@ -107,6 +107,21 @@ def test_deploy_is_learned_and_can_be_rolled_back(client):
     assert transitions[-1]["transition"] == "rollback"
 
 
+def test_quarantine_progress_and_early_looks_are_reported(client):
+    warm(client)
+    client.post(f"/api/demo/{SERVICE}/deploy")
+    step(client)
+    svc = next(s for s in client.get("/api/services").json() if s["serviceId"] == SERVICE)
+    length = settings.demo_samples_per_day
+    assert svc["quarantine"] == {"seen": svc["quarantine"]["seen"], "length": length,
+                                 "looks": [length // 2, length * 3 // 4]}
+    decision = run_until_decision(client, {"promote", "hold", "ask"})
+    assert decision["evidence"]["quarantine_events"] <= decision["evidence"]["quarantine_length"] == length
+    looks = client.get("/api/logs", params={"q": f"early look service:{SERVICE}"}).json()["lines"]
+    assert any(f"early look at {length // 2} of {length} events" in ln["message"] for ln in looks)
+    assert next(s for s in client.get("/api/services").json() if s["serviceId"] == SERVICE)["quarantine"] is None
+
+
 def test_silent_change_asks_the_operator_and_the_answer_promotes(client):
     warm(client)
     client.post(f"/api/demo/{SERVICE}/silent_change")

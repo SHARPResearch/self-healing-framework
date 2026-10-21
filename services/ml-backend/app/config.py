@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     # Component 1 + 2 configuration (the final evaluated configuration, RESULTS_COMPONENT2.md)
     detector: str = "pca_s5"
     threshold_method: str = "pot"
+    # Sequential early stop: decide a quarantine at 50% or 75% of its length when the evidence is
+    # already conclusive (a quiet champion, or a deployment repaired by re-baselining).
+    cadal_early_stop: bool = True
 
     # Demo pacing. The lifecycle lengths are defined in "one day of samples"; here a day is
     # DEMO_SAMPLES_PER_DAY events and the replay plays REPLAY_EVENTS_PER_SEC events per service per

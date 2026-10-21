@@ -69,6 +69,55 @@ Demo injections (`POST /api/demo/{service}/{kind}`):
 | `silent_change` | Persistent level and spread change with no change event | `ambiguous` → **ask** the operator |
 | `incident` | Spike on ~1/8 of the metrics for half a lifecycle day (720 events, ~12 s; `DEMO_INCIDENT_EVENTS`) | `no_change` → **resume** (or `incident` → **hold**); not learned. Click **Check** if no drift check opens by itself. A day-long incident would be indistinguishable from a new normal and can be re-baselined away: a documented limitation |
 
+## Live mode: Online Boutique on Kubernetes
+
+Instead of replaying SMD, the backend can score Google's Online Boutique running on a local
+minikube cluster. Nothing is simulated there: telemetry comes from Prometheus, deployment events
+come from the Kubernetes API, and faults are real Chaos Mesh experiments.
+
+```powershell
+# 1. cluster: minikube profile "sharp" + kube-prometheus-stack + Chaos Mesh + Online Boutique v0.10.7,
+#    Prometheus forwarded to localhost:9090 (first run pulls about 3 GB of images)
+powershell -ExecutionPolicy Bypass -File infrastructure/online-boutique/up.ps1
+
+# 2. let it run ~1 hour untouched, so the warm-up window is clean steady traffic
+
+# 3. backend in live mode (same port, the frontend needs no change)
+cd services/ml-backend
+$env:TELEMETRY_MODE = "prometheus"; uv run uvicorn app.main:app --port 8002
+
+# 4. check
+uv run python scripts/demo_preflight.py          # detects live mode
+```
+
+What happens:
+- **Services.** Every Online Boutique Deployment except the load generator becomes a service. Its
+  id is the Deployment's `app` label.
+- **Features.** Each service has 7 features, defined in `app/prom.py`: cpu, memory, network rx/tx,
+  CPU throttling, restarts and ready ratio. They are scraped every 5 s.
+- **Warm-up.** Each service warms up on its own last `LIVE_WARMUP_MINUTES` of Prometheus history.
+- **Pacing.** One lifecycle "day" is `LIVE_LIFECYCLE_DAY_MINUTES` = 30 min, so a quarantine
+  closes 30 min after it opens.
+- **Rollouts.** A Kubernetes watcher turns real rollouts into deployment change events, one per
+  Deployment generation.
+- **Controls.** The Model lifecycle page shows real-action buttons instead of synthetic injections:
+  Rollout (a real rolling update), CPU (Chaos Mesh stress), Kill pod, and Check, plus Traffic x3 and
+  Baseline for the load generator. The same actions are available as `POST /api/live/{service}/{action}`.
+
+**Warm-up quality matters.** The warm-up window teaches each model what normal is.
+- If the window contains startup crash loops, a rollout or a chaos fault, that becomes "normal".
+  The threshold then rises (once to about 0.99), and services alarm at rest or miss real faults.
+- Start the backend only after an hour of untouched traffic.
+- Don't restart it within an hour of injecting anything.
+
+**Chaos campaign and evaluation** (real faults with ground truth):
+```powershell
+uv run python scripts/chaos_campaign.py --delay-minutes 0 --warmup-minutes 30   # ~2 h, 3 services x 4 faults
+cd ../../ml-pipeline
+uv run python evaluate_live_chaos.py outputs/live_chaos/<run>   # detection, time to detect, false alarms, learned incidents
+```
+Stop the cluster with `infrastructure/online-boutique/down.ps1`. Nothing is deleted.
+
 ## Configuration (env or `.env`)
 
 | Variable | Default |
@@ -80,6 +129,10 @@ Demo injections (`POST /api/demo/{service}/{kind}`):
 | `DEMO_SAMPLES_PER_DAY` | `1440` |
 | `REPLAY_WINDOW_ROWS` | `6000` (`0` replays the whole test split, real anomalies included) |
 | `QUERY_TTL_EVENTS` | `18000` (~5 min to answer a query on stage) |
+| `TELEMETRY_MODE` | `replay` (or `prometheus` for live Online Boutique) |
+| `PROMETHEUS_URL` / `K8S_NAMESPACE` | `http://localhost:9090` / `online-boutique` |
+| `LIVE_SCRAPE_SECONDS` / `LIVE_LIFECYCLE_DAY_MINUTES` | `5` / `30` |
+| `LIVE_WARMUP_MINUTES` / `LIVE_MIN_WARMUP_MINUTES` | `60` / `10` |
 | `START_REPLAY` / `USE_BACKING_SERVICES` | `true` / `true` (tests set both false) |
 
 ## REST API (`/api`)

@@ -33,13 +33,21 @@ logger = logging.getLogger(__name__)
 
 TICK_S = 0.05
 
+
+def make_fleet() -> ServiceFleet:
+    """The fleet for the configured telemetry source (replay unless TELEMETRY_MODE=prometheus)."""
+    if settings.telemetry_mode == "prometheus":
+        from app.live import LiveFleet
+        return LiveFleet()
+    return ServiceFleet()
+
 LIFECYCLE_TYPES = {"quarantine_opened", "change_observed", "lifecycle_decision", "operator_query",
                    "query_answered", "query_expired"}
 
 
 class Runtime:
     def __init__(self, fleet: Optional[ServiceFleet] = None):
-        self.fleet = fleet or ServiceFleet()
+        self.fleet = fleet or make_fleet()
         self.store: MemoryStore = MemoryStore()
         self.bus = Bus()
         self.events_per_sec = settings.replay_events_per_sec
@@ -52,6 +60,21 @@ class Runtime:
         self.hub = LogHub(http_access=settings.log_http_access)
         self.hub.install()                          # catch uvicorn's own startup lines too
         self._alarms: dict[str, AlarmLog] = {}
+        self.changes = None                         # live: Kubernetes deployment watcher fan-out
+        self.actions = None                         # live: real scenarios (rollout, chaos)
+
+    @property
+    def live(self) -> bool:
+        return getattr(self.fleet, "telemetry", None) is not None
+
+    @property
+    def push_every(self) -> int:
+        # a live scrape is already 5 s apart: push and persist every one of them
+        return 1 if self.live else settings.score_push_every
+
+    @property
+    def persist_every(self) -> int:
+        return 1 if self.live else settings.persist_every
 
     # -- lifecycle ---------------------------------------------------------------------------------
     async def start(self, backing_services: bool = True, replay: bool = True) -> None:
@@ -64,8 +87,11 @@ class Runtime:
         await self.drain_all()                      # warm-up versions and transitions
         if backing_services and settings.follow_container_logs:
             self.hub.follow_containers(settings.log_containers, await self.store.latest_log_times())
+        if self.live and backing_services:          # tests run live mode without a cluster
+            self._start_live_integrations()
         if replay:
-            self._task = asyncio.create_task(self._loop(), name="replay")
+            loop = self._live_loop() if self.live else self._loop()
+            self._task = asyncio.create_task(loop, name="live" if self.live else "replay")
 
     async def stop(self) -> None:
         if self._task:
@@ -74,6 +100,8 @@ class Runtime:
                 await self._task
             except asyncio.CancelledError:
                 pass
+        if self.changes is not None:
+            self.changes.stop()
         self.hub.stop()
         await self.flush_logs()
         await self.flush_rows()
@@ -105,32 +133,112 @@ class Runtime:
         now = datetime.now(timezone.utc)
         for rt in self.fleet.services.values():
             x, res, display = self.fleet.process(rt)
-            if res.step % settings.persist_every == 0 or res.alarm:
-                self._pending_rows.append({
-                    "time": now, "service_id": rt.service_id, "anomaly_score": display,
-                    "severity": self.fleet.severity(rt), "drift_detected": res.phase != "stable",
-                    "features": self.fleet.snapshot_features(x), "alarm": bool(res.alarm),
-                    "threshold": 0.5, "model_version": res.version, "phase": res.phase,
-                })
-            if res.step % settings.score_push_every == 0:
-                await self.bus.publish(envelope("anomaly_score", rt.service_id, {
-                    "step": res.step, "score": round(display, 4), "alarm": bool(res.alarm),
-                    "severity": self.fleet.severity(rt), "version": res.version,
-                    "phase": res.phase, "threshold": 0.5,
-                    "trigger": getattr(rt.manager, "_q_trigger", None) if res.phase != "stable" else None,
-                }))
-            episode = self._alarms.setdefault(rt.service_id, AlarmLog()).update(
-                res.step, bool(res.alarm), display)
-            if episode:
-                kind, attrs = episode
-                if kind == "raised":
-                    self.log(rt.service_id, f"alarm raised: sustained since step {attrs['since_step']} "
-                             f"(peak score {attrs['score']}, model v{res.version})", "warn", attrs)
-                else:
-                    self.log(rt.service_id, f"alarm cleared: steps {attrs['from_step']} to {attrs['to_step']}, "
-                             f"peak score {attrs['peak']}, {attrs['alarming_events']} alarming events",
-                             "info", attrs)
-            await self.drain(rt)
+            await self._after_step(rt, x, res, display, now)
+
+    # -- live mode ---------------------------------------------------------------------------------
+    def _start_live_integrations(self) -> None:
+        from app.live import ChangeFanOut
+        from app.live_actions import LiveActions
+        try:
+            self.changes = ChangeFanOut(settings.k8s_namespace)
+            self.changes.start()
+            logger.info("live: watching Deployments in %s for rollouts", settings.k8s_namespace)
+        except Exception as exc:  # noqa: BLE001 - scoring still works without change events
+            logger.warning("live: Kubernetes watcher unavailable (%s); no deployment events", exc)
+            self.changes = None
+        try:
+            self.actions = LiveActions(settings.k8s_namespace)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("live: Kubernetes API unavailable (%s); live actions disabled", exc)
+            self.actions = None
+
+    def route_changes(self) -> None:
+        if self.changes is None:
+            return
+        for evt in self.changes.route(self.fleet):
+            self.log(evt.service_id, f"Kubernetes rollout observed: {evt.kind} of {evt.service_id} "
+                     f"({', '.join(i for i in evt.detail.get('images', []) if i)})", "info",
+                     {"change_event_id": evt.event_id, "kind": evt.kind})
+
+    async def scrape_once(self) -> None:
+        """One live step: every service gets the row of the latest Prometheus scrape."""
+        names = list(self.fleet.services)
+        rows = await asyncio.to_thread(self.fleet.telemetry.latest, names)
+        self.tick += 1
+        now = datetime.now(timezone.utc)
+        for sid, x in rows.items():
+            rt = self.fleet.services.get(sid)
+            if rt is None:
+                continue
+            x, res, display = self.fleet.process_row(rt, x)
+            await self._after_step(rt, x, res, display, now)
+
+    async def _live_loop(self) -> None:
+        interval = settings.live_scrape_seconds
+        failures = 0
+        while True:
+            started = time.monotonic()
+            self.route_changes()
+            if not self.paused:
+                try:
+                    await self.scrape_once()
+                    if failures:
+                        logger.info("live: Prometheus scrapes recovered after %d failures", failures)
+                    failures = 0
+                except Exception as exc:  # noqa: BLE001 - keep serving; the next scrape may work
+                    failures += 1
+                    if failures in (1, 10) or failures % 60 == 0:
+                        logger.warning("live: scrape failed (%s), %d in a row", exc, failures)
+            await self.flush_logs()
+            await self.flush_rows()
+            await asyncio.sleep(max(0.0, interval - (time.monotonic() - started)))
+
+    async def live_action(self, service_id: str, action: str) -> dict:
+        if self.actions is None:
+            raise RuntimeError("live actions need the Kubernetes API (kubeconfig context 'sharp')")
+        try:
+            info = await asyncio.to_thread(self.actions.run, action, service_id)
+        except ValueError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - kubernetes ApiException and friends
+            reason = getattr(exc, "reason", None) or str(exc)
+            body = getattr(exc, "body", None)
+            raise RuntimeError(f"Kubernetes rejected {action} on {service_id}: {reason}"
+                               + (f" ({body[:300]})" if isinstance(body, str) else ""))
+        what = {"rollout": "rolling update started", "traffic_up": "load generator users x3",
+                "traffic_reset": "load generator users back to baseline"}.get(
+            action, f"Chaos Mesh {action.replace('_', ' ')} for {info.get('seconds', 0)} s")
+        self.log(service_id, f"live scenario: {what}", "info", {"action": action, **info})
+        await self.bus.publish(envelope("demo_injection", service_id, {"kind": action, **info}))
+        return info
+
+    async def _after_step(self, rt: ServiceRuntime, x: dict, res, display: float, now: datetime) -> None:
+        if res.step % self.persist_every == 0 or res.alarm:
+            self._pending_rows.append({
+                "time": now, "service_id": rt.service_id, "anomaly_score": display,
+                "severity": self.fleet.severity(rt), "drift_detected": res.phase != "stable",
+                "features": self.fleet.snapshot_features(x), "alarm": bool(res.alarm),
+                "threshold": 0.5, "model_version": res.version, "phase": res.phase,
+            })
+        if res.step % self.push_every == 0:
+            await self.bus.publish(envelope("anomaly_score", rt.service_id, {
+                "step": res.step, "score": round(display, 4), "alarm": bool(res.alarm),
+                "severity": self.fleet.severity(rt), "version": res.version,
+                "phase": res.phase, "threshold": 0.5,
+                "trigger": getattr(rt.manager, "_q_trigger", None) if res.phase != "stable" else None,
+            }))
+        episode = self._alarms.setdefault(rt.service_id, AlarmLog()).update(
+            res.step, bool(res.alarm), display)
+        if episode:
+            kind, attrs = episode
+            if kind == "raised":
+                self.log(rt.service_id, f"alarm raised: sustained since step {attrs['since_step']} "
+                         f"(peak score {attrs['score']}, model v{res.version})", "warn", attrs)
+            else:
+                self.log(rt.service_id, f"alarm cleared: steps {attrs['from_step']} to {attrs['to_step']}, "
+                         f"peak score {attrs['peak']}, {attrs['alarming_events']} alarming events",
+                         "info", attrs)
+        await self.drain(rt)
 
     # -- logs --------------------------------------------------------------------------------------
     def _log_warm_up(self) -> None:
@@ -229,7 +337,7 @@ class Runtime:
 
     async def reset(self) -> None:
         self.paused = True
-        self.fleet = ServiceFleet(self.fleet.specs, self.fleet.warm_up_rows)
+        self.fleet = self.fleet.fresh()
         await asyncio.to_thread(self.fleet.build)
         self._alarms.clear()
         self.hub.take()                              # lines of the old fleet that were not flushed yet

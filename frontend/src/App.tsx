@@ -51,6 +51,9 @@ function App() {
         <Route path="/services" element={<ServicesPage />} />
         <Route path="/dependency-graph" element={<DependencyGraphPage />} />
         <Route path="/anomalies" element={<AnomalyListPage />} />
+        <Route path="/decisions" element={<DecisionListPage />} />
+        <Route path="/rules" element={<RuleListPage />} />
+        <Route path="/rules/:id" element={<RuleDetailPage />} />
         <Route path="/incidents" element={<IncidentsPage />} />
         <Route path="/models" element={<ModelsPage />} />
         <Route path="/model-lifecycle" element={<ModelLifecyclePage />} />

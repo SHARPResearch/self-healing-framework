@@ -1,22 +1,30 @@
 import { useState } from "react";
-import { Bug, Loader2, Rocket, ScanSearch, Waves } from "lucide-react";
+import { Bug, Cpu, Loader2, Rocket, ScanSearch, Skull, Waves } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/mlBackend";
 import { SeverityBadge } from "@/shared/components/SeverityBadge";
 import { useLiveStore } from "@/shared/store/liveStore";
-import type { InjectionKind, LiveServiceHealth } from "../types";
+import type { InjectionKind, LiveAction, LiveServiceHealth } from "../types";
 import { ACTION_LABEL, ACTION_TONE, PHASE_LABEL, PHASE_TONE, TONE_TEXT, VERDICT_LABEL } from "../lib/format";
 import { LiveScoreChart } from "./LiveScoreChart";
 import { Pill } from "./Pill";
 
-type Action = InjectionKind | "check";
+type Action = InjectionKind | LiveAction | "check";
 
 const INJECTIONS: { kind: Action; label: string; icon: typeof Rocket; hint: string }[] = [
   { kind: "deploy", label: "Deploy", icon: Rocket, hint: "Persistent shift plus a deployment change event" },
   { kind: "silent_change", label: "Silent", icon: Waves, hint: "Persistent shift with no change event" },
   { kind: "incident", label: "Incident", icon: Bug, hint: "Transient spike on a few metrics" },
+  { kind: "check", label: "Check", icon: ScanSearch, hint: "Ask CADAL to validate this model now (operator triggered validity check)" },
+];
+
+// Live mode: real scenarios on the cluster instead of synthetic injections into the telemetry.
+const LIVE_ACTIONS: { kind: Action; label: string; icon: typeof Rocket; hint: string }[] = [
+  { kind: "rollout", label: "Rollout", icon: Rocket, hint: "Real rolling update of this Deployment; the Kubernetes watcher sends a deployment change event" },
+  { kind: "cpu_stress", label: "CPU", icon: Cpu, hint: "Chaos Mesh CPU stress on one pod for 3 minutes (an incident)" },
+  { kind: "pod_kill", label: "Kill pod", icon: Skull, hint: "Chaos Mesh kills one pod; Kubernetes restarts it" },
   { kind: "check", label: "Check", icon: ScanSearch, hint: "Ask CADAL to validate this model now (operator triggered validity check)" },
 ];
 
@@ -32,13 +40,15 @@ export function ServiceLifecycleCard({ service }: { service: LiveServiceHealth }
   const lastDecision = useLiveStore((s) => s.decisions.find((d) => d.serviceId === service.serviceId));
   const [pending, setPending] = useState<Action | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const live = useLiveStore((s) => s.health?.mode === "prometheus");
 
   const run = async (kind: Action) => {
     setPending(kind);
     setNote(null);
     try {
       if (kind === "check") await api.validityCheck(service.serviceId);
-      else await api.inject(service.serviceId, kind);
+      else if (live) await api.live(service.serviceId, kind as LiveAction);
+      else await api.inject(service.serviceId, kind as InjectionKind);
     } catch (e) {
       // 409: a check is already running, which is what the presenter wants anyway
       setNote(e instanceof Error ? e.message : String(e));
@@ -54,7 +64,7 @@ export function ServiceLifecycleCard({ service }: { service: LiveServiceHealth }
           <div className="min-w-0">
             <p className="truncate text-sm font-medium">{service.displayName}</p>
             <p className="truncate font-mono text-[11px] text-muted-foreground">
-              {service.smdEntity} · model v{service.modelVersion}
+              {service.source ?? service.smdEntity} · model v{service.modelVersion}
             </p>
           </div>
           <div className="flex shrink-0 flex-col items-end gap-1">
@@ -85,7 +95,7 @@ export function ServiceLifecycleCard({ service }: { service: LiveServiceHealth }
         </p>
 
         <div className="grid grid-cols-4 gap-1.5">
-          {INJECTIONS.map(({ kind, label, icon: Icon, hint }) => (
+          {(live ? LIVE_ACTIONS : INJECTIONS).map(({ kind, label, icon: Icon, hint }) => (
             <Button
               key={kind}
               size="sm"

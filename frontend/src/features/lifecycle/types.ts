@@ -27,6 +27,16 @@ export type QueryStatus = "open" | "answered" | "expired";
 
 export type InjectionKind = "deploy" | "silent_change" | "incident";
 
+/** Real scenarios on the live cluster (POST /api/live/{service}/{action}). */
+export type LiveAction =
+  | "rollout"
+  | "traffic_up"
+  | "traffic_reset"
+  | "cpu_stress"
+  | "memory_stress"
+  | "pod_kill"
+  | "network_delay";
+
 export interface LiveServiceHealth extends ServiceHealth {
   phase: LifecyclePhase;
   /** What opened the current quarantine; "scheduled" is a routine validity check, not drift. */
@@ -34,7 +44,9 @@ export interface LiveServiceHealth extends ServiceHealth {
   alarm: boolean;
   modelVersion: number;
   openQueries: number;
+  /** Where the service's telemetry comes from: an SMD machine (replay) or namespace/deployment (live). */
   smdEntity: string;
+  source?: string;
 }
 
 export interface LifecycleDecision {
@@ -107,6 +119,13 @@ export interface DashboardSummary {
 
 export interface BackendHealth {
   status: string;
+  /** "replay": SMD windows replayed; "prometheus": the live Online Boutique on Kubernetes. */
+  mode?: "replay" | "prometheus";
+  watcher?: boolean;
+  liveActions?: boolean;
+  namespace?: string | null;
+  scrapeSeconds?: number | null;
+  lifecycleDayMinutes?: number | null;
   store: "timescaledb" | "memory";
   db: boolean;
   redis: boolean;

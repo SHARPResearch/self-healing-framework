@@ -147,6 +147,10 @@ class ServiceFleet:
         self.cfg = lifecycle_config()
 
     # -- set-up ------------------------------------------------------------------------------------
+    def fresh(self) -> "ServiceFleet":
+        """A new, unbuilt fleet with the same configuration (what a demo reset rebuilds)."""
+        return ServiceFleet(self.specs, self.warm_up_rows)
+
     def build(self) -> None:
         for service_id, name, entity, *start in self.specs:
             self.services[service_id] = self._build_service(service_id, name, entity, *start)

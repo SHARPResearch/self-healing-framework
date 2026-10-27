@@ -20,6 +20,8 @@ from app.persistence.schemas import (
     POSTGRES_SCHEMA,
     TIMESCALE_SCHEMA,
     BATCH1_DDL,          # ★ NEW
+    BATCH2_DDL,          # ★ Hybrid Rule Management
+    BATCH3_DDL,          # ★ Runtime settings + notifications
 )
 
 log = logging.getLogger(__name__)
@@ -46,6 +48,22 @@ async def run_migrations():
             f"DDL block #{i}",
         )
         log.debug("  → %s", first_line)
+        await postgres_store.ensure_schema(ddl)
+
+    # ── 3b. Neon — Hybrid Rule Management (ownership cols + audit) ──
+    log.info(
+        "Running migrations on Neon (anomaly_db) — %d Hybrid Rule Management blocks",
+        len(BATCH2_DDL),
+    )
+    for ddl in BATCH2_DDL:
+        await postgres_store.ensure_schema(ddl)
+
+    # ── 3c. Neon — Runtime settings + notifications ─────────────
+    log.info(
+        "Running migrations on Neon (anomaly_db) — %d Runtime settings blocks",
+        len(BATCH3_DDL),
+    )
+    for ddl in BATCH3_DDL:
         await postgres_store.ensure_schema(ddl)
 
     # ── 4. Tiger Cloud ──────────────────────────────────────────

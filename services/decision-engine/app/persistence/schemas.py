@@ -161,6 +161,67 @@ CREATE INDEX IF NOT EXISTS idx_rules_enabled_priority
     ON rules (enabled, priority DESC);
 """
 
+# ─────────────────────────────────────────────────────────────────────
+# BATCH 2 — HYBRID RULE MANAGEMENT
+#   * ownership / lifecycle columns on `rules`
+#   * rule_audit — every write to a rule leaves a trace
+# All statements are idempotent (ADD COLUMN IF NOT EXISTS / CREATE ... IF
+# NOT EXISTS) so this is safe to run on every boot against an existing DB.
+# ─────────────────────────────────────────────────────────────────────
+RULES_HYBRID_DDL = """
+ALTER TABLE rules ADD COLUMN IF NOT EXISTS is_default     BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE rules ADD COLUMN IF NOT EXISTS is_template    BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE rules ADD COLUMN IF NOT EXISTS created_by     TEXT NOT NULL DEFAULT 'system';
+ALTER TABLE rules ADD COLUMN IF NOT EXISTS owner_org_id   TEXT;
+ALTER TABLE rules ADD COLUMN IF NOT EXISTS status         TEXT NOT NULL DEFAULT 'ACTIVE';
+ALTER TABLE rules ADD COLUMN IF NOT EXISTS parent_rule_id TEXT;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'rules_status_check'
+    ) THEN
+        ALTER TABLE rules ADD CONSTRAINT rules_status_check
+            CHECK (status IN ('DRAFT', 'ACTIVE', 'ARCHIVED'));
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'rules_parent_rule_fk'
+    ) THEN
+        ALTER TABLE rules ADD CONSTRAINT rules_parent_rule_fk
+            FOREIGN KEY (parent_rule_id) REFERENCES rules(id) ON DELETE SET NULL;
+    END IF;
+END
+$$;
+
+CREATE INDEX IF NOT EXISTS idx_rules_type
+    ON rules (is_template, is_default, status, priority DESC);
+
+-- Backfill: rules that predate the hybrid columns (created_by defaults to
+-- 'system' for every pre-existing row) are the shipped defaults and must be
+-- flagged as such. Without this they read as user rules and become deletable.
+-- Idempotent: re-running only touches rows still at is_default = FALSE, and
+-- never promotes a template.
+UPDATE rules
+   SET is_default = TRUE
+ WHERE created_by = 'system'
+   AND is_template = FALSE
+   AND is_default = FALSE;
+"""
+
+
+RULE_AUDIT_DDL = """
+CREATE TABLE IF NOT EXISTS rule_audit (
+    id         BIGSERIAL PRIMARY KEY,
+    rule_id    TEXT NOT NULL,
+    action     TEXT NOT NULL CHECK (action IN ('CREATE','UPDATE','DELETE','TOGGLE','RELOAD')),
+    actor      TEXT NOT NULL DEFAULT 'unknown',
+    diff       JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_rule_audit_rule
+    ON rule_audit (rule_id, created_at DESC);
+"""
+
 
 # ─────────────────────────────────────────────────────────────────────
 # BATCH 1 — Placeholders for later batches (schemas created now,
@@ -303,4 +364,80 @@ BATCH1_DDL = [
     ACTION_HISTORY_DDL,
     IN_FLIGHT_ACTIONS_DDL,
     INCIDENT_STATE_DDL,       
+]
+
+# ─────────────────────────────────────────────────────────────────────
+# BATCH 2 — Hybrid Rule Management. Runs AFTER Batch 1 so RULES_DDL has
+# already created the base table.
+# ─────────────────────────────────────────────────────────────────────
+BATCH2_DDL = [
+    RULES_HYBRID_DDL,
+    RULE_AUDIT_DDL,
+]
+
+
+# ─────────────────────────────────────────────────────────────────────
+# BATCH 3 — Runtime-editable engine settings + notification log
+#   * engine_settings — one row per tunable knob (key/value). Values can
+#     be changed at runtime by an end user; a DB row overrides the .env
+#     default. Missing rows → the coded/env default is used.
+#   * settings_audit — every settings write leaves a trace.
+#   * notifications   — every email the engine attempts to send is logged
+#     here (single source of truth for "what was the user told?").
+# All statements are idempotent so this is safe on every boot.
+# ─────────────────────────────────────────────────────────────────────
+SETTINGS_DDL = """
+CREATE TABLE IF NOT EXISTS engine_settings (
+    key         TEXT PRIMARY KEY,
+    value       JSONB NOT NULL,
+    updated_by  TEXT NOT NULL DEFAULT 'system',
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+"""
+
+
+SETTINGS_AUDIT_DDL = """
+CREATE TABLE IF NOT EXISTS settings_audit (
+    id         BIGSERIAL PRIMARY KEY,
+    key        TEXT NOT NULL,
+    old_value  JSONB,
+    new_value  JSONB,
+    actor      TEXT NOT NULL DEFAULT 'unknown',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_settings_audit_key
+    ON settings_audit (key, created_at DESC);
+"""
+
+
+NOTIFICATIONS_DDL = """
+CREATE TABLE IF NOT EXISTS notifications (
+    id            TEXT PRIMARY KEY,             -- NTF-{ulid-ish}
+    kind          TEXT NOT NULL,                -- ANOMALY_DETECTED / DECISION_MADE
+    anomaly_id    TEXT,
+    decision_id   TEXT,
+    service_id    TEXT,
+    recipient     TEXT NOT NULL,
+    sender        TEXT,
+    subject       TEXT NOT NULL,
+    body          TEXT,
+    status        TEXT NOT NULL DEFAULT 'PENDING',  -- PENDING / SENT / FAILED / SKIPPED
+    error         TEXT,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    sent_at       TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_notifications_created
+    ON notifications (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notifications_kind
+    ON notifications (kind, created_at DESC);
+"""
+
+
+# ─────────────────────────────────────────────────────────────────────
+# BATCH 3 — Runtime engine settings + notifications. Runs after Batch 2.
+# ─────────────────────────────────────────────────────────────────────
+BATCH3_DDL = [
+    SETTINGS_DDL,
+    SETTINGS_AUDIT_DDL,
+    NOTIFICATIONS_DDL,
 ]

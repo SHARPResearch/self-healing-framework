@@ -1,5 +1,7 @@
 // frontend/src/features/dependency-graph/DependencyGraphPage.tsx
 
+import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { AppShell } from "@/shared/layout/AppShell";
 import { DependencyGraphCanvas } from "./components/DependencyGraphCanvas";
 // import { graphEdges, graphNodes } from "./data/mockData";
@@ -15,6 +17,23 @@ const LEGEND: { severity: Severity; label: string }[] = [
 
 export function DependencyGraphPage() {
   const { nodes, edges } = useLiveGraph();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Deep-link entry: /dependency-graph?highlight=<service_id>. Consumed once
+  // into local state, then the param is cleared so a refresh doesn't re-center
+  // (the user's subsequent pan/zoom stays put).
+  const [highlightServiceId, setHighlightServiceId] = useState<string | null>(
+    null,
+  );
+  useEffect(() => {
+    const svc = searchParams.get("highlight");
+    if (svc) {
+      setHighlightServiceId(svc);
+      setSearchParams({}, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
   return (
     <AppShell pageTitle="Dependency graph">
       <div className="space-y-4">
@@ -44,7 +63,7 @@ export function DependencyGraphPage() {
           </div>
         </div>
 
-        <DependencyGraphCanvas />
+        <DependencyGraphCanvas highlightServiceId={highlightServiceId} />
 
         <p className="text-xs text-muted-foreground">
           Amber dashed edges point at a service that is currently critical, so

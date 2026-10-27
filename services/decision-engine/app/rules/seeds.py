@@ -1,7 +1,11 @@
 """
 Seed rules — inserted into Postgres on first boot (if table is empty).
 
-These are the initial 7 rules covering the 15-service topology:
+Two lists:
+
+SEED_RULES — the 8 default rules (`is_default = TRUE`). SHARP owns them:
+they can be toggled and customized (thresholds/priority/guardrails) but
+never deleted, and their action is frozen.
 
     1. restart_pod_high_cpu          domain, bff    cpu high, degraded
     2. scale_deployment_high_rps     bff, domain    saturation high, latency rising
@@ -10,8 +14,13 @@ These are the initial 7 rules covering the 15-service topology:
     5. increase_db_pool              data           pool near max, p95 high
     6. scale_kafka_consumers         data           queue depth high
     7. rollback_bad_deploy           any            anomaly <5min after deploy
+    8. restart_pod_crash_loop        any            repeated restarts, unhealthy
 
-Edit this file to change the starter set. Existing rules in DB are NOT
+SEED_TEMPLATES — 3 read-only starting points (`is_template = TRUE`).
+Never evaluated by the engine, never editable; the UI offers "Clone as
+Custom Rule" instead.
+
+Edit these files to change the starter set. Existing rules in DB are NOT
 overwritten — use POST /api/rules/reload to re-read from DB.
 """
 from app.rules.models import (
@@ -31,6 +40,7 @@ SEED_RULES: list[dict] = [
         "priority": 100,
         "description": "Restart pod when CPU is saturated and service is degraded/down",
         "enabled": True,
+        "is_default": True,
         "applies_to": {
             "layers": ["domain", "bff"],
             "services": ["*"],
@@ -71,6 +81,7 @@ SEED_RULES: list[dict] = [
         "priority": 95,
         "description": "Scale up when request saturation is high and latency is rising",
         "enabled": True,
+        "is_default": True,
         "applies_to": {
             "layers": ["bff", "domain"],
             "services": ["*"],
@@ -111,6 +122,7 @@ SEED_RULES: list[dict] = [
         "priority": 110,
         "description": "Open circuit breaker on edge when downstream error rate spikes",
         "enabled": True,
+        "is_default": True,
         "applies_to": {
             "layers": ["edge"],
             "services": ["api-gateway", "waf-proxy"],
@@ -149,6 +161,7 @@ SEED_RULES: list[dict] = [
         "priority": 90,
         "description": "Flush cache when hit rate collapses and memory is high",
         "enabled": True,
+        "is_default": True,
         "applies_to": {
             "layers": ["data"],
             "services": ["redis-cache"],
@@ -187,6 +200,7 @@ SEED_RULES: list[dict] = [
         "priority": 88,
         "description": "Increase DB connection pool when near saturation and p95 rising",
         "enabled": True,
+        "is_default": True,
         "applies_to": {
             "layers": ["data"],
             "services": ["postgres-primary"],
@@ -226,6 +240,7 @@ SEED_RULES: list[dict] = [
         "priority": 85,
         "description": "Scale Kafka consumers when broker queue depth is high",
         "enabled": True,
+        "is_default": True,
         "applies_to": {
             "layers": ["data"],
             "services": ["kafka-broker"],
@@ -265,6 +280,7 @@ SEED_RULES: list[dict] = [
         "priority": 130,
         "description": "Rollback when anomaly appears within 5 min of a fresh deploy",
         "enabled": True,
+        "is_default": True,
         "applies_to": {
             "layers": ["edge", "bff", "domain"],
             "services": ["*"],
@@ -293,5 +309,171 @@ SEED_RULES: list[dict] = [
             "idempotency_key": "rollback:{{ service.id }}:{{ anomaly.id }}",
         },
         "tags": ["deploy", "rollback"],
+    },
+
+    # ─────────────────────────────────────────────────────────────
+    # 8. RESTART_POD on crash-loop (repeated restarts in 5m)
+    # ─────────────────────────────────────────────────────────────
+    {
+        "id": "restart_pod_crash_loop",
+        "version": 1,
+        "priority": 120,
+        "description": "Restart pod when it keeps crash-looping and the service is unhealthy",
+        "enabled": True,
+        "is_default": True,
+        "applies_to": {
+            "layers": ["edge", "bff", "domain"],
+            "services": ["*"],
+            "exclude_services": ["postgres-primary", "kafka-broker"],
+        },
+        "when": {
+            "all": [
+                {"metric": "infra.restarts_last_5m", "op": ">=", "value": 3},
+                {"metric": "service.health",         "op": "in", "value": ["degraded", "down"]},
+                {"metric": "anomaly.score",          "op": ">=", "value": 0.55},
+            ]
+        },
+        "then": {
+            "action": "RESTART_POD",
+            "params": {
+                "namespace": "{{ service.namespace }}",
+                "selector":  "app={{ service.id }}",
+                "grace_period_seconds": 15,
+                "reason": "crash_loop_detected",
+            },
+            "base_confidence": 0.83,
+            "base_risk": "MEDIUM",
+        },
+        "guardrails": {
+            "cooldown_seconds": 240,
+            "max_per_hour": 3,
+            "idempotency_key": "crashloop:{{ service.id }}:{{ anomaly.id }}",
+        },
+        "tags": ["restart", "crash-loop"],
+    },
+]
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Template rules — read-only starting points offered by SHARP.
+#
+# They are NEVER evaluated by the engine (the registry skips
+# is_template = TRUE rows) and they cannot be edited or deleted through
+# the API. The UI shows them under the "Templates" tab and offers
+# "Clone as Custom Rule" only.
+# ─────────────────────────────────────────────────────────────────────
+SEED_TEMPLATES: list[dict] = [
+    {
+        "id": "template_scale_on_latency",
+        "version": 1,
+        "priority": 100,
+        "description": "Template: scale up a service when p95 latency blows past its SLO",
+        "enabled": True,
+        "is_default": False,
+        "is_template": True,
+        "created_by": "system",
+        "applies_to": {
+            "layers": ["edge", "bff", "domain"],
+            "services": ["*"],
+            "exclude_services": [],
+        },
+        "when": {
+            "all": [
+                {"metric": "app.latency_ms.p95", "op": ">=", "value": 750},
+                {"metric": "anomaly.score",     "op": ">=", "value": 0.55},
+            ]
+        },
+        "then": {
+            "action": "SCALE_UP",
+            "params": {
+                "namespace": "{{ service.namespace }}",
+                "deployment": "{{ service.id }}",
+                "replicas_delta": 2,
+                "max_replicas": 20,
+            },
+            "base_confidence": 0.75,
+            "base_risk": "LOW",
+        },
+        "guardrails": {
+            "cooldown_seconds": 300,
+            "max_per_hour": 4,
+            "idempotency_key": "scaleup-latency:{{ service.id }}",
+        },
+        "tags": ["template", "latency", "scale"],
+    },
+    {
+        "id": "template_restart_on_error_rate",
+        "version": 1,
+        "priority": 100,
+        "description": "Template: restart a service when its 5xx error rate spikes",
+        "enabled": True,
+        "is_default": False,
+        "is_template": True,
+        "created_by": "system",
+        "applies_to": {
+            "layers": ["edge", "bff", "domain"],
+            "services": ["*"],
+            "exclude_services": [],
+        },
+        "when": {
+            "all": [
+                {"metric": "app.error_rate",  "op": ">=", "value": 0.10},
+                {"metric": "anomaly.severity", "op": "in", "value": ["high"]},
+            ]
+        },
+        "then": {
+            "action": "RESTART_POD",
+            "params": {
+                "namespace": "{{ service.namespace }}",
+                "selector":  "app={{ service.id }}",
+                "grace_period_seconds": 30,
+            },
+            "base_confidence": 0.72,
+            "base_risk": "MEDIUM",
+        },
+        "guardrails": {
+            "cooldown_seconds": 420,
+            "max_per_hour": 2,
+            "idempotency_key": "restart-err:{{ service.id }}",
+        },
+        "tags": ["template", "errors", "restart"],
+    },
+    {
+        "id": "template_scale_consumers_on_lag",
+        "version": 1,
+        "priority": 100,
+        "description": "Template: add consumers when the queue is backing up",
+        "enabled": True,
+        "is_default": False,
+        "is_template": True,
+        "created_by": "system",
+        "applies_to": {
+            "layers": ["data"],
+            "services": ["kafka-broker"],
+            "exclude_services": [],
+        },
+        "when": {
+            "all": [
+                {"metric": "app.queue_depth", "op": ">=", "value": 50},
+                {"metric": "anomaly.score",   "op": ">=", "value": 0.50},
+            ]
+        },
+        "then": {
+            "action": "SCALE_CONSUMERS",
+            "params": {
+                "target": "kafka-broker",
+                "consumer_group_hint": "default",
+                "consumer_delta": 2,
+                "max_consumers": 30,
+            },
+            "base_confidence": 0.74,
+            "base_risk": "LOW",
+        },
+        "guardrails": {
+            "cooldown_seconds": 300,
+            "max_per_hour": 4,
+            "idempotency_key": "kafka-lag:{{ service.id }}",
+        },
+        "tags": ["template", "kafka", "queue"],
     },
 ]

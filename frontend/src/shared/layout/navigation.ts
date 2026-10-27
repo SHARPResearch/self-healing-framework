@@ -10,6 +10,8 @@ import {
   ListTree,
   Server,
   Settings,
+  Sliders,
+  Zap,
 } from "lucide-react";
 
 export interface NavItem {
@@ -29,8 +31,15 @@ export const navGroups: NavGroup[] = [
     items: [
       { label: "Dashboard", to: "/dashboard", icon: LayoutDashboard },
       { label: "Services", to: "/services", icon: Server },
+    ],
+  },
+  {
+    label: "Decision Engine",
+    items: [
       { label: "Dependency graph", to: "/dependency-graph", icon: GitBranch },
       { to: "/anomalies", label: "Anomalies", icon: AlertTriangle },
+      { label: "Decisions", to: "/decisions", icon: Zap },
+      { label: "Rules", to: "/rules", icon: Sliders },
     ],
   },
   {
@@ -40,7 +49,11 @@ export const navGroups: NavGroup[] = [
       { label: "Logs", to: "/logs", icon: ScrollText },
       { label: "Notifications", to: "/notifications", icon: Bell },
       { label: "Models", to: "/models", icon: ListTree },
-      { label: "Model lifecycle", to: "/model-lifecycle", icon: GitCompareArrows },
+      {
+        label: "Model lifecycle",
+        to: "/model-lifecycle",
+        icon: GitCompareArrows,
+      },
     ],
   },
   {

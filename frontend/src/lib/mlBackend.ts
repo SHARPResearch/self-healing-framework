@@ -2,6 +2,7 @@ import type {
   BackendHealth,
   DashboardSummary,
   InjectionKind,
+  LiveAction,
   LifecycleDecision,
   LiveServiceHealth,
   OperatorQuery,
@@ -82,6 +83,7 @@ export const api = {
   answer: (queryId: string, answer: QueryAnswer, operator: string) =>
     post<ActionResult>(`/queries/${queryId}/answer`, { answer, operator }),
   inject: (serviceId: string, kind: InjectionKind) => post<Record<string, unknown>>(`/demo/${serviceId}/${kind}`),
+  live: (serviceId: string, action: LiveAction) => post<Record<string, unknown>>(`/live/${serviceId}/${action}`),
   speed: (body: { eventsPerSec?: number; paused?: boolean }) =>
     post<{ eventsPerSec: number; paused: boolean }>("/demo/speed", body),
   reset: () => post<{ status: string }>("/demo/reset"),

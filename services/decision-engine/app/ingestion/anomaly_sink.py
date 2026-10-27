@@ -133,6 +133,17 @@ async def poll_anomalies(scheduler: AsyncIOScheduler):
                     incident_id, sid, current_health,
                 )
 
+                # Notify the operator that a new anomaly/incident opened.
+                try:
+                    from app.notifications.emailer import notify_anomaly_detected
+                    await notify_anomaly_detected({
+                        **a,
+                        "id": incident_id,
+                        "detected_at": detected_at.isoformat(),
+                    })
+                except Exception:
+                    log.exception("notify_anomaly_detected failed for %s", incident_id)
+
                 # Phase 1 — capture BEFORE window
                 await _capture_phase1(incident_id, sid, detected_at)
 

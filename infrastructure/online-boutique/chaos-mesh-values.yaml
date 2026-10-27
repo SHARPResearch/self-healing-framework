@@ -1,0 +1,19 @@
+# Chaos Mesh for the SHARP live demo on minikube (namespace: chaos-testing).
+# minikube's docker driver here runs containerd, so the daemon needs the containerd socket.
+chaosDaemon:
+  runtime: containerd
+  socketPath: /run/containerd/containerd.sock
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+controllerManager:
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 100Mi
+dashboard:
+  create: false
+dnsServer:
+  create: false

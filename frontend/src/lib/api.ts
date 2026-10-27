@@ -134,6 +134,374 @@ export interface ApiGraph {
   }>;
 }
 
+// ─── Decisions API ─────────────────────────────────────────────
+export interface ApiDecision {
+  decision_id: string;
+  anomaly_id: string;
+  service_id: string;
+  rule_id: string | null;
+  rule_version: number | null;
+  action: string;
+  action_params: Record<string, any>;
+  confidence: {
+    detection: number;
+    rule: number;
+    final: number;
+  };
+  severity: {
+    base_severity: number;
+    centrality: number;
+    blast_factor: number;
+    effective_severity: number;
+    normalized: number;
+    label: string;
+  };
+  base_risk: string;
+  blast_factor: number;
+  centrality: number;
+  selection: {
+    selected: any;
+    rejected: any[];
+    strategy: string;
+    reason: string;
+  };
+  context: {
+    service_health: string;
+    anomaly_kind: string;
+    upstream: string[];
+    downstream: string[];
+    blast_members: string[];
+  };
+  policy: {
+    outcome: string | null;
+    reason: string | null;
+  };
+  created_at: string;
+}
+
+export interface ApiDecisionsRecentResponse {
+  count: number;
+  decisions: ApiDecision[];
+}
+
+export async function fetchDecisions(limit = 50): Promise<ApiDecision[]> {
+  const res = await fetch(`${API_BASE}/api/decisions/recent?limit=${limit}`);
+  if (!res.ok) throw new Error(`Failed to fetch decisions: ${res.status}`);
+  const data: ApiDecisionsRecentResponse = await res.json();
+  return data.decisions;
+}
+
+export async function fetchDecision(decisionId: string): Promise<ApiDecision> {
+  const res = await fetch(`${API_BASE}/api/decisions/${decisionId}`);
+  if (!res.ok) throw new Error(`Failed to fetch decision: ${res.status}`);
+  return res.json();
+}
+
+// ─── Rules API (Hybrid Rule Management) ────────────────────────────
+export type RuleStatus = "DRAFT" | "ACTIVE" | "ARCHIVED";
+
+export interface ApiRuleConditionLeaf {
+  metric: string;
+  op: ">" | ">=" | "<" | "<=" | "==" | "!=" | "in" | "not_in" | "contains";
+  value: unknown;
+}
+export interface ApiRuleConditionAll {
+  all: ApiRuleCondition[];
+}
+export interface ApiRuleConditionAny {
+  any: ApiRuleCondition[];
+}
+export type ApiRuleCondition =
+  | ApiRuleConditionLeaf
+  | ApiRuleConditionAll
+  | ApiRuleConditionAny;
+
+export interface ApiRuleThen {
+  action: string;
+  params: Record<string, unknown>;
+  base_confidence: number;
+  base_risk: "LOW" | "MEDIUM" | "HIGH";
+}
+
+export interface ApiRuleGuardrails {
+  cooldown_seconds: number;
+  max_per_hour: number;
+  idempotency_key: string | null;
+}
+
+export interface ApiRuleAppliesTo {
+  layers: string[];
+  services: string[];
+  exclude_services: string[];
+}
+
+export interface ApiRule {
+  id: string;
+  version: number;
+  priority: number;
+  description: string;
+  enabled: boolean;
+  applies_to: ApiRuleAppliesTo;
+  when: ApiRuleCondition;
+  then: ApiRuleThen;
+  guardrails: ApiRuleGuardrails;
+  tags: string[];
+  is_default: boolean;
+  is_template: boolean;
+  created_by: string;
+  owner_org_id?: string | null;
+  status: RuleStatus;
+  parent_rule_id: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface ApiRulesResponse {
+  count: number;
+  rules: ApiRule[];
+}
+
+export interface ApiRuleAuditEntry {
+  id: number;
+  rule_id: string;
+  action: "CREATE" | "UPDATE" | "DELETE" | "TOGGLE" | "RELOAD";
+  actor: string;
+  diff: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface ApiRuleValidateResult {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+  rule: ApiRule | null;
+  match_preview?: {
+    total_anomalies: number;
+    eligible_anomalies?: number;
+    matched_count: number;
+    matched_anomaly_ids?: string[];
+    evaluation_errors?: number;
+    message: string;
+  };
+}
+
+export type RuleListFilter =
+  | "all"
+  | "default"
+  | "custom"
+  | "templates"
+  | "archived";
+
+async function ruleRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, init);
+  if (!response.ok) {
+    let detail = `API request failed (${response.status}): ${path}`;
+    try {
+      const body = await response.json();
+      if (typeof body?.detail === "string") detail = body.detail;
+      else if (body?.detail?.message)
+        detail = `${body.detail.message}: ${(body.detail.errors ?? []).join("; ")}`;
+    } catch {
+      /* keep the default message */
+    }
+    throw new Error(detail);
+  }
+  return response.json() as Promise<T>;
+}
+
+export async function fetchRules(filter: RuleListFilter = "all"): Promise<ApiRule[]> {
+  const qs = filter === "all" ? "" : `?type=${filter}`;
+  const data = await ruleRequest<ApiRulesResponse>(`/api/rules${qs}`);
+  return data.rules;
+}
+
+export async function fetchRule(ruleId: string): Promise<ApiRule> {
+  return ruleRequest<ApiRule>(`/api/rules/${encodeURIComponent(ruleId)}`);
+}
+
+export async function toggleRule(
+  ruleId: string,
+  enabled?: boolean,
+  actor = "admin",
+): Promise<{ ok: boolean; enabled: boolean; rule: ApiRule }> {
+  const qs = enabled === undefined ? "" : `?enabled=${enabled}`;
+  return ruleRequest(`/api/rules/${encodeURIComponent(ruleId)}/toggle${qs}`, {
+    method: "POST",
+    headers: { "X-Actor": actor },
+  });
+}
+
+export async function patchRule(
+  ruleId: string,
+  patch: Partial<{
+    priority: number;
+    when: ApiRuleCondition;
+    applies_to: ApiRuleAppliesTo;
+    guardrails: ApiRuleGuardrails;
+    enabled: boolean;
+    description: string;
+    status: RuleStatus;
+    tags: string[];
+  }>,
+  actor = "admin",
+): Promise<{ ok: boolean; changed: string[]; rule: ApiRule }> {
+  return ruleRequest(`/api/rules/${encodeURIComponent(ruleId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", "X-Actor": actor },
+    body: JSON.stringify(patch),
+  });
+}
+
+export async function createCustomRule(
+  payload: Partial<ApiRule> & {
+    id: string;
+    description: string;
+    when: ApiRuleCondition;
+    then: ApiRuleThen;
+  },
+  actor = "user",
+): Promise<{ ok: boolean; rule: ApiRule; warnings: string[] }> {
+  return ruleRequest(`/api/rules/custom`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Actor": actor },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteRule(ruleId: string, actor = "admin"): Promise<void> {
+  await ruleRequest(`/api/rules/${encodeURIComponent(ruleId)}`, {
+    method: "DELETE",
+    headers: { "X-Actor": actor },
+  });
+}
+
+export async function validateRule(
+  ruleId: string,
+  payload: Record<string, unknown>,
+  test = false,
+  actor = "user",
+): Promise<ApiRuleValidateResult> {
+  const qs = test ? "?test=true" : "";
+  return ruleRequest(`/api/rules/${encodeURIComponent(ruleId)}/validate${qs}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Actor": actor },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchRuleAudit(ruleId: string): Promise<ApiRuleAuditEntry[]> {
+  const data = await ruleRequest<{ rule_id: string; count: number; entries: ApiRuleAuditEntry[] }>(
+    `/api/rules/${encodeURIComponent(ruleId)}/audit`,
+  );
+  return data.entries;
+}
+
+export async function fetchRuleTemplates(): Promise<ApiRule[]> {
+  const data = await ruleRequest<ApiRulesResponse>(`/api/rules/templates`);
+  return data.rules;
+}
+
+// ─── Runtime settings API ──────────────────────────────────────────
+export type SettingType = "int" | "bool" | "str";
+export type SettingSource = "db" | "env" | "default";
+
+export interface ApiEngineSetting {
+  key: string;
+  value: number | boolean | string;
+  source: SettingSource;
+  type: SettingType;
+  default: number | boolean | string;
+  min: number | null;
+  max: number | null;
+  live: boolean;
+  premium: boolean;
+  group: string;
+  label: string;
+  help: string;
+}
+
+export interface ApiSettingsResponse {
+  count: number;
+  groups: string[];
+  settings: ApiEngineSetting[];
+}
+
+export interface ApiSettingsUpdateResult {
+  ok: boolean;
+  changed: string[];
+  requires_restart: string[];
+  settings: ApiEngineSetting[];
+}
+
+export interface ApiSettingsAuditEntry {
+  id: number;
+  key: string;
+  old_value: unknown;
+  new_value: unknown;
+  actor: string;
+  created_at: string;
+}
+
+export interface ApiNotificationEntry {
+  id: string;
+  kind: string;
+  anomaly_id: string | null;
+  decision_id: string | null;
+  service_id: string | null;
+  recipient: string;
+  sender: string | null;
+  subject: string;
+  status: "PENDING" | "SENT" | "FAILED" | "SKIPPED";
+  error: string | null;
+  created_at: string;
+  sent_at: string | null;
+}
+
+/** The single hardcoded premium owner until real auth lands. */
+export const PREMIUM_ACTOR = "dinildulneth123@gmail.com";
+
+export async function fetchSettings(): Promise<ApiSettingsResponse> {
+  return ruleRequest<ApiSettingsResponse>(`/api/settings`);
+}
+
+export async function updateSettings(
+  patch: Record<string, number | boolean | string>,
+  actor = PREMIUM_ACTOR,
+): Promise<ApiSettingsUpdateResult> {
+  return ruleRequest<ApiSettingsUpdateResult>(`/api/settings`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", "X-Actor": actor },
+    body: JSON.stringify(patch),
+  });
+}
+
+export async function reloadSettings(
+  actor = PREMIUM_ACTOR,
+): Promise<{ ok: boolean; loaded: number }> {
+  return ruleRequest(`/api/settings/reload`, {
+    method: "POST",
+    headers: { "X-Actor": actor },
+  });
+}
+
+export async function fetchSettingsAudit(
+  limit = 50,
+): Promise<ApiSettingsAuditEntry[]> {
+  const data = await ruleRequest<{ count: number; entries: ApiSettingsAuditEntry[] }>(
+    `/api/settings/audit?limit=${limit}`,
+  );
+  return data.entries;
+}
+
+export async function fetchNotifications(
+  limit = 50,
+): Promise<ApiNotificationEntry[]> {
+  const data = await ruleRequest<{ count: number; entries: ApiNotificationEntry[] }>(
+    `/api/settings/notifications?limit=${limit}`,
+  );
+  return data.entries;
+}
+
 // ─── API functions ─────────────────────────────────────────────────
 export async function fetchGraph(): Promise<ApiGraph> {
   return request<ApiGraph>("/api/graph/");

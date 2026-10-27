@@ -54,6 +54,21 @@ class Settings(BaseSettings):
                                       "Redis": "selfheal-demo-redis-1"}
     log_http_access: bool = False         # also log every uvicorn access line (very chatty)
 
+    # Telemetry source. "replay" (default) replays the SMD windows above; "prometheus" scores the
+    # live Online Boutique on Kubernetes (infrastructure/online-boutique/up.ps1), with real
+    # deployment events from the Kubernetes API and real faults from Chaos Mesh.
+    telemetry_mode: str = "replay"
+    prometheus_url: str = "http://localhost:9090"
+    k8s_namespace: str = "online-boutique"
+    live_scrape_seconds: float = 5.0
+    # Accelerated pacing: one lifecycle "day" of evidence is this many minutes of live data
+    # (30 min at a 5 s scrape = 360 samples), so a quarantine closes in 30 minutes, not a day.
+    live_lifecycle_day_minutes: float = 30.0
+    # Warm-up history pulled from Prometheus at start. Per-service null floors need two lifecycle
+    # days of it (60 min); below that the lifecycle runs without them (logged).
+    live_warmup_minutes: float = 60.0
+    live_min_warmup_minutes: float = 10.0
+
     # Set false in tests to skip the replay loop and backing services.
     start_replay: bool = True
     use_backing_services: bool = True

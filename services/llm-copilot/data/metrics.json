@@ -166,5 +166,197 @@
     "metadata": {
       "query": "Summarize Incident"
     }
+  },
+  {
+    "query_id": "827bd480-f1ed-45db-ad11-9576db728729",
+    "timestamp": "2026-10-22T14:12:38.176038",
+    "metrics": {
+      "context_relevance": 0.4444444444444444,
+      "response_quality": 0.8,
+      "context_utilization": 0.7
+    },
+    "metadata": {
+      "query": "Why did the order service experience high error rates?"
+    }
+  },
+  {
+    "query_id": "45a86b50-4ab3-4581-9174-6bc679f27ff7",
+    "timestamp": "2026-10-22T14:16:42.869231",
+    "metrics": {
+      "context_relevance": 0.0,
+      "response_quality": 0.8,
+      "context_utilization": 0.7
+    },
+    "metadata": {
+      "query": "Root Cause Analysis"
+    }
+  },
+  {
+    "query_id": "5db536b7-69c6-4675-acd1-326639331629",
+    "timestamp": "2026-10-22T14:20:19.236725",
+    "metrics": {
+      "context_relevance": 0.0,
+      "response_quality": 0.8,
+      "context_utilization": 0.7
+    },
+    "metadata": {
+      "query": "Explain Alert"
+    }
+  },
+  {
+    "query_id": "5d94efee-b5a9-45c6-9106-8e429f6df6f8",
+    "timestamp": "2026-10-22T14:23:53.926869",
+    "metrics": {
+      "context_relevance": 0.0,
+      "response_quality": 0.8,
+      "context_utilization": 0.7
+    },
+    "metadata": {
+      "query": "Suggest Remediation"
+    }
+  },
+  {
+    "query_id": "54fd01ab-04e7-4357-b94d-772fd1f8b28c",
+    "timestamp": "2026-10-22T14:27:36.566461",
+    "metrics": {
+      "context_relevance": 0.0,
+      "response_quality": 0.8,
+      "context_utilization": 0.7
+    },
+    "metadata": {
+      "query": "Summarize Incident"
+    }
+  },
+  {
+    "query_id": "d3e270b2-a4d3-474e-bcc2-df664b7318b3",
+    "timestamp": "2026-10-22T14:51:39.343969",
+    "metrics": {
+      "context_relevance": 0.4444444444444444,
+      "response_quality": 0.8,
+      "context_utilization": 0.7
+    },
+    "metadata": {
+      "query": "Why did the order service experience high error rates?"
+    }
+  },
+  {
+    "query_id": "6f5fb96e-1336-4530-8d68-1b5a1104258d",
+    "timestamp": "2026-10-22T14:53:01.476991",
+    "metrics": {
+      "context_relevance": 0.0,
+      "response_quality": 0.8,
+      "context_utilization": 0.7
+    },
+    "metadata": {
+      "query": "Root Cause Analysis"
+    }
+  },
+  {
+    "query_id": "7edcb078-962c-4d1c-be21-1429ca983616",
+    "timestamp": "2026-10-22T14:54:34.320493",
+    "metrics": {
+      "context_relevance": 0.0,
+      "response_quality": 0.8,
+      "context_utilization": 0.7
+    },
+    "metadata": {
+      "query": "Explain Alert"
+    }
+  },
+  {
+    "query_id": "d60990fb-afc5-4a3d-886c-305b2515a309",
+    "timestamp": "2026-10-22T14:56:06.755916",
+    "metrics": {
+      "context_relevance": 0.0,
+      "response_quality": 0.8,
+      "context_utilization": 0.7
+    },
+    "metadata": {
+      "query": "Suggest Remediation"
+    }
+  },
+  {
+    "query_id": "34effbc3-8526-4a9f-921b-daa6b8c4b386",
+    "timestamp": "2026-10-22T15:00:11.687426",
+    "metrics": {
+      "context_relevance": 0.0,
+      "response_quality": 0.8,
+      "context_utilization": 0.7
+    },
+    "metadata": {
+      "query": "Summarize Incident"
+    }
+  },
+  {
+    "query_id": "fffdc051-3429-48db-a3b5-35b6418f5dbc",
+    "timestamp": "2026-10-22T15:12:39.597304",
+    "metrics": {
+      "context_relevance": 0.4444444444444444,
+      "response_quality": 0.8,
+      "context_utilization": 0.7
+    },
+    "metadata": {
+      "query": "Why did the order service experience high error rate"
+    }
+  },
+  {
+    "query_id": "9e801c0f-1237-4483-a59b-e6d8ae9ed2d9",
+    "timestamp": "2026-10-22T15:14:25.531605",
+    "metrics": {
+      "context_relevance": 0.0,
+      "response_quality": 0.8,
+      "context_utilization": 0.7
+    },
+    "metadata": {
+      "query": "Root Cause Analysis"
+    }
+  },
+  {
+    "query_id": "668ec452-f0a9-4047-86a8-19d534606fb5",
+    "timestamp": "2026-10-22T15:20:52.102236",
+    "metrics": {
+      "context_relevance": 0.0,
+      "response_quality": 0.8,
+      "context_utilization": 0.7
+    },
+    "metadata": {
+      "query": "Explain Alert"
+    }
+  },
+  {
+    "query_id": "644e4622-7dcd-4274-a305-46e11782f0a1",
+    "timestamp": "2026-10-22T16:01:28.793864",
+    "metrics": {
+      "context_relevance": 0.0,
+      "response_quality": 0.8,
+      "context_utilization": 0.7
+    },
+    "metadata": {
+      "query": "Root Cause Analysis"
+    }
+  },
+  {
+    "query_id": "4fe7fdf2-691e-4795-afb5-3e7280ea2392",
+    "timestamp": "2026-10-22T16:39:01.419963",
+    "metrics": {
+      "context_relevance": 0.4444444444444444,
+      "response_quality": 0.8,
+      "context_utilization": 0.7
+    },
+    "metadata": {
+      "query": "Why did the order service experience high error rates?"
+    }
+  },
+  {
+    "query_id": "2c68607e-79c8-4208-a5cc-2cd0dcbe306a",
+    "timestamp": "2026-10-22T16:40:50.342395",
+    "metrics": {
+      "context_relevance": 0.0,
+      "response_quality": 0.8,
+      "context_utilization": 0.7
+    },
+    "metadata": {
+      "query": "Root Cause Analysis"
+    }
   }
 ]

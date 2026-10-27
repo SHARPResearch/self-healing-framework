@@ -55,6 +55,76 @@ This component does not operate in isolation. It integrates with **Component 2 (
 - uvicorn app.main:app --reload --port 8004
 - http://localhost:8004/docs
 
+## POST /api/security/mask
+
+{
+  "raw_data": {
+    "user": "admin@company.com",
+    "server_ip": "192.168.1.100",
+    "auth_token": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
+  }
+}
+
+## POST /api/webhooks/recovery?wait=true
+
+- Add Header: x-webhook-secret = test_secret_123
+{
+  "decision_id": "dec-2026-10-20-0042",
+  "timestamp": "2026-10-20T14:35:00Z",
+  "service": "order-svc",
+  "triggering_anomaly": {
+    "anomaly_score": 0.94,
+    "metric": "error_rate",
+    "deviation_magnitude": 7.5,
+    "detected_at": "2026-10-20T14:23:45Z"
+  },
+  "dependency_context": {
+    "root_cause_service": "database-svc",
+    "blast_radius": 3,
+    "risk_level": "HIGH",
+    "propagation_type": "upstream"
+  },
+  "rule_matched": "UPSTREAM_DATABASE_FAILOVER",
+  "validation_outcome": "AUTO_EXECUTE",
+  "confidence_score": 0.91,
+  "action_taken": {
+    "type": "restart_pod",
+    "target": "database-svc",
+    "parameters": {"graceful": true}
+  },
+  "execution_status": "SUCCESS",
+  "recovery_time_sec": 18.5,
+  "telemetry_snapshot_url": "/api/telemetry-history?decision_id=dec-2026-10-20-0042"
+}
+
+## POST /api/chat/ingest
+
+{
+  "service": "inventory-svc",
+  "metrics": {
+    "cpu_usage": {"value": 45, "avg": 30, "max": 55},
+    "memory_usage": {"value": 92, "avg": 60, "max": 95},
+    "error_rate": {"value": 12.5, "avg": 1.0},
+    "latency": {"p50": 150, "p95": 1200, "p99": 3500},
+    "db_pool_active": {"value": 98, "max": 100}
+  },
+  "logs": [
+    "2026-10-21 09:10:00 INFO inventory-svc started on 10.0.0.15:8080",
+    "2026-10-21 09:15:30 WARNING Memory usage exceeded 85% threshold, GC overhead increasing",
+    "2026-10-21 09:18:45 ERROR Failed to acquire database connection from pool for user admin@enterprise.com",
+    "2026-10-21 09:19:12 ERROR java.lang.OutOfMemoryError: Java heap space at com.inventory.cache.MemoryStore.put()",
+    "2026-10-21 09:20:00 CRITICAL Service inventory-svc unresponsive, health check failed from 192.168.10.5"
+  ],
+  "time_range": {
+    "start": "2026-10-21T09:00:00Z",
+    "end": "2026-10-21T09:30:00Z"
+  }
+}
+
+## For Frontend
+
+- Why did the order service experience high error rates?
+
 ## Project Structure
 ```text
 services/llm-copilot/
@@ -69,3 +139,32 @@ services/llm-copilot/
 ┣ requirements.txt
 ┣ Dockerfile
 ┗ README.md
+
+
+Backend & API (Python)
+FastAPI: The main web framework. Used because it is highly performant, supports asynchronous operations (crucial for AI agents), and auto-generates the Swagger UI documentation.
+Uvicorn: The ASGI server used to run FastAPI.
+Pydantic & Pydantic-Settings: Used for strict data validation (ensuring Component 2 payloads are perfectly formatted) and managing .env configuration.
+HTTPX: An async HTTP client used to communicate with Component 2 (Decision Engine) and fetch telemetry data.
+SQLAlchemy: The ORM used to connect to the SQLite/PostgreSQL database to persist post-mortem reports.
+Loguru: Used for clean, readable, and structured logging during agent execution.
+Tenacity: Used to add automatic retry logic when calling the LLM API in case of timeouts.
+AI, LLM & RAG (Artificial Intelligence)
+Ollama: The local runtime engine used to host and run the LLMs without needing expensive cloud APIs.
+Llama 3.2 (via Ollama): The Large Language Model used for generating post-mortem reports and answering chat queries.
+Nomic Embed Text (via Ollama): The embedding model used to convert text into vectors for the RAG pipeline.
+ChromaDB: The vector database used to store and retrieve telemetry chunks and past post-mortems based on semantic similarity.
+Sentence-Transformers: The underlying library used by ChromaDB to compute the vector embeddings locally.
+
+Frontend (React / TypeScript)
+React & TypeScript: The core UI library and language for type-safe frontend development.
+Vite: The lightning-fast build tool and development server.
+React Router DOM: Used for navigating between pages (Dashboard, Copilot, Post-Mortems).
+Tailwind CSS: Used for rapid, utility-first styling.
+Framer Motion: Used for smooth, professional animations (like the typing dots and chat bubbles).
+Lucide React: Used for the clean, modern icons in the UI.
+Shadcn/UI: The component library used for buttons, cards, and inputs.
+
+Databases & Storage
+ChromaDB (Vector DB): Stores the semantic embeddings of logs and metrics for the RAG retrieval.
+SQLite (Relational DB): Stores the final generated Markdown post-mortem reports and evaluation metrics locally.

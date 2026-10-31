@@ -70,6 +70,7 @@ VARIANTS = {
     "cadal_retrain_free": replace(BASE, policy="cadal", attribution=AttributionConfig(retrain_requires_change=False)),
     "cadal_hitl": replace(BASE, policy="cadal", operator_queries=True),
     "cadal_hitl_noisy": replace(BASE, policy="cadal", operator_queries=True),
+    "cadal_early": replace(BASE, policy="cadal", early_stop=True),
 }
 DETECTOR_VARIANTS = {
     "cadal_page_hinkley": replace(BASE, policy="cadal", detector="page_hinkley"),
@@ -140,7 +141,7 @@ RUN_FIELDS = [
     "post_drift_precision", "post_drift_recall", "post_drift_f1", "post_drift_mcc", "post_drift_fa_rate",
     "recovery_steps", "n_promote", "n_rollback", "n_hold", "n_resume", "n_versions",
     "latency_mean_ms", "latency_p50_ms", "latency_p99_ms", "transition_max_ms", "duration_s",
-    "n_queries", "n_answered_new_normal",
+    "n_queries", "n_answered_new_normal", "n_early", "mean_quarantine_events",
 ]
 
 
@@ -222,6 +223,8 @@ def run_one(entity_id, model, warm_state, calib, recent, null, rows, labels, inj
     drift_start = injections[0].start if injections else None
     metrics = stream_metrics(alarms, labels, drift_start, cfg.target_rate)
     actions = [d["action"] for d in mgr.decisions]
+    waited = [d["evidence"]["quarantine_events"] for d in mgr.decisions
+              if "quarantine_events" in d.get("evidence", {})]
     lat = np.array(latency)
     summary = {
         **{k: v for k, v in metrics.items() if k != "f1_curve"},
@@ -230,6 +233,8 @@ def run_one(entity_id, model, warm_state, calib, recent, null, rows, labels, inj
         "n_versions": len(mgr.registry.versions),
         "n_queries": operator.asked if operator else 0,
         "n_answered_new_normal": operator.said_new_normal if operator else 0,
+        "n_early": sum(bool(d.get("evidence", {}).get("early")) for d in mgr.decisions),
+        "mean_quarantine_events": round(float(np.mean(waited)), 1) if waited else None,
         "latency_mean_ms": round(float(lat.mean()), 4),
         "latency_p50_ms": round(float(np.percentile(lat, 50)), 4),
         "latency_p99_ms": round(float(np.percentile(lat, 99)), 4),

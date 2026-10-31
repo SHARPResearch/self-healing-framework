@@ -33,7 +33,8 @@ def live_samples_per_day() -> int:
 
 def live_lifecycle_config() -> LifecycleConfig:
     base = LifecycleConfig(policy="cadal", threshold_method=settings.threshold_method,
-                           operator_queries=True, async_decisions=True)
+                           operator_queries=True, async_decisions=True,
+                           early_stop=settings.cadal_early_stop)
     # for_sampling scales every length, query TTL included, to the live "day"
     return replace(base.for_sampling(live_samples_per_day()), query_budget=3)
 

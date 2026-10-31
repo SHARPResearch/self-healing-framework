@@ -149,3 +149,23 @@ def test_reset_is_logged_and_drops_the_old_fleets_lifecycle_lines(client):
     assert client.get("/api/logs", params={"q": "injection"}).json()["lines"] == []
     warm = client.get("/api/logs", params={"q": "warm-up complete service:service-test"}).json()["lines"]
     assert len(warm) == 1                              # the fresh fleet's, not the startup one
+
+
+def test_reset_during_a_step_does_not_kill_the_replay(client, monkeypatch):
+    # A step yields between services; a reset landing in that gap used to swap in a half-built
+    # fleet under the step, which raised inside the replay task and stopped the demo silently.
+    after_step = runtime._after_step
+
+    async def yielding_after_step(*args, **kwargs):
+        await asyncio.sleep(0)
+        await after_step(*args, **kwargs)
+
+    monkeypatch.setattr(runtime, "_after_step", yielding_after_step)
+
+    async def step_and_reset():
+        await asyncio.gather(runtime.step_all(), runtime.reset())
+
+    client.portal.call(step_and_reset)
+    tick = runtime.tick
+    client.portal.call(runtime.step_all)
+    assert runtime.tick == tick + 1 and not runtime.paused

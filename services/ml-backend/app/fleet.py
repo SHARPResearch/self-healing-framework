@@ -48,6 +48,9 @@ DEMO_SERVICES = [
     ("service-e-payments", "Payments Service", "machine-1-2", 15000),
     ("service-f-search", "Search Service", "machine-3-10", 3000),
 ]
+# Silent on these services continues the replay from this row offset of the window (see
+# ServiceFleet.inject): a stretch where the shift reliably reaches the operator question.
+DEMO_SILENT_CURSOR = {"service-c-inventory": 2500}
 CANONICAL = ("cpu_rate", "memory_used", "network_rx", "network_tx", "disk_io_read", "disk_io_write")
 
 
@@ -119,7 +122,8 @@ class ServiceRuntime:
 
 def lifecycle_config() -> LifecycleConfig:
     base = LifecycleConfig(policy="cadal", threshold_method=settings.threshold_method,
-                           operator_queries=True, async_decisions=True)
+                           operator_queries=True, async_decisions=True,
+                           early_stop=settings.cadal_early_stop)
     demo = base.for_sampling(settings.demo_samples_per_day)
     return replace(demo, query_ttl=settings.query_ttl_events, query_budget=3)
 
@@ -189,7 +193,7 @@ class ServiceFleet:
                     x[f] = rt.medians[f] + (x[f] - rt.medians[f]) * inj.scales[k] + inj.deltas[k]
                 else:
                     x[f] = x[f] + inj.deltas[k]
-                if inj.kind == "incident":
+                if inj.kind in ("incident", "restart"):
                     x[f] += rt.rng.gauss(0, 0.08)
         return x
 
@@ -214,11 +218,25 @@ class ServiceFleet:
             rt.changes.push(event)
             return {"kind": kind, "change_event_id": event.event_id, "features": list(inj.features)}
         if kind == "silent_change":
+            # Whether an unexplained shift can be learned depends on the stretch of real data it
+            # lands on: where the server's own data is unsettled, a challenger fitted on half a
+            # day fails the learnability test and CADAL (correctly) holds. On stage the outcome
+            # should not depend on when the presenter clicks, so the demo continues this service's
+            # replay from a stretch where the shift was verified to reach the operator question.
+            rng = rt.rng
+            if service_id in DEMO_SILENT_CURSOR:
+                rt.cursor = seed = DEMO_SILENT_CURSOR[service_id]
+                rng = random.Random(seed)       # same metrics and scales on every click
             inj = make_scenario("silent", rt.test_df, service_id, seed=seed, starts=(0.0,),
                                 feature_fraction=0.35)[0]
-            scales = tuple(round(rt.rng.uniform(2.5, 3.5), 3) for _ in inj.features)
+            scales = tuple(round(rng.uniform(2.5, 3.5), 3) for _ in inj.features)
             deltas = tuple(round(d * 0.5, 4) for d in inj.deltas)
             rt.injections.append(Injection("silent_change", inj.features, deltas, scales))
+            if service_id in DEMO_SILENT_CURSOR:
+                # Start the evidence window at the shift itself instead of whenever the drift
+                # detector notices it (seconds later, but a varying number of events): the
+                # quarantine then always sees the same buffer and reaches the same verdict.
+                rt.manager.request_validity_check("demo", restart=True)
             return {"kind": kind, "features": list(inj.features)}
         if kind == "incident":
             varying = [c for c in rt.test_df.columns if float(rt.test_df[c].std()) > 1e-6]
@@ -228,6 +246,20 @@ class ServiceFleet:
             rt.injections.append(Injection("incident", feats, tuple(0.45 for _ in feats),
                                            until_step=step + length))
             return {"kind": kind, "features": list(feats), "events": length}
+        if kind == "restart":
+            # A rollout restart: a deployment event, a short disturbance, then the old normal again.
+            # The change event opens a quarantine at once; once the blip is over, the early look
+            # finds the champion quiet and resumes without waiting the full quarantine.
+            varying = [c for c in rt.test_df.columns if float(rt.test_df[c].std()) > 1e-6]
+            feats = tuple(rt.rng.sample(varying, max(2, len(varying) // 8)))
+            length = settings.demo_restart_events
+            rt.injections.append(Injection("restart", feats, tuple(0.45 for _ in feats),
+                                           until_step=step + length))
+            event = ChangeEvent(service_id, "deployment", step=step,
+                                detail={"source": "demo", "restart": True, "features": list(feats)})
+            rt.changes.push(event)
+            return {"kind": kind, "change_event_id": event.event_id, "features": list(feats),
+                    "events": length}
         raise ValueError(f"unknown injection {kind!r}")
 
     # -- views -------------------------------------------------------------------------------------

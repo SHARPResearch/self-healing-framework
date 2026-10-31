@@ -1,6 +1,5 @@
 # Environment
 env*
-.env
 
 # Python
 __pycache__/
@@ -28,7 +27,6 @@ mlflow-artifacts/
 .pytest_cache/
 
 # IDE
-.vscode/*
 !.vscode/extensions.json
 
 # OS
@@ -39,3 +37,4 @@ Thumbs.db
 .claude/
 CLAUDE.md
 **/CLAUDE.md
+config.bat

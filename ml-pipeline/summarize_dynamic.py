@@ -95,6 +95,9 @@ def ops_table(runs: pd.DataFrame) -> pd.DataFrame:
         "promotions_per_run": g["n_promote"].mean().round(2),
         "rollbacks_per_run": g["n_rollback"].mean().round(2),
         "holds_per_run": g["n_hold"].mean().round(2),
+        # events from quarantine open to decision; runs written before early stop lack it
+        **({"quarantine_events_mean": g["mean_quarantine_events"].mean().round(1),
+            "early_per_run": g["n_early"].mean().round(2)} if "n_early" in runs else {}),
     })
 
 

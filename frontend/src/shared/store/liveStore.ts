@@ -7,6 +7,7 @@ import type {
   LiveMessage,
   LiveServiceHealth,
   OperatorQuery,
+  QuarantineProgress,
   ScorePoint,
 } from "@/features/lifecycle/types";
 import type { ModelRun } from "@/features/models/types";
@@ -245,10 +246,21 @@ export const useLiveStore = create<LiveState>((set) => ({
               modelVersion: Number(d.version),
               phase: d.phase as LifecyclePhase,
               quarantineTrigger: trigger,
+              quarantine: (d.quarantine as QuarantineProgress | null | undefined) ?? null,
               driftDetected: isDrift(trigger, services[sid]?.openQueries ?? 0),
             });
             break;
           }
+          case "quarantine_look":
+            newFeed.push(
+              feed("quarantine", msg,
+                `${name(sid)}: early look at ${String(d.seen)} of ${String(d.length)} events`,
+                d.conclusive
+                  ? `Conclusive (${String(d.verdict).replace("_", " ")}): deciding now instead of waiting the full quarantine.`
+                  : "Not conclusive yet; the quarantine continues.",
+                d.conclusive ? "good" : "neutral"),
+            );
+            break;
           case "quarantine_opened": {
             const trigger = String(d.trigger);
             if (sid)

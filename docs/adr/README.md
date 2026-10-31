@@ -15,6 +15,7 @@ the lifecycle pages of `frontend/`, and the Online Boutique deployment in `infra
 | [0004](0004-staged-silent-demo.md) | Stage the silent-change demo so it is repeatable | Accepted (demo only) |
 | [0005](0005-checkpoint-lifecycle-state.md) | Persist each service's lifecycle state and restore it on restart | Accepted |
 | [0006](0006-store-checkpoints-in-timescaledb.md) | Store checkpoints in TimescaleDB; on in live mode, off for the replay demo | Accepted |
+| [0007](0007-restarts-explain-but-never-license.md) | Restarts open a quarantine and explain a shift, but never license a repair | Accepted |
 
 Template:
 

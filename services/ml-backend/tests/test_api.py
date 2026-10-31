@@ -107,6 +107,61 @@ def test_deploy_is_learned_and_can_be_rolled_back(client):
     assert transitions[-1]["transition"] == "rollback"
 
 
+def test_quarantine_progress_and_early_looks_are_reported(client):
+    warm(client)
+    client.post(f"/api/demo/{SERVICE}/deploy")
+    step(client)
+    svc = next(s for s in client.get("/api/services").json() if s["serviceId"] == SERVICE)
+    length = settings.demo_samples_per_day
+    assert svc["quarantine"] == {"seen": svc["quarantine"]["seen"], "length": length,
+                                 "looks": [length // 2, length * 3 // 4]}
+    decision = run_until_decision(client, {"promote", "hold", "ask"})
+    assert decision["evidence"]["quarantine_events"] <= decision["evidence"]["quarantine_length"] == length
+    looks = client.get("/api/logs", params={"q": f"early look service:{SERVICE}"}).json()["lines"]
+    assert any(f"early look at {length // 2} of {length} events" in ln["message"] for ln in looks)
+    assert next(s for s in client.get("/api/services").json() if s["serviceId"] == SERVICE)["quarantine"] is None
+
+
+@pytest.fixture()
+def search_client():
+    # The stage service for the restart scenario (fleet.DEMO_SERVICES).
+    runtime.fleet = ServiceFleet([("service-f-search", "Search Service", "machine-3-10", 3000)])
+    with TestClient(app) as c:
+        yield c
+
+
+def test_restart_blip_is_resumed_early_and_nothing_is_learned(search_client):
+    warm(search_client)
+    info = search_client.post("/api/demo/service-f-search/restart").json()
+    assert info["kind"] == "restart" and info["change_event_id"]
+    decision = run_until_decision(search_client, {"resume", "promote", "hold", "ask"}, service="service-f-search")
+    ev = decision["evidence"]
+    assert (decision["verdict"], decision["action"]) == ("no_change", "resume")
+    assert ev["early"] and ev["quarantine_events"] < ev["quarantine_length"]
+    assert runtime.fleet.services["service-f-search"].manager.registry.production_version == 1
+
+
+@pytest.fixture()
+def inventory_client():
+    # The stage service for the silent scenario (fleet.DEMO_SILENT_CURSOR).
+    runtime.fleet = ServiceFleet([("service-c-inventory", "Inventory Service", "machine-1-2", 12000)])
+    with TestClient(app) as c:
+        yield c
+
+
+def test_staged_silent_change_reaches_the_operator_question_even_mid_quarantine(inventory_client):
+    sid = "service-c-inventory"
+    warm(inventory_client)
+    mgr = runtime.fleet.services[sid].manager
+    assert mgr.request_validity_check()                  # the service is busy with its own check
+    warm(inventory_client, 300)
+    inventory_client.post(f"/api/demo/{sid}/silent_change")
+    assert mgr.phase == "quarantine" and mgr.quarantine_progress()["seen"] == 0
+    decision = run_until_decision(inventory_client, {"ask", "hold", "promote", "resume"}, service=sid)
+    assert (decision["verdict"], decision["action"]) == ("ambiguous", "ask")
+    assert decision["evidence"]["quarantine_events"] == settings.demo_samples_per_day
+
+
 def test_silent_change_asks_the_operator_and_the_answer_promotes(client):
     warm(client)
     client.post(f"/api/demo/{SERVICE}/silent_change")

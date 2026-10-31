@@ -11,6 +11,7 @@ For every service that received faults, the warm-up hour trains the model, and t
 are replayed through two policies with the same detector (smoothed PCA, POT threshold):
   static   frozen model
   cadal    the lifecycle as served live (accelerated pacing: one "day" = 30 min of 5 s scrapes)
+  cadal_early  the same with sequential early stop (decides before the full quarantine when conclusive)
 
 A row is labelled anomalous inside a fault window on that service. Reported per (policy, service):
   detected / faults          fault windows with at least one alarm inside (window + 60 s grace)
@@ -41,8 +42,9 @@ FEATURES = ("cpu_rate", "memory_used", "network_rx", "network_tx", "cpu_throttle
 
 
 def lifecycle(policy: str, samples_per_day: int) -> LifecycleConfig:
-    base = LifecycleConfig(policy=policy, threshold_method="pot")
-    return replace(base.for_sampling(samples_per_day), operator_queries=False) if policy == "cadal" \
+    early = policy == "cadal_early"             # cadal with sequential early stop
+    base = LifecycleConfig(policy="cadal" if early else policy, threshold_method="pot", early_stop=early)
+    return replace(base.for_sampling(samples_per_day), operator_queries=False) if base.policy == "cadal" \
         else base.for_sampling(samples_per_day)
 
 
@@ -76,7 +78,7 @@ def evaluate(run: Path) -> pd.DataFrame:
         near = [any(s <= t <= e + GRACE_S for s, e in zip(w.start, w.end)) for t in times]
         warm_rows = warm[list(FEATURES)].to_dict(orient="records")
         live_rows = live[list(FEATURES)].to_dict(orient="records")
-        for policy in ("static", "cadal"):
+        for policy in ("static", "cadal", "cadal_early"):
             alarms, decisions = run_policy(policy, warm_rows, live_rows, spd)
             m = stream_metrics(alarms, labels, None, 0.01)
             detected, delays = 0, []

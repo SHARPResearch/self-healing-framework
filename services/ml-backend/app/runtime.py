@@ -41,8 +41,8 @@ def make_fleet() -> ServiceFleet:
         return LiveFleet()
     return ServiceFleet()
 
-LIFECYCLE_TYPES = {"quarantine_opened", "change_observed", "lifecycle_decision", "operator_query",
-                   "query_answered", "query_expired"}
+LIFECYCLE_TYPES = {"quarantine_opened", "quarantine_look", "change_observed", "lifecycle_decision",
+                   "operator_query", "query_answered", "query_expired"}
 
 
 class Runtime:
@@ -62,6 +62,9 @@ class Runtime:
         self._alarms: dict[str, AlarmLog] = {}
         self.changes = None                         # live: Kubernetes deployment watcher fan-out
         self.actions = None                         # live: real scenarios (rollout, chaos)
+        # A step awaits between services, so reset() could swap the fleet in the middle of one and
+        # the step would carry on against the half-built new fleet. Steps and reset take turns.
+        self._step_lock = asyncio.Lock()
 
     @property
     def live(self) -> bool:
@@ -119,9 +122,13 @@ class Runtime:
                 credit = 0.0
             else:
                 credit = min(credit + (now - last) * self.events_per_sec, self.events_per_sec * 0.5)
-                while credit >= 1.0:
-                    await self.step_all()
-                    credit -= 1.0
+                try:
+                    while credit >= 1.0 and not self.paused:
+                        await self.step_all()
+                        credit -= 1.0
+                except Exception:  # noqa: BLE001 - an unhandled error here used to end the replay silently
+                    logger.exception("replay step failed at tick %d; continuing", self.tick)
+                    credit = 0.0
             last = now
             await self.flush_logs()
             if time.monotonic() - self._last_flush >= 1.0:
@@ -129,11 +136,12 @@ class Runtime:
             await asyncio.sleep(TICK_S)
 
     async def step_all(self) -> None:
-        self.tick += 1
-        now = datetime.now(timezone.utc)
-        for rt in self.fleet.services.values():
-            x, res, display = self.fleet.process(rt)
-            await self._after_step(rt, x, res, display, now)
+        async with self._step_lock:
+            self.tick += 1
+            now = datetime.now(timezone.utc)
+            for rt in list(self.fleet.services.values()):
+                x, res, display = self.fleet.process(rt)
+                await self._after_step(rt, x, res, display, now)
 
     # -- live mode ---------------------------------------------------------------------------------
     def _start_live_integrations(self) -> None:
@@ -164,14 +172,15 @@ class Runtime:
         """One live step: every service gets the row of the latest Prometheus scrape."""
         names = list(self.fleet.services)
         rows = await asyncio.to_thread(self.fleet.telemetry.latest, names)
-        self.tick += 1
-        now = datetime.now(timezone.utc)
-        for sid, x in rows.items():
-            rt = self.fleet.services.get(sid)
-            if rt is None:
-                continue
-            x, res, display = self.fleet.process_row(rt, x)
-            await self._after_step(rt, x, res, display, now)
+        async with self._step_lock:
+            self.tick += 1
+            now = datetime.now(timezone.utc)
+            for sid, x in rows.items():
+                rt = self.fleet.services.get(sid)
+                if rt is None:
+                    continue
+                x, res, display = self.fleet.process_row(rt, x)
+                await self._after_step(rt, x, res, display, now)
 
     async def _live_loop(self) -> None:
         interval = settings.live_scrape_seconds
@@ -226,6 +235,7 @@ class Runtime:
                 "severity": self.fleet.severity(rt), "version": res.version,
                 "phase": res.phase, "threshold": 0.5,
                 "trigger": getattr(rt.manager, "_q_trigger", None) if res.phase != "stable" else None,
+                "quarantine": rt.manager.quarantine_progress(),
             }))
         episode = self._alarms.setdefault(rt.service_id, AlarmLog()).update(
             res.step, bool(res.alarm), display)
@@ -310,6 +320,14 @@ class Runtime:
         if event == "quarantine_opened":
             self.log(sid, f"quarantine opened (trigger: {d.get('trigger')}), observing {d.get('length')} "
                      "events while the serving model keeps scoring", "info", {"trigger": d.get("trigger")})
+        elif event == "quarantine_look":
+            seen, length = d.get("seen"), d.get("length")
+            if d.get("conclusive"):
+                self.log(sid, f"early look at {seen} of {length} events: conclusive "
+                         f"({d.get('verdict')}), deciding now", "info", {"seen": seen, "length": length})
+            else:
+                self.log(sid, f"early look at {seen} of {length} events: not conclusive yet, "
+                         "quarantine continues", "info", {"seen": seen, "length": length})
         elif event == "change_observed":
             self.log(sid, f"change event {d.get('change_event_id')} reached the lifecycle", "info")
         elif event == "lifecycle_decision":
@@ -337,15 +355,20 @@ class Runtime:
 
     async def reset(self) -> None:
         self.paused = True
-        self.fleet = self.fleet.fresh()
-        await asyncio.to_thread(self.fleet.build)
-        self._alarms.clear()
-        self.hub.take()                              # lines of the old fleet that were not flushed yet
-        await self.store.clear_logs("lifecycle")     # the old fleet's story; container logs stay
-        self.hub.add(make_line("ml-backend", "demo reset: every service rebuilt from its warm-up", "info", "app"))
-        self._log_warm_up()
-        await self.drain_all()
-        self.paused = False
+        try:
+            async with self._step_lock:              # wait for a step in flight, then block new ones
+                fleet = self.fleet.fresh()
+                await asyncio.to_thread(fleet.build)
+                self.fleet = fleet                   # only swap in a fully built fleet
+                self._alarms.clear()
+                self.hub.take()                      # lines of the old fleet that were not flushed yet
+                await self.store.clear_logs("lifecycle")  # the old fleet's story; container logs stay
+                self.hub.add(make_line("ml-backend", "demo reset: every service rebuilt from its warm-up",
+                                       "info", "app"))
+                self._log_warm_up()
+                await self.drain_all()
+        finally:
+            self.paused = False
         await self.bus.publish(envelope("demo_reset", None, {}))
 
 

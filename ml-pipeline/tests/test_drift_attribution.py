@@ -138,3 +138,47 @@ def test_unexplained_learnable_shift_asks_the_operator_when_enabled():
     assert attribute(_ev(challenger_tail_alarm_rate=0.5), AttributionConfig(ask_operator=True)).action is Action.HOLD
     rb = attribute(_ev(rebaseline_tail_alarm_rate=0.02), AttributionConfig(ask_operator=True))
     assert rb.action is Action.PROMOTE
+
+
+# ── early looks (sequential early stop) ──────────────────────────────────────────────────────────
+from src.drift_attribution import EarlyLookEvidence, binom_bounds, early_attribute  # noqa: E402
+
+
+def _look(**kw):
+    base = dict(trigger="change_event", target_rate=0.01, n_seen=720, n_full=1440,
+                recent_alarms=300, n_recent=360, tail_alarms=140, n_tail=144,
+                change_event_id="svc:deployment@1", rebaseline_tail_alarms=0,
+                tail_out_of_support_rate=0.1)
+    base.update(kw)
+    return EarlyLookEvidence(**base)
+
+
+def test_binomial_bounds_bracket_the_rate():
+    lo, hi = binom_bounds(5, 100, 0.005)
+    assert 0 < lo < 0.05 < hi < 0.2
+    assert binom_bounds(0, 100, 0.005)[0] == 0.0 and binom_bounds(100, 100, 0.005)[1] == 1.0
+
+
+def test_early_resume_when_the_champion_is_quiet_again():
+    a = early_attribute(_look(recent_alarms=0, change_event_id=None, trigger="drift_up"))
+    assert a.verdict is Verdict.NO_CHANGE and a.action is Action.RESUME
+    assert a.evidence["early"] and a.evidence["quarantine_events"] == 720
+
+
+def test_early_promote_by_rebaselining_needs_a_change_event():
+    a = early_attribute(_look())
+    assert a.verdict is Verdict.CONCEPT_DRIFT and a.evidence["repair"] == "rebaseline"
+    assert "svc:deployment@1" in a.reason
+    # The same evidence without a change event (a silent shift, or an incident in progress) waits.
+    assert early_attribute(_look(change_event_id=None, trigger="drift_up")) is None
+
+
+def test_inconclusive_looks_wait_for_the_full_quarantine():
+    # A few re-baselined alarms on a short tail: the upper bound does not clear the line yet.
+    assert early_attribute(_look(rebaseline_tail_alarms=3)) is None
+    # Behaviour still moving: never accepted early.
+    assert early_attribute(_look(tail_out_of_support_rate=0.9)) is None
+    # A downward shift may be model decay, which only the full decision can roll back.
+    assert early_attribute(_look(trigger="drift_down", recent_alarms=0)) is None
+    # Some recent alarms: not quiet enough to resume, and nothing to re-baseline.
+    assert early_attribute(_look(recent_alarms=20, rebaseline_tail_alarms=None)) is None

@@ -234,3 +234,20 @@ def test_a_restarted_backend_resumes_from_its_checkpoints(monkeypatch):
     with TestClient(app):
         assert not runtime.fleet.services[SERVICE].restored
     runtime.store = MemoryStore()
+
+
+def test_scores_after_a_restart_are_labelled_expected(search_client):
+    warm(search_client)
+    with search_client.websocket_connect("/ws/events") as ws:
+        assert ws.receive_json()["type"] == "snapshot"
+        search_client.post("/api/demo/service-f-search/restart")
+        for _ in range(settings.score_push_every * 3):
+            step(search_client)
+        scores = []
+        while len(scores) < 3:
+            msg = ws.receive_json()
+            if msg["type"] == "anomaly_score":
+                scores.append(msg["data"])
+    assert all(s["context"] == "after_restart" for s in scores)
+    change = runtime.store.changes[-1]
+    assert change["kind"] == "restart"

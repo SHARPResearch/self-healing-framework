@@ -17,7 +17,8 @@ export type Verdict =
   | "ambiguous"
   | "operator"
   | "unattributed"
-  | "scheduled";
+  | "scheduled"
+  | "restart";
 
 export type LifecycleAction = "hold" | "promote" | "rollback" | "resume" | "ask";
 
@@ -50,6 +51,8 @@ export interface LiveServiceHealth extends ServiceHealth {
   quarantineTrigger: string | null;
   /** Events seen of the quarantine's length, while not stable. */
   quarantine?: QuarantineProgress | null;
+  /** A pod of this service restarted recently: alarms now are expected while it settles. */
+  afterRestart?: boolean;
   alarm: boolean;
   modelVersion: number;
   openQueries: number;

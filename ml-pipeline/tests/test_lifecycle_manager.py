@@ -710,3 +710,37 @@ def test_checkpoint_round_trips_the_smoothed_pca_detector():
     a = [fresh.process(dict(x)).alarm for x in rows]
     b = [mgr.process(dict(x)).alarm for x in rows]
     assert a[20:] == b[20:]                              # after the smoothing level settles
+
+
+# -- restarts explain a shift but do not license a new model ---------------------------------------
+def _restart_dip_stream(seed=12, before=300, dip=60, after=900):
+    """A pod restart: metrics drop for a minute, then the service is back to its old normal."""
+    rng = random.Random(seed)
+    rows = [_normal(rng) for _ in range(before)]
+    rows += [_normal(rng, -0.25) for _ in range(dip)]
+    rows += [_normal(rng) for _ in range(after)]
+    return rows
+
+
+def test_a_restart_opens_a_quarantine_without_licensing_a_new_model():
+    from src.publishers import RecordingPublisher
+    pub = RecordingPublisher()
+    mgr = _manager(_cfg(rebaseline=False), events=[ChangeEvent("svc", "restart", step=301)], publisher=pub)
+    _run(mgr, _shifted_stream())                         # a lasting shift right after the restart
+    opened = [p for p in pub.payloads if p.get("event") == "quarantine_opened"]
+    seen = [p for p in pub.payloads if p.get("event") == "change_observed"]
+    assert opened[0]["trigger"] == "restart" and opened[0]["step"] == 301
+    assert seen[0]["kind"] == "restart" and seen[0]["licensing"] is False
+    # The same shift after a deployment is retrained and promoted; after a restart it never is.
+    assert not any(d["action"] == "promote" for d in mgr.decisions)
+    assert mgr.decisions[0]["evidence"]["restart_event_id"] == "svc:restart@301"
+
+
+def test_a_restart_dip_that_recovers_is_resumed_early():
+    mgr = _manager(_cfg(early_stop=True, quarantine_with_change=400, quarantine_silent=400),
+                   events=[ChangeEvent("svc", "restart", step=301)])
+    _run(mgr, _restart_dip_stream())
+    first = mgr.decisions[0]
+    assert (first["verdict"], first["action"]) == ("no_change", "resume")
+    assert first["evidence"]["early"] and first["evidence"]["restart_event_id"] == "svc:restart@301"
+    assert mgr.registry.production_version == 1

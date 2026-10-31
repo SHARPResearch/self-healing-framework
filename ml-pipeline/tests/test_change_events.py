@@ -66,3 +66,48 @@ def test_queue_source_releases_pushed_events_once():
     src.push(ChangeEvent("svc", "config", step=6))
     assert [e.kind for e in src.poll(7)] == ["deployment", "config"]
     assert src.poll(8) == []
+
+
+# ── restarts ──────────────────────────────────────────────────────────────────────────────────────
+from datetime import datetime, timedelta, timezone  # noqa: E402
+
+from src.change_events import PodRestartTracker  # noqa: E402
+
+T0 = datetime(2026, 10, 31, 12, 0, tzinfo=timezone.utc)
+
+
+def _pod(name, template="abc", created=T0 - timedelta(hours=1), restarts=0, reason=None, event_type="ADDED"):
+    status = {"containerStatuses": [{"name": "server", "restartCount": restarts,
+                                     "lastState": {"terminated": {"reason": reason}} if reason else {}}]}
+    return {"type": event_type, "object": {
+        "metadata": {"name": name, "labels": {"app": "cartservice", "pod-template-hash": template},
+                     "creationTimestamp": created.isoformat()},
+        "status": status}}
+
+
+def test_existing_pods_are_learned_not_reported():
+    tracker = PodRestartTracker(started_at=T0)
+    assert tracker.observe(_pod("cart-abc-1")) == []
+    assert tracker.observe(_pod("cart-abc-1", event_type="MODIFIED")) == []
+
+
+def test_a_replacement_pod_from_the_same_template_is_a_restart():
+    tracker = PodRestartTracker(started_at=T0)
+    tracker.observe(_pod("cart-abc-1"))
+    events = tracker.observe(_pod("cart-abc-2", created=T0 + timedelta(minutes=5)))
+    assert [(e.kind, e.service_id, e.detail["reason"]) for e in events] == [("restart", "cartservice", "pod_replaced")]
+
+
+def test_a_pod_from_a_new_template_is_a_rollout_not_a_restart():
+    tracker = PodRestartTracker(started_at=T0)
+    tracker.observe(_pod("cart-abc-1"))
+    assert tracker.observe(_pod("cart-def-1", template="def", created=T0 + timedelta(minutes=5))) == []
+
+
+def test_a_container_restart_is_reported_with_its_exit_reason():
+    tracker = PodRestartTracker(started_at=T0)
+    tracker.observe(_pod("cart-abc-1"))
+    events = tracker.observe(_pod("cart-abc-1", restarts=1, reason="OOMKilled", event_type="MODIFIED"))
+    assert len(events) == 1 and events[0].detail["reason"] == "container_restart"
+    assert events[0].detail["exit_reason"] == "OOMKilled" and events[0].detail["restart_count"] == 1
+    assert tracker.observe(_pod("cart-abc-1", restarts=1, reason="OOMKilled", event_type="MODIFIED")) == []

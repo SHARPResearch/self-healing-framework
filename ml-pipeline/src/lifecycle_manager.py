@@ -34,11 +34,14 @@ state (~40 ms). See src/hst_state.py.
 """
 
 import copy
+import hashlib
+import json
 import logging
 import time
+import zlib
 from concurrent.futures import ThreadPoolExecutor
 from collections import deque
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from typing import Iterable, Optional
 
 import numpy as np
@@ -52,7 +55,7 @@ from src.drift_attribution import (
 from src.drift_detectors import ScoreDriftMonitor
 from src.evaluate import pot_threshold
 from src.hst_model import build_model, classify_severity, freeze_scaler
-from src.hst_state import HSTState, apply, capture, reset
+from src.hst_state import HSTState, apply, capture, feature_names, materialize, reset
 from src.mlflow_lifecycle import InMemoryRegistry
 from src.publishers import EventPublisher, NullPublisher
 
@@ -178,6 +181,20 @@ class StepResult:
     phase: str                  # "stable" | "quarantine"
     latency_ms: float
     lifecycle: Optional[dict] = None   # set on the step a lifecycle decision was taken
+
+
+CHECKPOINT_FORMAT = 1
+
+
+def _jsonable(o):
+    """json.dumps fallback for numpy scalars and arrays inside evidence and tags."""
+    if isinstance(o, np.generic):
+        return o.item()
+    if isinstance(o, np.ndarray):
+        return o.tolist()
+    if isinstance(o, (set, tuple)):
+        return list(o)
+    raise TypeError(f"not JSON serialisable: {type(o).__name__}")
 
 
 def _clamp(x: float) -> float:
@@ -341,6 +358,98 @@ class DynamicModelManager:
         self.queries: dict[str, dict] = {}
         self._query_steps: list[int] = []
         self._ask_cooldown_until = 0
+
+    # ── checkpoints (survive a restart) ───────────────────────────────────────
+    def detector_key(self) -> str:
+        """Which detector this manager runs; a checkpoint only restores onto the same one."""
+        payload = json.dumps(asdict(self.hst_cfg), sort_keys=True, default=str)
+        return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+    def export_state(self) -> bytes:
+        """
+        Everything needed to resume serving after a restart, as a compressed JSON blob: the registry
+        (every version, the production pointer, the audit trail), the serving threshold and
+        re-baselining state, the per-service null floors, cooldowns and operator queries, including
+        the validated candidate an open query is waiting on.
+
+        Not saved: an open quarantine and the drift detector's window. After a restore the service
+        is stable again, and a shift that is still there opens a new quarantine on its own.
+        """
+        queries = {}
+        for qid, q in self.queries.items():
+            rec = {k: v for k, v in q.items() if k != "_candidate"}
+            cand = q.get("_candidate")
+            if cand is not None:
+                rec["_candidate"] = {
+                    "state": cand["state"].to_bytes().hex(), "threshold": cand["threshold"],
+                    "gate": cand["gate"],
+                    "ref_stats": {k: list(v) for k, v in cand["ref_stats"].items()} if cand["ref_stats"] else None,
+                }
+            queries[qid] = rec
+        body = {
+            "format": CHECKPOINT_FORMAT,
+            "service_id": self.service_id,
+            "detector": self.detector_key(),
+            "features": feature_names(self.model),
+            "step": self.step,
+            "threshold": self.threshold,
+            "learn_gate": self.learn_gate,
+            "ref_stats": {k: list(v) for k, v in self.ref_stats.items()} if self.ref_stats else None,
+            "shifts": self.shifts,
+            "attribution_null": {str(k): v for k, v in self.attribution_null.items()},
+            "cooldown_until": self._cooldown_until,
+            "ask_cooldown_until": self._ask_cooldown_until,
+            "query_steps": self._query_steps,
+            "last_checkpoint_step": self._last_checkpoint_step,
+            "last_change": ({**asdict(self._last_change), "timestamp": None, "step_seen": self._last_change_step}
+                            if self._last_change is not None else None),
+            "queries": queries,
+            "registry": self.registry.export(),
+        }
+        return zlib.compress(json.dumps(body, default=_jsonable).encode())
+
+    def restore_state(self, blob: bytes, features: Optional[list[str]] = None) -> bool:
+        """
+        Resume from export_state() instead of warming up. Returns False, leaving the manager
+        untouched, when the checkpoint is for another detector or another set of input features
+        (the caller then warms up from scratch).
+        """
+        body = json.loads(zlib.decompress(blob))
+        if body.get("format") != CHECKPOINT_FORMAT or body.get("detector") != self.detector_key():
+            return False
+        if features is not None and sorted(features) != sorted(body["features"]):
+            return False
+        materialize(self.model, body["features"])
+        self.registry.load(body["registry"])
+        production = self.registry.production()
+        self._restore(production.state)
+        freeze_scaler(self.model)
+        self.threshold = production.threshold
+        self.learn_gate = body["learn_gate"]
+        self.ref_stats = {k: tuple(v) for k, v in body["ref_stats"].items()} if body["ref_stats"] else None
+        self.shifts = dict(body["shifts"])
+        self.attribution_null = {int(k): v for k, v in body["attribution_null"].items()}
+        self.step = body["step"]
+        self._cooldown_until = body["cooldown_until"]
+        self._ask_cooldown_until = body["ask_cooldown_until"]
+        self._query_steps = list(body["query_steps"])
+        self._last_checkpoint_step = body["last_checkpoint_step"]
+        change = body.get("last_change")
+        if change is not None:
+            seen = change.pop("step_seen")
+            self._last_change, self._last_change_step = ChangeEvent(**change), seen
+        self.queries = {}
+        for qid, rec in body["queries"].items():
+            cand = rec.pop("_candidate", None)
+            if cand is not None:
+                rec["_candidate"] = {
+                    "state": HSTState.from_bytes(bytes.fromhex(cand["state"])),
+                    "threshold": cand["threshold"], "gate": cand["gate"],
+                    "ref_stats": {k: tuple(v) for k, v in cand["ref_stats"].items()} if cand["ref_stats"] else None,
+                }
+            self.queries[qid] = rec
+        self.phase = "stable"
+        return True
 
     # ── warm-up ──────────────────────────────────────────────────────────────
     def warm_up(self, rows: list[dict], calib_frac: float = 0.2) -> dict:

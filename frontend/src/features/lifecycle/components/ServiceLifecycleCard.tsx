@@ -83,6 +83,11 @@ export function ServiceLifecycleCard({ service }: { service: LiveServiceHealth }
         {service.phase !== "stable" && service.quarantine && service.quarantine.length > 0 && (
           <QuarantineBar progress={service.quarantine} />
         )}
+        {service.afterRestart && (
+          <p className="text-[11px] text-muted-foreground" title="Alarms within the restart window are labelled expected for the decision engine">
+            Settling after a pod restart: alarms now are expected.
+          </p>
+        )}
 
         <p className="min-h-8 text-xs leading-4 text-muted-foreground">
           {lastDecision ? (

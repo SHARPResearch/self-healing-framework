@@ -118,6 +118,7 @@ class ServiceRuntime:
     last_action_at: Optional[str] = None
     drift_flag: bool = False
     rng: random.Random = field(default_factory=random.Random)
+    restored: bool = False               # resumed from a checkpoint instead of warmed up
 
 
 def lifecycle_config() -> LifecycleConfig:
@@ -149,6 +150,9 @@ class ServiceFleet:
         self.warm_up_rows = warm_up_rows or settings.warm_up_rows
         self.hst_cfg = detector_config(settings.detector)
         self.cfg = lifecycle_config()
+        # Checkpoints to resume from instead of warming up (service_id -> {source, blob, ...}), set by
+        # the runtime before build(); see DynamicModelManager.export_state and docs/adr/0006.
+        self.checkpoints: dict[str, dict] = {}
 
     # -- set-up ------------------------------------------------------------------------------------
     def fresh(self) -> "ServiceFleet":
@@ -169,13 +173,38 @@ class ServiceFleet:
         mgr = DynamicModelManager(service_id, self.cfg, self.hst_cfg,
                                   registry=MirroredRegistry(service_id, outbox),
                                   change_source=changes, publisher=outbox)
-        mgr.warm_up(train.tail(self.warm_up_rows).to_dict(orient="records"))
+        restored = self.restore(mgr, list(train.columns), source=entity)
+        if not restored:
+            mgr.warm_up(train.tail(self.warm_up_rows).to_dict(orient="records"))
         rt = ServiceRuntime(service_id=service_id, display_name=name, entity=entity, manager=mgr,
                             changes=changes, outbox=outbox,
                             test_rows=test.to_dict(orient="records"), test_df=test, window_start=start,
                             medians=train.median().to_dict())
         rt.rng.seed(service_id)
+        rt.restored = restored
         return rt
+
+    def restore(self, mgr: DynamicModelManager, features: list[str], source: str) -> bool:
+        """Resume `mgr` from its checkpoint if there is one for the same source, detector and features."""
+        saved = self.checkpoints.get(mgr.service_id)
+        if saved is None:
+            return False
+        if saved["source"] != source:
+            logger.warning("fleet: checkpoint for %s was made on %s, not %s; warming up",
+                           mgr.service_id, saved["source"], source)
+            return False
+        try:
+            ok = mgr.restore_state(saved["blob"], features=features)
+        except Exception:  # noqa: BLE001 - a damaged checkpoint must not stop the service warming up
+            logger.exception("fleet: checkpoint for %s could not be read; warming up instead", mgr.service_id)
+            return False
+        if ok:
+            logger.info("fleet: %s resumed from its checkpoint at step %d, model v%s",
+                        mgr.service_id, mgr.step, mgr.registry.production_version)
+        else:
+            logger.warning("fleet: checkpoint for %s is for another detector or feature set; warming up",
+                           mgr.service_id)
+        return ok
 
     # -- one replay step ---------------------------------------------------------------------------
     def next_row(self, rt: ServiceRuntime) -> dict:

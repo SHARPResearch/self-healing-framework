@@ -53,6 +53,12 @@ class Settings(BaseSettings):
     # service for a few minutes and then returns to its old normal (~4 s on stage).
     demo_restart_events: int = 240
     score_push_every: int = 10            # push one anomaly_score message every N events per service
+    # Lifecycle checkpoints (docs/adr/0006): "auto" keeps them in live mode only (a replay demo should
+    # start from its warm-up every time), "on" and "off" force it. Dirty services are saved every
+    # CHECKPOINT_EVERY_S seconds, every service every CHECKPOINT_ALL_EVERY_S, and all on shutdown.
+    model_checkpoints: str = "auto"
+    checkpoint_every_s: float = 30.0
+    checkpoint_all_every_s: float = 300.0
 
     # Logs page: follow these containers' output (service name shown on the page -> container).
     follow_container_logs: bool = True

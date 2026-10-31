@@ -134,6 +134,8 @@ Stop the cluster with `infrastructure/online-boutique/down.ps1`. Nothing is dele
 | `LIVE_SCRAPE_SECONDS` / `LIVE_LIFECYCLE_DAY_MINUTES` | `5` / `30` |
 | `LIVE_WARMUP_MINUTES` / `LIVE_MIN_WARMUP_MINUTES` | `60` / `10` |
 | `START_REPLAY` / `USE_BACKING_SERVICES` | `true` / `true` (tests set both false) |
+| `MODEL_CHECKPOINTS` | `auto` (live only), `on`, `off` |
+| `CHECKPOINT_EVERY_S` / `CHECKPOINT_ALL_EVERY_S` | `30` / `300` |
 
 ## REST API (`/api`)
 
@@ -214,6 +216,13 @@ Tables:
 - `operator_queries`
 - `change_events`
 - `service_logs` (hypertable: the log stream above, kept 7 days)
+- `model_checkpoints` (one row per service: its whole lifecycle state, about 8 KB, so a restarted
+  backend resumes instead of warming up again; docs/adr/0005 and 0006)
+
+Checkpoints are on in live mode and off in replay by default (`MODEL_CHECKPOINTS=auto`; `on` or
+`off` to force). A service is saved within 30 s of any lifecycle change, all of them every 5 minutes
+and on shutdown. A checkpoint is only restored onto the same service, source, detector and
+features. `POST /api/demo/reset` clears them.
 
 ```powershell
 docker exec selfheal-demo-timescaledb-1 psql -U postgres -d selfheal -c "select * from lifecycle_decisions order by time desc limit 5"

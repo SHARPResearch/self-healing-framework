@@ -57,6 +57,7 @@ class MemoryStore:
         self.changes: deque = deque(maxlen=2000)
         self.logs: deque = deque(maxlen=20000)
         self._log_ids: set[str] = set()
+        self.checkpoints: dict[str, dict] = {}
 
     async def start(self) -> bool:
         return True
@@ -81,6 +82,17 @@ class MemoryStore:
 
     async def write_change(self, c: dict) -> None:
         self.changes.append(c)
+
+    # -- lifecycle checkpoints (docs/adr/0006) -----------------------------------------------------
+    async def save_checkpoint(self, c: dict) -> None:
+        """c: service_id, source, step, production_version, blob."""
+        self.checkpoints[c["service_id"]] = c
+
+    async def load_checkpoints(self) -> dict[str, dict]:
+        return dict(self.checkpoints)
+
+    async def clear_checkpoints(self) -> None:
+        self.checkpoints.clear()
 
     # -- logs ------------------------------------------------------------------------------------
     async def write_logs(self, lines: list[dict]) -> None:
@@ -241,6 +253,37 @@ class PgStore(MemoryStore):
             " ON CONFLICT (service_id, version) DO UPDATE SET status = EXCLUDED.status",
             [(v["service_id"], v["version"], v["status"], v["threshold"], v.get("kind"),
               v.get("verdict"), v.get("reason"), json.dumps(v.get("tags") or {}, default=str))])
+
+    async def save_checkpoint(self, c: dict) -> None:
+        await super().save_checkpoint(c)
+        await self._exec_many(
+            "INSERT INTO model_checkpoints (service_id, source, saved_at, step, production_version, blob)"
+            " VALUES ($1,$2,now(),$3,$4,$5) ON CONFLICT (service_id) DO UPDATE SET source = EXCLUDED.source,"
+            " saved_at = EXCLUDED.saved_at, step = EXCLUDED.step,"
+            " production_version = EXCLUDED.production_version, blob = EXCLUDED.blob",
+            [(c["service_id"], c["source"], c["step"], c["production_version"], c["blob"])])
+
+    async def load_checkpoints(self) -> dict[str, dict]:
+        if self.pool is None:
+            return await super().load_checkpoints()
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT service_id, source, step, production_version, blob FROM model_checkpoints")
+        except Exception as exc:  # noqa: BLE001 - no checkpoints just means warming up
+            logger.warning("store: could not read checkpoints (%s); warming up", exc)
+            return {}
+        return {r["service_id"]: {**dict(r), "blob": bytes(r["blob"])} for r in rows}
+
+    async def clear_checkpoints(self) -> None:
+        await super().clear_checkpoints()
+        if self.pool is None:
+            return
+        try:
+            async with self.pool.acquire() as conn:
+                await conn.execute("DELETE FROM model_checkpoints")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("store: could not clear checkpoints (%s)", exc)
 
     async def write_query(self, q: dict) -> None:
         await super().write_query(q)

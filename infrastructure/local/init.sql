@@ -103,3 +103,16 @@ SELECT create_hypertable('service_logs', 'time', chunk_time_interval => INTERVAL
 SELECT add_retention_policy('service_logs', INTERVAL '7 days', if_not_exists => TRUE);
 CREATE INDEX IF NOT EXISTS service_logs_service_time ON service_logs (service, time DESC);
 CREATE INDEX IF NOT EXISTS service_logs_level_time ON service_logs (level, time DESC);
+
+-- One lifecycle checkpoint per monitored service (docs/adr/0006): the whole registry, thresholds,
+-- re-baselining state and operator queries, so a restarted backend resumes instead of re-warming.
+-- `source` is what the service was built from (SMD machine or namespace/deployment); a checkpoint
+-- is only restored onto the same source.
+CREATE TABLE IF NOT EXISTS model_checkpoints (
+    service_id          TEXT        PRIMARY KEY,
+    source              TEXT        NOT NULL,
+    saved_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    step                BIGINT,
+    production_version  INTEGER,
+    blob                BYTEA       NOT NULL
+);

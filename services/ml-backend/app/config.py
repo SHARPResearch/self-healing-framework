@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     # Length of the demo "restart" blip: a rollout restart (deployment event) that disturbs the
     # service for a few minutes and then returns to its old normal (~4 s on stage).
     demo_restart_events: int = 240
+    # Alarms within this long after a pod restart are labelled expected (context "after_restart") in
+    # the score stream and the Logs, so the decision engine does not remediate a pod that is still
+    # settling. They are not suppressed: a restart caused by a real fault must still alarm.
+    restart_label_seconds: float = 600.0
     score_push_every: int = 10            # push one anomaly_score message every N events per service
     # Lifecycle checkpoints (docs/adr/0006): "auto" keeps them in live mode only (a replay demo should
     # start from its warm-up every time), "on" and "off" force it. Dirty services are saved every

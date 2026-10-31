@@ -119,6 +119,7 @@ class ServiceRuntime:
     drift_flag: bool = False
     rng: random.Random = field(default_factory=random.Random)
     restored: bool = False               # resumed from a checkpoint instead of warmed up
+    restart_until_step: int = -1         # alarms up to this manager step follow a pod restart
 
 
 def lifecycle_config() -> LifecycleConfig:
@@ -276,17 +277,18 @@ class ServiceFleet:
                                            until_step=step + length))
             return {"kind": kind, "features": list(feats), "events": length}
         if kind == "restart":
-            # A rollout restart: a deployment event, a short disturbance, then the old normal again.
-            # The change event opens a quarantine at once; once the blip is over, the early look
+            # A pod restart: a restart event, a short disturbance, then the old normal again. The
+            # event opens a quarantine at once (docs/adr/0007); once the blip is over, the early look
             # finds the champion quiet and resumes without waiting the full quarantine.
             varying = [c for c in rt.test_df.columns if float(rt.test_df[c].std()) > 1e-6]
             feats = tuple(rt.rng.sample(varying, max(2, len(varying) // 8)))
             length = settings.demo_restart_events
             rt.injections.append(Injection("restart", feats, tuple(0.45 for _ in feats),
                                            until_step=step + length))
-            event = ChangeEvent(service_id, "deployment", step=step,
-                                detail={"source": "demo", "restart": True, "features": list(feats)})
+            event = ChangeEvent(service_id, "restart", step=step,
+                                detail={"source": "demo", "reason": "pod_replaced", "features": list(feats)})
             rt.changes.push(event)
+            rt.restart_until_step = step + 2 * length
             return {"kind": kind, "change_event_id": event.event_id, "features": list(feats),
                     "events": length}
         raise ValueError(f"unknown injection {kind!r}")

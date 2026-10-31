@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     # Component 1 + 2 configuration (the final evaluated configuration, RESULTS_COMPONENT2.md)
     detector: str = "pca_s5"
     threshold_method: str = "pot"
+    # Sequential early stop: decide a quarantine at 50% or 75% of its length when the evidence is
+    # already conclusive (a quiet champion, or a deployment repaired by re-baselining).
+    cadal_early_stop: bool = True
 
     # Demo pacing. The lifecycle lengths are defined in "one day of samples"; here a day is
     # DEMO_SAMPLES_PER_DAY events and the replay plays REPLAY_EVENTS_PER_SEC events per service per
@@ -46,6 +49,9 @@ class Settings(BaseSettings):
     # spikes often never trip the drift detector on a quiet service, so nothing visible happens; a
     # whole day gets learned as a new normal. 0 means a fifth of a day.
     demo_incident_events: int = 720
+    # Length of the demo "restart" blip: a rollout restart (deployment event) that disturbs the
+    # service for a few minutes and then returns to its old normal (~4 s on stage).
+    demo_restart_events: int = 240
     score_push_every: int = 10            # push one anomaly_score message every N events per service
 
     # Logs page: follow these containers' output (service name shown on the page -> container).

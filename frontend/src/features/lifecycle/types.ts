@@ -25,7 +25,7 @@ export type QueryAnswer = "new_normal" | "incident";
 
 export type QueryStatus = "open" | "answered" | "expired";
 
-export type InjectionKind = "deploy" | "silent_change" | "incident";
+export type InjectionKind = "deploy" | "silent_change" | "incident" | "restart";
 
 /** Real scenarios on the live cluster (POST /api/live/{service}/{action}). */
 export type LiveAction =
@@ -37,10 +37,19 @@ export type LiveAction =
   | "pod_kill"
   | "network_delay";
 
+/** How far an open quarantine is; CADAL tries an early decision at each look. */
+export interface QuarantineProgress {
+  seen: number;
+  length: number;
+  looks: number[];
+}
+
 export interface LiveServiceHealth extends ServiceHealth {
   phase: LifecyclePhase;
   /** What opened the current quarantine; "scheduled" is a routine validity check, not drift. */
   quarantineTrigger: string | null;
+  /** Events seen of the quarantine's length, while not stable. */
+  quarantine?: QuarantineProgress | null;
   alarm: boolean;
   modelVersion: number;
   openQueries: number;

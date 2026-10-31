@@ -214,7 +214,7 @@ async def demo_state() -> dict:
 
 
 @router.post("/demo/{service_id}/{kind}")
-async def demo_inject(service_id: str, kind: Literal["deploy", "silent_change", "incident"]) -> dict:
+async def demo_inject(service_id: str, kind: Literal["deploy", "silent_change", "incident", "restart"]) -> dict:
     _service(service_id)
     if runtime.live:
         raise HTTPException(409, "synthetic injections are replay only; use POST /api/live/{service}/{action}")

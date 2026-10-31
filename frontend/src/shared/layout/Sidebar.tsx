@@ -35,7 +35,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
         </button>
       </div>
 
-      <nav className="flex-1 overflow-y-auto px-2">
+      <nav className="scrollbar-hidden flex-1 overflow-y-auto px-2">
         {navGroups.map((group) => (
           <div key={group.label} className="mb-4">
             {!collapsed && (

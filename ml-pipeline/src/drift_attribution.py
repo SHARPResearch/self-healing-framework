@@ -130,22 +130,139 @@ class Attribution:
     evidence: dict = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class EarlyLookEvidence:
+    """
+    What a quarantine has seen part-way through, as alarm *counts* so the sampling error of each
+    rate can be bounded exactly (see early_attribute).
+    """
+    trigger: str
+    target_rate: float
+    n_seen: int                               # events buffered so far
+    n_full: int                               # the quarantine's full length
+    recent_alarms: int                        # champion alarms over the most recent half of the buffer
+    n_recent: int
+    tail_alarms: int                          # champion alarms on the events held out from the shift fit
+    n_tail: int
+    change_event_id: Optional[str] = None
+    n_tail_full: Optional[int] = None         # the tail the full-length decision would use
+    rebaseline_tail_alarms: Optional[int] = None   # re-baselined champion on the same tail
+    tail_out_of_support_rate: Optional[float] = None
+    moving_floor: Optional[float] = None
+
+
+# Decision lines shared by the full decision and the early looks, so both apply the same rules.
+def _stale_line(cfg: AttributionConfig, r0: float, has_change: bool) -> float:
+    return (cfg.stale_factor_with_change if has_change else cfg.stale_factor_silent) * r0
+
+
+def _slack(cfg: AttributionConfig, r0: float, n_tail: Optional[int]) -> float:
+    # A challenger calibrated to r0 on a few hundred events will not hit r0 exactly on the tail;
+    # allow for binomial sampling noise so a learnable regime is not rejected on noise alone.
+    return cfg.z * math.sqrt(r0 * (1 - r0) / n_tail) if n_tail else 0.0
+
+
+def _rebaseline_line(cfg: AttributionConfig, r0: float, n_tail: Optional[int]) -> float:
+    return cfg.learnable_factor * r0 + _slack(cfg, r0, n_tail)
+
+
+def _moving_line(cfg: AttributionConfig, moving_floor: Optional[float]) -> float:
+    return max(cfg.moving_feature_rate, moving_floor or 0.0)
+
+
+def binom_bounds(k: int, n: int, alpha: float) -> tuple[float, float]:
+    """Exact one-sided Clopper-Pearson bounds (lower, upper) on a rate from k hits in n trials."""
+    from scipy.stats import beta
+
+    lower = 0.0 if k == 0 else float(beta.ppf(alpha, k, n - k + 1))
+    upper = 1.0 if k == n else float(beta.ppf(1 - alpha, k + 1, n - k))
+    return lower, upper
+
+
+def early_attribute(ev: EarlyLookEvidence, cfg: AttributionConfig = AttributionConfig(),
+                    alpha: float = 0.05) -> Optional[Attribution]:
+    """
+    Decide a quarantine before its full length, but only when the answer is already conclusive.
+
+    A group-sequential test: at a few looks part-way through, each rule fires only if an exact
+    one-sided (1 - alpha) bound on the relevant alarm rate clears the line the full-length
+    decision would apply (for re-baselining, the line at the full tail size). Anything less
+    certain returns None and the quarantine keeps collecting; the full-length attribute() then
+    decides exactly as before. Only the two outcomes that need no new model are allowed early:
+
+      resume     the champion is quiet again on the recent half of the buffer: the shift did not
+                 persist and nothing is learned.
+      promote    re-baselining repairs a shift that a change event explains. Re-baselining keeps
+                 the champion and only moves metric levels, so it needs far fewer events than
+                 fitting a challenger; requiring the change event means a silent shift or an
+                 incident in progress is never accepted early.
+
+    Retraining, asking the operator and holding an incident always wait for the full quarantine.
+    """
+    if ev.trigger == "drift_down":
+        return None                             # possible decay: needs the full rollback check
+    r0 = ev.target_rate
+    has_change = ev.change_event_id is not None
+    stale_line = _stale_line(cfg, r0, has_change)
+    evidence = {
+        "early": True, "quarantine_events": ev.n_seen, "quarantine_length": ev.n_full,
+        "trigger": ev.trigger, "target_rate": r0, "change_event_id": ev.change_event_id,
+        "alpha": alpha, "stale_line": round(stale_line, 4),
+    }
+    progress = f"after {ev.n_seen} of {ev.n_full} events"
+
+    _, recent_upper = binom_bounds(ev.recent_alarms, ev.n_recent, alpha)
+    evidence["recent_alarm_rate"] = round(ev.recent_alarms / ev.n_recent, 4)
+    evidence["recent_alarm_upper"] = round(recent_upper, 4)
+    if recent_upper < stale_line:
+        return Attribution(
+            Verdict.NO_CHANGE, Action.RESUME,
+            f"decided early {progress}: champion alarm rate on the recent half is at most "
+            f"{recent_upper:.4f} ({(1 - alpha) * 100:g}% bound) < stale line {stale_line:.4f}: "
+            f"shift did not persist",
+            evidence,
+        )
+
+    if not has_change or ev.rebaseline_tail_alarms is None or ev.tail_out_of_support_rate is None:
+        return None
+    tail_lower, _ = binom_bounds(ev.tail_alarms, ev.n_tail, alpha)
+    _, rebaseline_upper = binom_bounds(ev.rebaseline_tail_alarms, ev.n_tail, alpha)
+    rebaseline_line = _rebaseline_line(cfg, r0, ev.n_tail_full or ev.n_tail)
+    moving_line = _moving_line(cfg, ev.moving_floor)
+    evidence.update({
+        "champion_tail_alarm_lower": round(tail_lower, 4),
+        "rebaseline_tail_alarm_rate": round(ev.rebaseline_tail_alarms / ev.n_tail, 4),
+        "rebaseline_tail_alarm_upper": round(rebaseline_upper, 4),
+        "rebaseline_line": round(rebaseline_line, 4),
+        "tail_out_of_support_rate": round(ev.tail_out_of_support_rate, 4),
+        "moving_line": round(moving_line, 4), "n_tail": ev.n_tail,
+    })
+    if (tail_lower >= stale_line and ev.tail_out_of_support_rate <= moving_line
+            and rebaseline_upper <= rebaseline_line):
+        evidence["repair"] = "rebaseline"
+        return Attribution(
+            Verdict.CONCEPT_DRIFT, Action.PROMOTE,
+            f"decided early {progress}: champion still stale (tail alarm rate at least "
+            f"{tail_lower:.4f} >= {stale_line:.4f}) and re-baselining the shifted metrics restores "
+            f"it (tail rate at most {rebaseline_upper:.4f} <= {rebaseline_line:.4f}) after change "
+            f"{ev.change_event_id}",
+            evidence,
+        )
+    return None
+
+
 def attribute(ev: QuarantineEvidence, cfg: AttributionConfig = AttributionConfig()) -> Attribution:
     """Map quarantine evidence to a verdict and lifecycle action, with a readable reason."""
     r0 = ev.target_rate
     has_change = ev.change_event_id is not None
-    stale_factor = cfg.stale_factor_with_change if has_change else cfg.stale_factor_silent
-    stale_line = stale_factor * r0
-    # A challenger calibrated to r0 on a few hundred events will not hit r0 exactly on the tail;
-    # allow for binomial sampling noise so a learnable regime is not rejected on noise alone.
-    slack = cfg.z * math.sqrt(r0 * (1 - r0) / ev.n_tail) if ev.n_tail else 0.0
-    learnable_line = max(cfg.learnable_factor * r0 + slack, ev.learnable_floor or 0.0)
+    stale_line = _stale_line(cfg, r0, has_change)
+    learnable_line = max(cfg.learnable_factor * r0 + _slack(cfg, r0, ev.n_tail), ev.learnable_floor or 0.0)
     # Re-baselining keeps the champion and its calibrated threshold, so it is held to the target
     # rate plus sampling slack only. The per-entity floor measures how noisy a *freshly retrained*
     # challenger is on normal windows and does not apply to it: with a PCA detector that floor
     # reached ~0.6 and let re-baselining through at a 55% tail alarm rate (machine-1-6).
-    rebaseline_line = cfg.learnable_factor * r0 + slack
-    moving_line = max(cfg.moving_feature_rate, ev.moving_floor or 0.0)
+    rebaseline_line = _rebaseline_line(cfg, r0, ev.n_tail)
+    moving_line = _moving_line(cfg, ev.moving_floor)
 
     evidence = {
         "trigger": ev.trigger,

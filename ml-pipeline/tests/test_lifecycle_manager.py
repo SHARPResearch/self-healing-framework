@@ -736,6 +736,14 @@ def test_a_restart_opens_a_quarantine_without_licensing_a_new_model():
     assert mgr.decisions[0]["evidence"]["restart_event_id"] == "svc:restart@301"
 
 
+def test_a_restart_quarantine_never_re_baselines_the_warm_up():
+    mgr = _manager(_cfg(), events=[ChangeEvent("svc", "restart", step=301)])
+    _run(mgr, _shifted_stream())                         # re-baselining would repair this shift
+    first = mgr.decisions[0]
+    assert (first["verdict"], first["action"]) == ("restart", "hold")
+    assert mgr.registry.production_version == 1 and mgr.shifts == {}
+
+
 def test_a_restart_dip_that_recovers_is_resumed_early():
     mgr = _manager(_cfg(early_stop=True, quarantine_with_change=400, quarantine_silent=400),
                    events=[ChangeEvent("svc", "restart", step=301)])

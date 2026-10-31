@@ -65,6 +65,8 @@ class Runtime:
         # A step awaits between services, so reset() could swap the fleet in the middle of one and
         # the step would carry on against the half-built new fleet. Steps and reset take turns.
         self._step_lock = asyncio.Lock()
+        self._dirty: set[str] = set()               # services whose lifecycle changed since the last checkpoint
+        self._last_checkpoint = self._last_checkpoint_all = time.monotonic()
 
     @property
     def live(self) -> bool:
@@ -79,12 +81,19 @@ class Runtime:
     def persist_every(self) -> int:
         return 1 if self.live else settings.persist_every
 
+    @property
+    def checkpoints_enabled(self) -> bool:
+        mode = settings.model_checkpoints
+        return mode == "on" or (mode == "auto" and self.live)
+
     # -- lifecycle ---------------------------------------------------------------------------------
     async def start(self, backing_services: bool = True, replay: bool = True) -> None:
         self.hub.start()
         if backing_services:
             self.store = await make_store(settings.database_url)
             await self.bus.start(settings.redis_url)
+        if self.checkpoints_enabled:
+            self.fleet.checkpoints = await self.store.load_checkpoints()
         await asyncio.to_thread(self.fleet.build)
         self._log_warm_up()
         await self.drain_all()                      # warm-up versions and transitions
@@ -106,6 +115,7 @@ class Runtime:
         if self.changes is not None:
             self.changes.stop()
         self.hub.stop()
+        await self.save_checkpoints(every=True)
         await self.flush_logs()
         await self.flush_rows()
         await self.store.stop()
@@ -133,6 +143,7 @@ class Runtime:
             await self.flush_logs()
             if time.monotonic() - self._last_flush >= 1.0:
                 await self.flush_rows()
+            await self.maybe_checkpoint()
             await asyncio.sleep(TICK_S)
 
     async def step_all(self) -> None:
@@ -200,6 +211,7 @@ class Runtime:
                         logger.warning("live: scrape failed (%s), %d in a row", exc, failures)
             await self.flush_logs()
             await self.flush_rows()
+            await self.maybe_checkpoint()
             await asyncio.sleep(max(0.0, interval - (time.monotonic() - started)))
 
     async def live_action(self, service_id: str, action: str) -> dict:
@@ -250,9 +262,46 @@ class Runtime:
                          "info", attrs)
         await self.drain(rt)
 
+    # -- checkpoints (docs/adr/0006) -----------------------------------------------------------------
+    async def maybe_checkpoint(self) -> None:
+        now = time.monotonic()
+        if now - self._last_checkpoint_all >= settings.checkpoint_all_every_s:
+            self._last_checkpoint = self._last_checkpoint_all = now
+            await self.save_checkpoints(every=True)
+        elif self._dirty and now - self._last_checkpoint >= settings.checkpoint_every_s:
+            self._last_checkpoint = now
+            await self.save_checkpoints()
+
+    async def save_checkpoints(self, every: bool = False) -> int:
+        """Write the lifecycle checkpoint of every changed service (or of all of them)."""
+        if not self.checkpoints_enabled:
+            return 0
+        saved = 0
+        async with self._step_lock:                 # never between two services of one step
+            ids = list(self.fleet.services) if every else [s for s in self._dirty if s in self.fleet.services]
+            self._dirty.difference_update(ids)
+            for sid in ids:
+                rt = self.fleet.services[sid]
+                try:
+                    blob = rt.manager.export_state()
+                except Exception:  # noqa: BLE001 - one bad export must not stop the others
+                    logger.exception("checkpoint: could not export %s", sid)
+                    continue
+                await self.store.save_checkpoint({
+                    "service_id": sid, "source": rt.entity, "step": rt.manager.step,
+                    "production_version": rt.manager.registry.production_version, "blob": blob})
+                saved += 1
+        return saved
+
     # -- logs --------------------------------------------------------------------------------------
     def _log_warm_up(self) -> None:
         for rt in self.fleet.services.values():
+            if rt.restored:
+                self.log(rt.service_id, f"resumed from its checkpoint on {rt.entity}: step {rt.manager.step}, "
+                         f"model v{rt.manager.registry.production_version} serving, "
+                         f"{len(rt.manager.registry.versions)} versions, no warm-up needed",
+                         attrs={"entity": rt.entity, "restored": True})
+                continue
             self.log(rt.service_id, f"warm-up complete on {rt.entity}: {self.fleet.warm_up_rows} rows, "
                      f"model v{rt.manager.registry.production_version} serving, "
                      f"{settings.threshold_method.upper()} threshold {rt.manager.threshold:.4f}",
@@ -286,6 +335,7 @@ class Runtime:
     async def drain(self, rt: ServiceRuntime) -> None:
         while rt.outbox.events:
             kind, payload = rt.outbox.events.popleft()
+            self._dirty.add(rt.service_id)
             if kind == "transition":
                 moved = payload["from_version"] not in (None, payload["to_version"])
                 self.log(rt.service_id, f"model {payload['transition']} "
@@ -357,6 +407,8 @@ class Runtime:
         self.paused = True
         try:
             async with self._step_lock:              # wait for a step in flight, then block new ones
+                await self.store.clear_checkpoints()    # a reset starts every service over
+                self._dirty.clear()
                 fleet = self.fleet.fresh()
                 await asyncio.to_thread(fleet.build)
                 self.fleet = fleet                   # only swap in a fully built fleet

@@ -198,3 +198,39 @@ def test_websocket_sends_snapshot_then_live_events(client):
         client.post(f"/api/demo/{SERVICE}/incident")
         seen = ws.receive_json()
         assert seen["type"] == "demo_injection" and seen["service_id"] == SERVICE
+
+
+def test_a_restarted_backend_resumes_from_its_checkpoints(monkeypatch):
+    from app.store import MemoryStore
+    monkeypatch.setattr(settings, "model_checkpoints", "on")
+    runtime.store = MemoryStore()
+    spec = (SERVICE, "Test Service", "machine-1-2", 9250)
+
+    runtime.fleet = ServiceFleet([spec])
+    with TestClient(app) as c:
+        warm(c)
+        c.post(f"/api/demo/{SERVICE}/deploy")
+        run_until_decision(c, {"promote"})
+        mgr = runtime.fleet.services[SERVICE].manager
+        version, step, versions = mgr.registry.production_version, mgr.step, len(mgr.registry.versions)
+    assert version > 1 and runtime.store.checkpoints[SERVICE]["production_version"] == version
+
+    runtime.fleet = ServiceFleet([spec])                 # a new process: same source, same detector
+    with TestClient(app) as c:
+        rt = runtime.fleet.services[SERVICE]
+        assert rt.restored and rt.manager.step == step
+        assert rt.manager.registry.production_version == version
+        assert len(rt.manager.registry.versions) == versions
+        assert c.get(f"/api/models/{SERVICE}").json()["productionVersion"] == version
+        lines = c.get("/api/logs", params={"q": f"resumed service:{SERVICE}"}).json()["lines"]
+        assert lines and "no warm-up needed" in lines[-1]["message"]
+
+        assert c.post("/api/demo/reset").status_code == 200   # a reset starts over
+        assert runtime.store.checkpoints == {} and not runtime.fleet.services[SERVICE].restored
+
+    runtime.store.checkpoints[SERVICE] = {"service_id": SERVICE, "source": "machine-1-2", "step": step,
+                                          "production_version": version, "blob": b"not used"}
+    runtime.fleet = ServiceFleet([(SERVICE, "Test Service", "machine-2-2", 0)])   # another server
+    with TestClient(app):
+        assert not runtime.fleet.services[SERVICE].restored
+    runtime.store = MemoryStore()

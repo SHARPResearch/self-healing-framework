@@ -22,7 +22,7 @@ from src.lifecycle_manager import DynamicModelManager, LifecycleConfig
 
 from app.config import settings
 from app.fleet import MirroredRegistry, Outbox, ServiceFleet, ServiceRuntime, normalized_score
-from app.prom import OnlineBoutiqueTelemetry, PrometheusClient
+from app.prom import FEATURES, OnlineBoutiqueTelemetry, PrometheusClient
 
 logger = logging.getLogger(__name__)
 
@@ -66,10 +66,17 @@ class LiveFleet(ServiceFleet):
         if not names:
             raise RuntimeError(f"no Deployments found in namespace {settings.k8s_namespace!r} "
                                f"at {settings.prometheus_url}; is the cluster up (up.ps1)?")
-        history = self.telemetry.history(names, settings.live_warmup_minutes, settings.live_scrape_seconds)
+        # Services with a checkpoint resume at once; only the others need an hour of history.
+        for name in names:
+            rt = self._build_live(name, None)
+            if rt is not None:
+                self.services[name] = rt
+                logger.info("fleet: %s resumed from its checkpoint", name)
+        cold = [n for n in names if n not in self.services]
+        history = self.telemetry.history(cold, settings.live_warmup_minutes, settings.live_scrape_seconds) if cold else {}
         min_rows = int(settings.live_min_warmup_minutes * 60 / settings.live_scrape_seconds)
         null_rows = 2 * self.cfg.quarantine_silent
-        for name in names:
+        for name in cold:
             rows = history.get(name, [])
             if len(rows) < min_rows:
                 logger.warning("live: skipping %s, only %d warm-up rows (need %d)", name, len(rows), min_rows)
@@ -83,17 +90,23 @@ class LiveFleet(ServiceFleet):
         if not self.services:
             raise RuntimeError("live: no service had enough Prometheus history to warm up")
 
-    def _build_live(self, name: str, rows: list[dict]) -> ServiceRuntime:
+    def _build_live(self, name: str, rows: Optional[list[dict]]) -> Optional[ServiceRuntime]:
+        """Warm up on `rows`, or with rows=None resume from the checkpoint (None if there is none)."""
         outbox, changes = Outbox(), QueueChangeEventSource()
         mgr = DynamicModelManager(name, self.cfg, self.hst_cfg,
                                   registry=MirroredRegistry(name, outbox),
                                   change_source=changes, publisher=outbox)
-        mgr.warm_up(rows)
+        if rows is None:
+            if not self.restore(mgr, list(FEATURES), source=f"{settings.k8s_namespace}/{name}"):
+                return None
+        else:
+            mgr.warm_up(rows)
         rt = ServiceRuntime(service_id=name, display_name=display_name(name),
                             entity=f"{settings.k8s_namespace}/{name}", manager=mgr,
                             changes=changes, outbox=outbox, test_rows=[], test_df=pd.DataFrame(),
                             medians={})
         rt.rng.seed(name)
+        rt.restored = rows is None
         return rt
 
     def process_row(self, rt: ServiceRuntime, x: dict):

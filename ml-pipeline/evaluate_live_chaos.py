@@ -12,6 +12,8 @@ are replayed through two policies with the same detector (smoothed PCA, POT thre
   static   frozen model
   cadal    the lifecycle as served live (accelerated pacing: one "day" = 30 min of 5 s scrapes)
   cadal_early  the same with sequential early stop (decides before the full quarantine when conclusive)
+  cadal_restart  cadal_early told about pod restarts, as the Kubernetes pod watcher would report them
+               (recovered here from the pod-kill windows and from the restarts metric rising from 0)
 
 A row is labelled anomalous inside a fault window on that service. Reported per (policy, service):
   detected / faults          fault windows with at least one alarm inside (window + 60 s grace)
@@ -20,6 +22,7 @@ A row is labelled anomalous inside a fault window on that service. Reported per 
   MCC, event recall          point-wise, as in evaluate_dynamic (stream_metrics)
   incidents learned          promotions while a fault was active or within one quarantine after
                              it (a model learning the incident as normal): should be 0
+  restart share              of the false alarms, the share within RESTART_WINDOW_S after a restart
 
     uv run python evaluate_live_chaos.py outputs/live_chaos/<run>
 """
@@ -31,25 +34,40 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
+from src.change_events import ChangeEvent, ReplayChangeEventSource
 from src.dynamic_eval import stream_metrics
 from src.hst_model import detector_config
 from src.lifecycle_manager import DynamicModelManager, LifecycleConfig
 
 GRACE_S = 60
+RESTART_WINDOW_S = 600
 FEATURES = ("cpu_rate", "memory_used", "network_rx", "network_tx", "cpu_throttled", "restarts", "ready_ratio")
 
 
 def lifecycle(policy: str, samples_per_day: int) -> LifecycleConfig:
-    early = policy == "cadal_early"             # cadal with sequential early stop
+    early = policy in ("cadal_early", "cadal_restart")   # cadal with sequential early stop
     base = LifecycleConfig(policy="cadal" if early else policy, threshold_method="pot", early_stop=early)
     return replace(base.for_sampling(samples_per_day), operator_queries=False) if base.policy == "cadal" \
         else base.for_sampling(samples_per_day)
 
 
-def run_policy(policy: str, warm: list[dict], rows: list[dict], spd: int) -> tuple[list[bool], list[dict]]:
-    mgr = DynamicModelManager("svc", lifecycle(policy, spd), detector_config("pca_s5"))
+def restart_steps(live: pd.DataFrame, windows: pd.DataFrame) -> list[int]:
+    """Row indices where a restart happened: pod kills, and the restarts metric rising from 0."""
+    times = live.time.to_numpy()
+    steps = {int(np.searchsorted(times, s)) for s in windows[windows.fault == "pod_kill"].start}
+    restarts = live.restarts.to_numpy()
+    steps |= {i for i in range(1, len(restarts)) if restarts[i] > 0 and restarts[i - 1] <= 0}
+    return sorted(s for s in steps if s < len(times))
+
+
+def run_policy(policy: str, warm: list[dict], rows: list[dict], spd: int,
+               restarts: list[int] = ()) -> tuple[list[bool], list[dict]]:
+    events = [ChangeEvent("svc", "restart", step=i + 1) for i in restarts] if policy == "cadal_restart" else []
+    mgr = DynamicModelManager("svc", lifecycle(policy, spd), detector_config("pca_s5"),
+                              change_source=ReplayChangeEventSource(events))
     mgr.warm_up(warm)
     alarms = []
     for x in rows:
@@ -78,8 +96,12 @@ def evaluate(run: Path) -> pd.DataFrame:
         near = [any(s <= t <= e + GRACE_S for s, e in zip(w.start, w.end)) for t in times]
         warm_rows = warm[list(FEATURES)].to_dict(orient="records")
         live_rows = live[list(FEATURES)].to_dict(orient="records")
-        for policy in ("static", "cadal", "cadal_early"):
-            alarms, decisions = run_policy(policy, warm_rows, live_rows, spd)
+        restarts = restart_steps(live, w)
+        after_restart = np.zeros(len(times), dtype=bool)
+        for i in restarts:
+            after_restart |= (times >= times[i]) & (times < times[i] + RESTART_WINDOW_S)
+        for policy in ("static", "cadal", "cadal_early", "cadal_restart"):
+            alarms, decisions = run_policy(policy, warm_rows, live_rows, spd, restarts)
             m = stream_metrics(alarms, labels, None, 0.01)
             detected, delays = 0, []
             for s, e in zip(w.start, w.end):
@@ -88,6 +110,7 @@ def evaluate(run: Path) -> pd.DataFrame:
                     detected += 1
                     delays.append(hits[0] - s)
             outside = [a for a, n in zip(alarms, near) if not n]
+            outside_after_restart = [a for a, n, r in zip(alarms, near, after_restart) if not n and r]
             hours = len(outside) * meta["scrape_seconds"] / 3600
             learned = 0
             for d in decisions:
@@ -102,6 +125,11 @@ def evaluate(run: Path) -> pd.DataFrame:
                 "mcc": m["mcc"], "event_recall": m["event_recall"],
                 "promotions": sum(d.get("action") == "promote" for d in decisions),
                 "incidents_learned": learned,
+                "restarts": len(restarts),
+                "false_alarms_after_restart_share": (round(sum(outside_after_restart) / sum(outside), 3)
+                                                     if sum(outside) else None),
+                "decisions": " ".join(f"{d['verdict']}/{d['action']}" + ("*" if d.get("evidence", {}).get("early") else "")
+                                      for d in decisions),
             })
     return pd.DataFrame(out)
 

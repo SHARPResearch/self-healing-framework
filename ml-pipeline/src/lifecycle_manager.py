@@ -68,6 +68,10 @@ POLICIES = ("static", "online", "naive_rollback", "periodic", "gated", "cadal")
 class LifecycleConfig:
     policy: str = "cadal"
     use_change_events: bool = True          # False = cadal ablation without the change prior
+    # Change kinds that license replacing the model. Others (a pod restart) still open a quarantine
+    # at once, but a shift they explain may only be resumed, re-baselined, held or asked about:
+    # a restarted pod returns to the old normal, so its warm-up must not be learned as a new one.
+    licensing_change_kinds: tuple[str, ...] = ("deployment", "config", "scale")
     calib_percentile: float = 97.0          # per-version threshold, see ml-pipeline/RESULTS.md
     # "percentile": threshold = calib_percentile of held-out scores. "pot": Peaks-Over-Threshold
     # extreme value fit at risk pot_q (src/evaluate.pot_threshold), selected on the SMD dev
@@ -329,6 +333,8 @@ class DynamicModelManager:
         self._cooldown_until = 0
         self._last_change: Optional[ChangeEvent] = None
         self._last_change_step = -10**9
+        self._last_restart: Optional[ChangeEvent] = None   # last non-licensing change (a restart)
+        self._last_restart_step = -10**9
         self._recent_alarms: deque[bool] = deque(maxlen=cfg.scheduled_window)
         self._recent_rows: deque[dict] = deque(maxlen=cfg.periodic_window)
         self._recent_scores: deque[float] = deque(maxlen=cfg.naive_stable_every)
@@ -354,6 +360,7 @@ class DynamicModelManager:
         self._pending = None
         self._pending_kind = ""                 # "decision" (closes the quarantine) or "look" (may not)
         self._deferred_change = False
+        self._deferred_trigger = "change_event"
         # Operator queries: query_id -> record; pending candidates stay in memory only.
         self.queries: dict[str, dict] = {}
         self._query_steps: list[int] = []
@@ -647,16 +654,22 @@ class DynamicModelManager:
     def _on_change_event(self, evt: ChangeEvent) -> Optional[dict]:
         if self.cfg.policy != "cadal" or not self.cfg.use_change_events:
             return None
-        self._last_change, self._last_change_step = evt, self.step
+        licensing = evt.kind in self.cfg.licensing_change_kinds
+        if licensing:
+            self._last_change, self._last_change_step = evt, self.step
+        else:
+            self._last_restart, self._last_restart_step = evt, self.step
+        trigger = "change_event" if licensing else evt.kind
         self.publisher.publish_lifecycle({"service_id": self.service_id, "event": "change_observed",
-                                          "change_event_id": evt.event_id, "step": self.step})
+                                          "change_event_id": evt.event_id, "kind": evt.kind,
+                                          "licensing": licensing, "detail": evt.detail, "step": self.step})
         # Evidence about the post-change regime has to come from after the change, so a change
         # during an open quarantine restarts it rather than reusing the pre-change buffer. While
         # an asynchronous decision is in flight, the new quarantine opens once it is applied.
         if self.phase == "deciding":
-            self._deferred_change = True
+            self._deferred_change, self._deferred_trigger = True, trigger
             return None
-        self._open_quarantine("change_event")
+        self._open_quarantine(trigger)
         return None
 
     def _open_quarantine(self, trigger: str) -> None:
@@ -711,6 +724,9 @@ class DynamicModelManager:
             "champion_threshold": self.threshold, "champion_gate": self.learn_gate,
             "ref_stats": self.ref_stats, "null": self.attribution_null.get(n, {}),
             "may_ask": self._may_ask(), "q_start": self._q_start, "length": self._q_target_len,
+            "restart_event_id": (self._last_restart.event_id
+                                 if self._last_restart is not None and self._last_restart_step >= self._q_start
+                                 else None),
         }
 
     def quarantine_progress(self) -> Optional[dict]:
@@ -883,6 +899,8 @@ class DynamicModelManager:
         """Serve what the evaluation decided. Runs on the serving thread, in milliseconds."""
         t = time.perf_counter()
         result = out["result"]
+        if out.get("restart_event_id"):
+            result.evidence.setdefault("restart_event_id", out["restart_event_id"])
         result.evidence.setdefault("early", False)
         result.evidence.setdefault("quarantine_events", len(out["rows"]))
         result.evidence.setdefault("quarantine_length", out.get("length"))
@@ -938,7 +956,7 @@ class DynamicModelManager:
                                  "evidence": result.evidence, "query_id": query_id})
         if self._deferred_change:
             self._deferred_change = False
-            self._open_quarantine("change_event")
+            self._open_quarantine(self._deferred_trigger)
         return decision
 
     # -- operator in the loop -------------------------------------------------------------------

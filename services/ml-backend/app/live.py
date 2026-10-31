@@ -131,21 +131,34 @@ class ChangeFanOut:
     """
 
     def __init__(self, namespace: str):
-        from src.change_events import KubernetesDeploymentWatcher
+        from src.change_events import KubernetesDeploymentWatcher, KubernetesPodWatcher
         self.watcher = KubernetesDeploymentWatcher(namespace, service_label="app")
+        self.pods = KubernetesPodWatcher(namespace, service_label="app")
         self.started = False
         self._seen: dict[str, object] = {}         # service -> last routed Deployment generation
+        self._restarts_seen: set[str] = set()       # restart event ids already routed
 
     def start(self) -> None:
         self.watcher.start()
+        self.pods.start()
         self.started = True
 
     def stop(self) -> None:
         if self.started:
             self.watcher.stop()
+            self.pods.stop()
 
     def route(self, fleet: ServiceFleet) -> list:
         routed = []
+        for evt in self.pods.poll(0):
+            rt = fleet.services.get(evt.service_id)
+            if rt is None or evt.event_id in self._restarts_seen:
+                continue
+            self._restarts_seen.add(evt.event_id)
+            rt.restart_until_step = rt.manager.step + max(
+                1, int(settings.restart_label_seconds / settings.live_scrape_seconds))
+            rt.changes.push(evt)
+            routed.append(evt)
         for evt in self.watcher.poll(0):
             rt = fleet.services.get(evt.service_id)
             if rt is None:

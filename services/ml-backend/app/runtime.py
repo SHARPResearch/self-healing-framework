@@ -175,6 +175,12 @@ class Runtime:
         if self.changes is None:
             return
         for evt in self.changes.route(self.fleet):
+            if evt.kind == "restart":
+                d = evt.detail
+                self.log(evt.service_id, f"Kubernetes pod restart observed: {d.get('reason', '').replace('_', ' ')} "
+                         f"of {d.get('pod')}" + (f" ({d['exit_reason']})" if d.get("exit_reason") else ""),
+                         "info", {"change_event_id": evt.event_id, "kind": evt.kind, **d})
+                continue
             self.log(evt.service_id, f"Kubernetes rollout observed: {evt.kind} of {evt.service_id} "
                      f"({', '.join(i for i in evt.detail.get('images', []) if i)})", "info",
                      {"change_event_id": evt.event_id, "kind": evt.kind})
@@ -234,6 +240,7 @@ class Runtime:
         return info
 
     async def _after_step(self, rt: ServiceRuntime, x: dict, res, display: float, now: datetime) -> None:
+        after_restart = res.step <= rt.restart_until_step
         if res.step % self.persist_every == 0 or res.alarm:
             self._pending_rows.append({
                 "time": now, "service_id": rt.service_id, "anomaly_score": display,
@@ -248,14 +255,18 @@ class Runtime:
                 "phase": res.phase, "threshold": 0.5,
                 "trigger": getattr(rt.manager, "_q_trigger", None) if res.phase != "stable" else None,
                 "quarantine": rt.manager.quarantine_progress(),
+                # alarms right after a pod restart are expected while it settles (docs/adr/0008)
+                "context": "after_restart" if after_restart else None,
             }))
         episode = self._alarms.setdefault(rt.service_id, AlarmLog()).update(
             res.step, bool(res.alarm), display)
         if episode:
             kind, attrs = episode
             if kind == "raised":
+                note = ", expected: a pod restarted moments ago" if after_restart else ""
                 self.log(rt.service_id, f"alarm raised: sustained since step {attrs['since_step']} "
-                         f"(peak score {attrs['score']}, model v{res.version})", "warn", attrs)
+                         f"(peak score {attrs['score']}, model v{res.version}{note})", "warn",
+                         {**attrs, "after_restart": after_restart})
             else:
                 self.log(rt.service_id, f"alarm cleared: steps {attrs['from_step']} to {attrs['to_step']}, "
                          f"peak score {attrs['peak']}, {attrs['alarming_events']} alarming events",
@@ -360,8 +371,8 @@ class Runtime:
                 elif event in ("operator_query", "query_answered", "query_expired"):
                     await self.store.write_query({**data, "service_id": rt.service_id})
                 elif event == "change_observed":
-                    await self.store.write_change({"service_id": rt.service_id, "kind": "deployment",
-                                                   "detail": data})
+                    await self.store.write_change({"service_id": rt.service_id,
+                                                   "kind": data.get("kind") or "deployment", "detail": data})
                 if event in LIFECYCLE_TYPES:
                     await self.bus.publish(envelope(event, rt.service_id, data))
 
@@ -379,7 +390,11 @@ class Runtime:
                 self.log(sid, f"early look at {seen} of {length} events: not conclusive yet, "
                          "quarantine continues", "info", {"seen": seen, "length": length})
         elif event == "change_observed":
-            self.log(sid, f"change event {d.get('change_event_id')} reached the lifecycle", "info")
+            if d.get("kind") == "restart":
+                self.log(sid, f"restart {d.get('change_event_id')} reached the lifecycle: it explains a "
+                         "shift but licenses no new model", "info")
+            else:
+                self.log(sid, f"change event {d.get('change_event_id')} reached the lifecycle", "info")
         elif event == "lifecycle_decision":
             action = d.get("action")
             self.log(sid, f"decision: {d.get('verdict')} -> {action}: {d.get('reason')}",

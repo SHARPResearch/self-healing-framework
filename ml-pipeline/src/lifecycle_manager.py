@@ -856,6 +856,7 @@ class DynamicModelManager:
             learnable_floor=ctx["null"].get("learnable"),
             moving_floor=ctx["null"].get("moving"),
             rebaseline_tail_alarm_rate=rebaseline_tail,
+            restart_event_id=ctx.get("restart_event_id"),
         )
         attribution_cfg = replace(self.cfg.attribution, ask_operator=ctx.get("may_ask", False))
         result: Attribution = attribute(evidence, attribution_cfg)

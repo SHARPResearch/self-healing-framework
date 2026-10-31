@@ -53,6 +53,7 @@ class Verdict(str, Enum):
     MODEL_DECAY = "model_decay"
     NO_CHANGE = "no_change"
     AMBIGUOUS = "ambiguous"   # label-free evidence cannot decide: ask the operator (ask_operator)
+    RESTART = "restart"       # a restarted pod is still settling: keep the model, learn nothing
 
 
 class Action(str, Enum):
@@ -69,6 +70,7 @@ VERDICT_ACTION = {
     Verdict.MODEL_DECAY: Action.ROLLBACK,
     Verdict.NO_CHANGE: Action.RESUME,
     Verdict.AMBIGUOUS: Action.ASK,
+    Verdict.RESTART: Action.HOLD,
 }
 
 
@@ -120,6 +122,8 @@ class QuarantineEvidence:
     # Tail alarm rate of the champion after re-baselining the shifted metrics (None: no metric
     # moved enough to re-baseline, or re-baselining not available).
     rebaseline_tail_alarm_rate: Optional[float] = None
+    # A pod restart the quarantine observed (a non-licensing change, see change_events).
+    restart_event_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -273,6 +277,7 @@ def attribute(ev: QuarantineEvidence, cfg: AttributionConfig = AttributionConfig
             None if ev.challenger_tail_alarm_rate is None else round(ev.challenger_tail_alarm_rate, 4)
         ),
         "change_event_id": ev.change_event_id,
+        "restart_event_id": ev.restart_event_id,
         "n_tail": ev.n_tail,
         "rebaseline_tail_alarm_rate": (
             None if ev.rebaseline_tail_alarm_rate is None else round(ev.rebaseline_tail_alarm_rate, 4)
@@ -301,6 +306,19 @@ def attribute(ev: QuarantineEvidence, cfg: AttributionConfig = AttributionConfig
             Verdict.NO_CHANGE,
             f"champion tail alarm rate {ev.champion_tail_alarm_rate:.4f} is under the stale line "
             f"{stale_line:.4f}: shift did not persist, champion still fits",
+        )
+
+    # A restart explains a shift but the pod returns to its old normal: the evidence is its warm-up
+    # (memory rebuilding, caches filling), which neither re-baselining nor retraining should learn.
+    # On the live Online Boutique campaign re-baselining a post-restart buffer promoted a model that
+    # then alarmed more once the pod had warmed up. A level that is still different after the pod
+    # settles is picked up later by the drift detector or a scheduled check, under the normal rules.
+    if ev.restart_event_id is not None and not has_change:
+        return done(
+            Verdict.RESTART,
+            f"champion still alarming (tail alarm rate {ev.champion_tail_alarm_rate:.4f}) after restart "
+            f"{ev.restart_event_id}: the restarted pod is still settling, so the model is kept and "
+            f"nothing is learned from its warm-up",
         )
 
     if ev.challenger_tail_alarm_rate is None:

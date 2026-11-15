@@ -7,7 +7,7 @@ from loguru import logger
 from app.core.events import MaskingRequest, MaskingResponse
 from app.agents.security.masking import masking_agent
 
-router = APIRouter(prefix="/api/security", tags=["Security Agent (Function 1)"])
+router = APIRouter(prefix="/api/security", tags=["Security Agent"])
 
 
 @router.post("/mask", response_model=MaskingResponse, summary="Systemic Masking Guardrail")

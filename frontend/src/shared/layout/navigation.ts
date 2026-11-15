@@ -5,6 +5,7 @@ import {
   Bot,
   GitBranch,
   GitCompareArrows,
+  ScrollText,
   LayoutDashboard,
   ListTree,
   Server,
@@ -45,6 +46,7 @@ export const navGroups: NavGroup[] = [
     label: "Operations",
     items: [
       { label: "Incidents", to: "/incidents", icon: Activity },
+      { label: "Logs", to: "/logs", icon: ScrollText },
       { label: "Notifications", to: "/notifications", icon: Bell },
       { label: "Models", to: "/models", icon: ListTree },
       {
@@ -56,7 +58,10 @@ export const navGroups: NavGroup[] = [
   },
   {
     label: "Assistant",
-    items: [{ label: "Copilot", to: "/copilot", icon: Bot }],
+    items: [
+      { label: "Copilot", to: "/copilot", icon: Bot },
+      { label: "Post-mortems", to: "/post-mortems", icon: ScrollText },
+    ],
   },
   {
     label: "Administration",

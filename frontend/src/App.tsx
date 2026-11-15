@@ -9,14 +9,13 @@ import { ServicesPage } from "@/features/services/ServicesPage";
 import { NotificationsPage } from "@/features/notifications/NotificationsPage";
 import { ModelsPage } from "@/features/models/ModelsPage";
 import { ModelLifecyclePage } from "@/features/lifecycle/ModelLifecyclePage";
+import { LogsPage } from "@/features/logs/LogsPage";
 import { SettingsPage } from "@/features/settings/SettingsPage";
 import { NotFoundPage } from "@/shared/components/NotFoundPage";
 import { ProfilePage } from "@/features/profile/ProfilePage";
 import { RouteFallback } from "@/shared/components/RouteFallback";
 import { AnomalyListPage } from "@/features/anomalies/AnomalyListPage";
-import { DecisionListPage } from "@/features/decisions/DecisionListPage";
-import { RuleListPage } from "@/features/rules/RuleListPage";
-import { RuleDetailPage } from "@/features/rules/RuleDetailPage";
+import { PostMortemsPage } from "@/features/copilot/PostMortemsPage";
 
 /**
  * Lazy loaded so their weight stays out of the shared bundle: marketing pulls
@@ -58,7 +57,9 @@ function App() {
         <Route path="/incidents" element={<IncidentsPage />} />
         <Route path="/models" element={<ModelsPage />} />
         <Route path="/model-lifecycle" element={<ModelLifecyclePage />} />
+        <Route path="/logs" element={<LogsPage />} />
         <Route path="/copilot" element={<CopilotPage />} />
+        <Route path="/post-mortems" element={<PostMortemsPage />} />
         <Route path="/notifications" element={<NotificationsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/profile" element={<ProfilePage />} />

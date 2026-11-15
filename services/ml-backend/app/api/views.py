@@ -40,10 +40,12 @@ def service_health(fleet: ServiceFleet, rt: ServiceRuntime) -> dict:
         # lifecycle extras
         "phase": mgr.phase,
         "quarantineTrigger": quarantine_trigger(rt),
+        "quarantine": mgr.quarantine_progress(),     # {seen, length, looks} while not stable
         "alarm": rt.last_alarm,
         "modelVersion": mgr.registry.production_version,
         "openQueries": len(mgr.open_queries),
-        "smdEntity": rt.entity,
+        "smdEntity": rt.entity + (f" (rows {rt.window_start}+)" if rt.window_start else ""),
+        "source": rt.entity,
     }
 
 

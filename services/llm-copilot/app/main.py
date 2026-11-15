@@ -5,6 +5,9 @@ Main FastAPI Application Entry Point.
 Component 5 of the Self-Healing AI-Driven Failure Prediction Framework.
 Owner: Rukshan E A Y (IT23263512)
 """
+
+from app.api.routes import chat
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
@@ -23,15 +26,21 @@ app = FastAPI(
     description="""
     ## Component 5 — Multi-Agent LLM System
     
-    This component provides:
-    - **Security Agent**: Systemic masking guardrails (PII scrubbing)
-    - **Reporting Agent**: Automated Markdown post-mortem generation
-    - **RCA Agent**: Root Cause Analysis
-    - **Conversational Agent**: RAG-based natural language querying (coming in PP2)
+    A fully integrated **Multi-Agent RAG System** that bridges the technical complexity of microservice telemetry with cross-functional stakeholders.
     
-    ### PP1 Functions
-    1. **Function 1**: `/api/security/mask` — Zero-leakage PII scrubbing
-    2. **Function 2**: `/api/postmortem/generate` — Automated post-mortem reports
+    ###  Multi-Agent Architecture
+    - ** Security Agent**: Systemic masking guardrails (Zero-Leakage PII scrubbing before LLM/Vector Store).
+    - ** Telemetry Agent**: Ingestion, chunking, and semantic embedding of raw metrics/logs into ChromaDB.
+    - ** Conversational Agent**: RAG-based natural language querying with deterministic PromQL/SQL translation.
+    - ** RCA Agent**: Root Cause Analysis using dependency graph context from Component 2.
+    - ** Reporting Agent**: Asynchronous Markdown post-mortem generation triggered by recovery events.
+    - ** Evaluation Agent**: LLM-as-a-Judge quality scoring, privacy verification, and metric export.
+    
+    ###  Extended Capabilities (Full System)
+    - **RAG Ingestion**: `POST /api/chat/ingest` (Vectorize and store telemetry)
+    - **Copilot Chat**: `POST /api/chat/query` (Natural language insights)
+    - **Orchestrator**: `GET /api/agents` (View registered agents and pipelines)
+    - **Quality Metrics**: `GET /api/chat/metrics` (View RAG evaluation scores & privacy pass rates)
     """,
     version="0.1.0",
     docs_url="/docs",
@@ -52,6 +61,7 @@ app.include_router(health.router)
 app.include_router(security.router)
 app.include_router(postmortem.router)
 app.include_router(webhooks.router)
+app.include_router(chat.router)
 
 
 # Lifecycle Events 
@@ -70,7 +80,7 @@ async def shutdown_event():
     logger.info("LLM Copilot shutdown complete")
 
 
-# ─── Root Endpoint ────────────────────────────────────────
+# Root Endpoint 
 @app.get("/", tags=["Root"])
 async def root():
     return {
@@ -83,4 +93,14 @@ async def root():
             "POST /api/security/mask — Function 1: Systemic Masking Guardrail",
             "POST /api/postmortem/generate — Function 2: Automated Post-Mortem Generator",
         ],
+    }
+
+# Agent registry 
+@app.get("/api/agents", tags=[" Agent Registry"])
+async def list_agents():
+    """List all registered agents."""
+    from app.agents.orchestrator.agent_registry import agent_registry
+    return {
+        "agents": agent_registry.list_agents(),
+        "total": len(agent_registry.list_agents())
     }

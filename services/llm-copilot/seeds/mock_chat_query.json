@@ -1,0 +1,7 @@
+{
+  "query": "Why did the payment service experience high CPU usage yesterday?",
+  "context": {
+    "service": "payment-svc",
+    "time_range": "24h"
+  }
+}

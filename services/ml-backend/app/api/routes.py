@@ -3,6 +3,7 @@ routes.py — REST API under /api (contract documented in services/ml-backend/RE
 """
 
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -10,6 +11,8 @@ from pydantic import BaseModel
 
 from app.api import views
 from app.bus import envelope
+from app.config import settings
+from app.logs import public as public_log
 from app.runtime import runtime
 
 router = APIRouter(prefix="/api")
@@ -24,7 +27,12 @@ def _service(service_id: str):
 
 @router.get("/health")
 async def health() -> dict:
-    return {"status": "ok", "store": runtime.store.kind,
+    return {"status": "ok", "mode": "prometheus" if runtime.live else "replay",
+            "watcher": runtime.changes is not None, "liveActions": runtime.actions is not None,
+            "namespace": settings.k8s_namespace if runtime.live else None,
+            "scrapeSeconds": settings.live_scrape_seconds if runtime.live else None,
+            "lifecycleDayMinutes": settings.live_lifecycle_day_minutes if runtime.live else None,
+            "store": runtime.store.kind,
             "db": runtime.store.kind == "timescaledb" and getattr(runtime.store, "pool", None) is not None,
             "redis": runtime.bus.redis_ok, "services": len(runtime.fleet.services),
             "tick": runtime.tick, "eventsPerSec": runtime.events_per_sec, "paused": runtime.paused,
@@ -156,10 +164,49 @@ async def answer_query(query_id: str, body: AnswerBody) -> dict:
     raise HTTPException(404, f"unknown query {query_id}")
 
 
+# -- logs ---------------------------------------------------------------------------------------
+def _utc(value: Optional[datetime]) -> Optional[datetime]:
+    if value is not None and value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+@router.get("/logs")
+async def logs(q: str = "", since: Optional[datetime] = None, until: Optional[datetime] = None,
+               before: Optional[datetime] = None, limit: int = Query(500, ge=1, le=2000)) -> dict:
+    """
+    Log lines oldest first: the newest `limit` that match. `q` is the page's filter box (free text
+    plus service:, level: and source: terms). Pass the oldest returned time as `before` to page
+    further back; `hasMore` says whether anything older matched.
+    """
+    await runtime.flush_logs()
+    rows = await runtime.store.query_logs(q, _utc(since), _utc(until), _utc(before), limit + 1)
+    has_more = len(rows) > limit
+    return {"lines": [public_log(r) for r in rows[-limit:]], "hasMore": has_more}
+
+
+@router.get("/logs/histogram")
+async def logs_histogram(q: str = "", since: Optional[datetime] = None,
+                         until: Optional[datetime] = None) -> dict:
+    """Matching lines per time bucket and level, for the bar strip above the log table."""
+    await runtime.flush_logs()
+    end = _utc(until) or datetime.now(timezone.utc)
+    start = _utc(since) or end - timedelta(hours=1)
+    return await runtime.store.log_histogram(q, start, end)
+
+
+@router.get("/logs/services")
+async def logs_services() -> list[dict]:
+    """Every service that has logged, with its line count (the page's service filter)."""
+    await runtime.flush_logs()
+    return await runtime.store.log_services()
+
+
 # -- demo controls ------------------------------------------------------------------------------
 @router.get("/demo/state")
 async def demo_state() -> dict:
-    return {"eventsPerSec": runtime.events_per_sec, "paused": runtime.paused, "tick": runtime.tick,
+    return {"mode": "prometheus" if runtime.live else "replay",
+            "eventsPerSec": runtime.events_per_sec, "paused": runtime.paused, "tick": runtime.tick,
             "services": [{"serviceId": rt.service_id, "displayName": rt.display_name,
                           "smdEntity": rt.entity, "step": rt.manager.step,
                           "injections": [i.kind for i in rt.injections]}
@@ -167,8 +214,10 @@ async def demo_state() -> dict:
 
 
 @router.post("/demo/{service_id}/{kind}")
-async def demo_inject(service_id: str, kind: Literal["deploy", "silent_change", "incident"]) -> dict:
+async def demo_inject(service_id: str, kind: Literal["deploy", "silent_change", "incident", "restart"]) -> dict:
     _service(service_id)
+    if runtime.live:
+        raise HTTPException(409, "synthetic injections are replay only; use POST /api/live/{service}/{action}")
     return await runtime.inject(service_id, kind)
 
 
@@ -179,6 +228,8 @@ class SpeedBody(BaseModel):
 
 @router.post("/demo/speed")
 async def demo_speed(body: SpeedBody) -> dict:
+    if body.eventsPerSec is not None and runtime.live:
+        raise HTTPException(409, "live mode follows the Prometheus scrape interval; speed is replay only")
     if body.eventsPerSec is not None:
         runtime.events_per_sec = max(0.5, min(200.0, body.eventsPerSec))
     if body.paused is not None:
@@ -186,6 +237,22 @@ async def demo_speed(body: SpeedBody) -> dict:
     await runtime.bus.publish(envelope("demo_speed", None, {"eventsPerSec": runtime.events_per_sec,
                                                             "paused": runtime.paused}))
     return {"eventsPerSec": runtime.events_per_sec, "paused": runtime.paused}
+
+
+@router.post("/live/{service_id}/{action}")
+async def live_action(service_id: str, action: str) -> dict:
+    """A real scenario on the live cluster: rollout, traffic_up/traffic_reset, or a Chaos Mesh fault."""
+    from app.live_actions import ACTIONS
+    if not runtime.live:
+        raise HTTPException(409, "live actions need TELEMETRY_MODE=prometheus")
+    if action not in ACTIONS:
+        raise HTTPException(422, f"unknown action {action!r}; expected one of {list(ACTIONS)}")
+    if not action.startswith("traffic"):
+        _service(service_id)
+    try:
+        return await runtime.live_action(service_id, action)
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc))
 
 
 @router.post("/demo/reset")

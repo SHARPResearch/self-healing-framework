@@ -2,6 +2,7 @@ import type {
   BackendHealth,
   DashboardSummary,
   InjectionKind,
+  LiveAction,
   LifecycleDecision,
   LiveServiceHealth,
   OperatorQuery,
@@ -9,6 +10,7 @@ import type {
   ScorePoint,
 } from "@/features/lifecycle/types";
 import type { ModelDetail, ModelRun } from "@/features/models/types";
+import type { LogHistogram, LogPage, LogServiceSummary } from "@/features/logs/types";
 
 /**
  * Typed client for services/ml-backend. Same origin by default (Vite proxies /api and /ws to
@@ -44,6 +46,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+function qs(params: Record<string, string | number | undefined>): string {
+  const entries = Object.entries(params).filter(([, v]) => v !== undefined && v !== "");
+  return entries.length ? "?" + new URLSearchParams(entries.map(([k, v]) => [k, String(v)])).toString() : "";
+}
+
 const post = <T>(path: string, body: unknown = {}) =>
   request<T>(path, { method: "POST", body: JSON.stringify(body) });
 
@@ -76,7 +83,13 @@ export const api = {
   answer: (queryId: string, answer: QueryAnswer, operator: string) =>
     post<ActionResult>(`/queries/${queryId}/answer`, { answer, operator }),
   inject: (serviceId: string, kind: InjectionKind) => post<Record<string, unknown>>(`/demo/${serviceId}/${kind}`),
+  live: (serviceId: string, action: LiveAction) => post<Record<string, unknown>>(`/live/${serviceId}/${action}`),
   speed: (body: { eventsPerSec?: number; paused?: boolean }) =>
     post<{ eventsPerSec: number; paused: boolean }>("/demo/speed", body),
   reset: () => post<{ status: string }>("/demo/reset"),
+  logs: (p: { q?: string; since?: string; until?: string; before?: string; limit?: number }) =>
+    request<LogPage>(`/logs${qs(p)}`),
+  logsHistogram: (p: { q?: string; since?: string; until?: string }) =>
+    request<LogHistogram>(`/logs/histogram${qs(p)}`),
+  logsServices: () => request<LogServiceSummary[]>("/logs/services"),
 };

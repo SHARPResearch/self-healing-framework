@@ -1,3 +1,4 @@
+# services\decision-engine\app\config.py
 """
 Central config. Reads from .env via python-dotenv.
 Supports cloud-hosted Postgres (Neon), TimescaleDB (Tiger Cloud), Neo4j Aura.

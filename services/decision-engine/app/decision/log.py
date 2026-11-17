@@ -1,3 +1,5 @@
+# services/decision-engine/app/decision/log.py
+
 """
 Decision persistence — convert Rule Engine output ↔ decision_log rows.
 

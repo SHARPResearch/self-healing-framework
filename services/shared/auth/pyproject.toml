@@ -1,0 +1,12 @@
+[project]
+name = "shared-auth"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "pydantic[email]>=2.7",
+    "pydantic-settings>=2.4",
+    "asyncpg>=0.29",
+    "passlib[bcrypt]>=1.7",
+    "python-jose[cryptography]>=3.3",
+]

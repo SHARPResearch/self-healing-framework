@@ -530,5 +530,156 @@ class PostgresStore:
             out.append(row)
         return out
 
+        # ── IN_FLIGHT ACTIONS (Phase 2 — conflict detection) ────────
+    async def insert_in_flight(
+        self,
+        decision_id: str,
+        service_id: str,
+        action: str,
+        expires_at,
+    ) -> bool:
+        """
+        Register an action as "in progress" on a service. Called by the
+        decision pipeline right after a decision is persisted.
+        """
+        async with self.pool.acquire() as conn:
+            try:
+                await conn.execute(
+                    """
+                    INSERT INTO in_flight_actions
+                        (decision_id, service_id, action, started_at, expires_at)
+                    VALUES ($1, $2, $3, NOW(), $4)
+                    ON CONFLICT (decision_id) DO NOTHING
+                    """,
+                    decision_id, service_id, action, expires_at,
+                )
+                return True
+            except Exception as e:
+                log.exception("insert_in_flight failed: %s", e)
+                return False
+
+    async def list_in_flight(self, service_id: str) -> list[dict]:
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT * FROM in_flight_actions
+                WHERE service_id = $1
+                ORDER BY started_at DESC
+                """,
+                service_id,
+            )
+        return [dict(r) for r in rows]
+
+    async def list_in_flight_multi(self, service_ids: list[str]) -> list[dict]:
+        if not service_ids:
+            return []
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT * FROM in_flight_actions
+                WHERE service_id = ANY($1::text[])
+                ORDER BY started_at DESC
+                """,
+                service_ids,
+            )
+        return [dict(r) for r in rows]
+
+    async def clear_expired_in_flight(self) -> int:
+        """Housekeeping — call from a background job if you like."""
+        async with self.pool.acquire() as conn:
+            result = await conn.execute(
+                "DELETE FROM in_flight_actions WHERE expires_at < NOW()"
+            )
+        # "DELETE N"
+        try:
+            return int(result.split()[-1])
+        except (ValueError, IndexError):
+            return 0
+
+    # ── ACTION HISTORY (Phase 2 — repeat-failure counting) ──────
+    async def record_action_outcome(
+        self,
+        decision_id: str,
+        service_id: str,
+        action: str,
+        outcome: str,          # SUCCESS | FAILED | NEUTRAL | UNKNOWN
+    ) -> bool:
+        async with self.pool.acquire() as conn:
+            try:
+                await conn.execute(
+                    """
+                    INSERT INTO action_history
+                        (decision_id, service_id, action, outcome, occurred_at)
+                    VALUES ($1, $2, $3, $4, NOW())
+                    """,
+                    decision_id, service_id, action, outcome,
+                )
+                return True
+            except Exception as e:
+                log.exception("record_action_outcome failed: %s", e)
+                return False
+
+    async def count_recent_failures(
+        self,
+        service_id: str,
+        action: str,
+        window_min: int = 30,
+    ) -> int:
+        """
+        Number of FAILED outcomes for this (service, action) in the window.
+        """
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT COUNT(*) AS n
+                FROM action_history
+                WHERE service_id = $1
+                  AND action = $2
+                  AND outcome = 'FAILED'
+                  AND occurred_at >= NOW() - INTERVAL '1 minute' * $3
+                """,
+                service_id, action, window_min,
+            )
+        return int(row["n"]) if row else 0
+
+    # ── SHADOW RECORDS (Phase 2 — Shadow Mode) ──────────────────
+    async def save_shadow_record(self, payload: dict) -> bool:
+        """
+        Persist one shadow_records row. `payload` matches the shape
+        produced by validation.shadow.build_shadow_payload.
+        """
+        async with self.pool.acquire() as conn:
+            try:
+                await conn.execute(
+                    """
+                    INSERT INTO shadow_records (
+                        id, decision_id, anomaly_id, service_id,
+                        candidate_action, confidence, risk,
+                        simulated_outcome, actual_outcome, verdict, learning,
+                        observed_at, created_at
+                    ) VALUES (
+                        $1, $2, $3, $4,
+                        $5, $6, $7,
+                        $8, $9, $10, $11,
+                        NULL, NOW()
+                    )
+                    ON CONFLICT (id) DO NOTHING
+                    """,
+                    payload["SHADOW_ID"],
+                    payload["DECISION_ID"],
+                    payload["ANOMALY_ID"],
+                    payload["SERVICE"],
+                    payload["CANDIDATE_ACTION"],
+                    payload["CONFIDENCE"],
+                    payload["RISK"],
+                    _json_safe(payload.get("SIMULATED_OUTCOME") or {}),
+                    _json_safe(payload.get("ACTUAL_OUTCOME")) if payload.get("ACTUAL_OUTCOME") else None,
+                    payload.get("VERDICT"),
+                    payload.get("LEARNING"),
+                )
+                return True
+            except Exception as e:
+                log.exception("save_shadow_record failed: %s", e)
+                return False
 
 postgres_store = PostgresStore()

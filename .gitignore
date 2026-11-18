@@ -42,3 +42,6 @@ Thumbs.db
 CLAUDE.md
 **/CLAUDE.md
 config.bat
+
+.vscode/*
+!.vscode/extensions.json

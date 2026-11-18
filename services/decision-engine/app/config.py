@@ -64,6 +64,20 @@ class Settings:
     NOTIFY_ON_ANOMALY: bool = os.getenv("NOTIFY_ON_ANOMALY", "1").lower() not in ("0", "false", "no")
     NOTIFY_ON_DECISION: bool = os.getenv("NOTIFY_ON_DECISION", "1").lower() not in ("0", "false", "no")
 
+    # ── Redis (optional — guardrails cache) ────────────────────
+    # If empty, the guardrails fall back to an in-memory store.
+    # Local: redis://localhost:6379/0
+    # Cloud: rediss://default:PASSWORD@HOST:PORT
+    REDIS_URL: str = os.getenv("REDIS_URL", "")
+
+    # ── Escalation worker ──────────────────────────────────────
+    ESCALATION_POLL_INTERVAL_SEC: int = int(os.getenv("ESCALATION_POLL_INTERVAL_SEC", "30"))
+    
+    # ── Shadow Mode observer ──────────────────────────────────
+    SHADOW_OBSERVE_INTERVAL_SEC: int = int(os.getenv("SHADOW_OBSERVE_INTERVAL_SEC", "60"))
+    SHADOW_MIN_AGE_SEC: int = int(os.getenv("SHADOW_MIN_AGE_SEC", "300"))
+    SHADOW_MAX_WAIT_MIN: int = int(os.getenv("SHADOW_MAX_WAIT_MIN", "60"))
+    
     def validate(self):
         """Fail-fast if any required secret is missing."""
         missing = []

@@ -352,6 +352,14 @@ CREATE INDEX IF NOT EXISTS idx_incident_open
     WHERE incident_start IS NOT NULL;
 """
 
+SHADOW_RECORDS_ALTER_DDL = """
+ALTER TABLE shadow_records
+    ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_shadow_verdict_open
+    ON shadow_records (created_at)
+    WHERE verdict IS NULL;
+"""
+
 # ─────────────────────────────────────────────────────────────────────
 # Register all new DDL in the list that run_migrations() iterates.
 # If your existing schemas.py has a list like `ALL_DDL = [...]`, append
@@ -374,6 +382,7 @@ BATCH1_DDL = [
 BATCH2_DDL = [
     RULES_HYBRID_DDL,
     RULE_AUDIT_DDL,
+    SHADOW_RECORDS_ALTER_DDL
 ]
 
 
@@ -433,6 +442,28 @@ CREATE INDEX IF NOT EXISTS idx_notifications_kind
     ON notifications (kind, created_at DESC);
 """
 
+COOLDOWNS_DDL = """
+CREATE TABLE IF NOT EXISTS cooldowns (
+    service_id  TEXT PRIMARY KEY,
+    decision_id TEXT NOT NULL,
+    started_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at  TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cooldowns_expiry
+    ON cooldowns (expires_at);
+"""
+
+
+IDEMPOTENCY_KEYS_DDL = """
+CREATE TABLE IF NOT EXISTS idempotency_keys (
+    key         TEXT PRIMARY KEY,
+    decision_id TEXT NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at  TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_idempotency_expiry
+    ON idempotency_keys (expires_at);
+"""
 
 # ─────────────────────────────────────────────────────────────────────
 # BATCH 3 — Runtime engine settings + notifications. Runs after Batch 2.
@@ -441,4 +472,6 @@ BATCH3_DDL = [
     SETTINGS_DDL,
     SETTINGS_AUDIT_DDL,
     NOTIFICATIONS_DDL,
+    COOLDOWNS_DDL,             
+    IDEMPOTENCY_KEYS_DDL,       
 ]

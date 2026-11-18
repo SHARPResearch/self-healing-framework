@@ -45,11 +45,14 @@ from app.ingestion.anomaly_sink import start_anomaly_sink, resume_pending_snapsh
 from app.decision.job import start_decision_pipeline
 from app.api.routes import (
     graph, health, mock_data, anomaly_evidence, telemetry_history,
-    rules, decisions,                            
+    rules, decisions,  escalations, shadow,                          
 )
 from app.api.routes import settings as settings_routes
 from app.core.runtime_settings import runtime_settings
 from app.rules.registry import rule_registry    
+from app.decision.escalation.worker import start_escalation_worker
+from app.decision.shadow_observer import start_shadow_observer
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -115,7 +118,9 @@ async def lifespan(app: FastAPI):
     start_telemetry_puller(scheduler)
     start_anomaly_sink(scheduler)
     start_decision_pipeline(scheduler)
-
+    start_escalation_worker(scheduler)
+    start_shadow_observer(scheduler)
+    
     # Let runtime settings reschedule these jobs when intervals change live.
     runtime_settings.bind_scheduler(scheduler)
     
@@ -183,6 +188,8 @@ app.include_router(telemetry_history.router)
 app.include_router(rules.router)  
 app.include_router(decisions.router)
 app.include_router(settings_routes.router)
+app.include_router(escalations.router)
+app.include_router(shadow.router)
 
 # Expose the scheduler for runtime rescheduling (settings, diagnostics).
 app.state.scheduler = scheduler

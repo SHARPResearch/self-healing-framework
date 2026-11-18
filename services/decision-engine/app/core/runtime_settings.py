@@ -120,6 +120,24 @@ SETTINGS_SPEC: dict[str, dict[str, Any]] = {
         "label": "Email on decision made",
         "help": "Send an email with the chosen action after each decision. Premium.",
     },
+    "SHADOW_OBSERVE_INTERVAL_SEC": {
+        "type": "int", "default": 60, "min": 10, "max": 3600, "live": True,
+        "premium": False, "group": "Shadow mode",
+        "label": "Shadow observer interval",
+        "help": "How often the shadow-outcome observer scans open shadow records.",
+    },
+    "SHADOW_MIN_AGE_SEC": {
+        "type": "int", "default": 300, "min": 60, "max": 3600, "live": True,
+        "premium": True, "group": "Shadow mode",
+        "label": "Shadow minimum age",
+        "help": "Only shadows older than this are eligible for outcome observation. Premium.",
+    },
+    "SHADOW_MAX_WAIT_MIN": {
+        "type": "int", "default": 60, "min": 5, "max": 1440, "live": True,
+        "premium": True, "group": "Shadow mode",
+        "label": "Shadow max wait",
+        "help": "After this long, an unresolved shadow is marked ANOMALY_STILL_ACTIVE. Premium.",
+    },
 }
 
 
@@ -129,6 +147,7 @@ _RESCHEDULE_MAP: dict[str, str] = {
     "TELEMETRY_POLL_INTERVAL_SEC": "telemetry_puller",
     "ANOMALY_POLL_INTERVAL_SEC": "anomaly_poller",
     "DECISION_POLL_INTERVAL_SEC": "decision_pipeline",
+    "SHADOW_OBSERVE_INTERVAL_SEC": "shadow_observer",
 }
 
 
@@ -360,6 +379,9 @@ class RuntimeSettings:
             elif job_id == "decision_pipeline":
                 from app.decision.job import start_decision_pipeline
                 start_decision_pipeline(self._scheduler)
+            elif job_id == "shadow_observer":
+                from app.decision.shadow_observer import start_shadow_observer
+                start_shadow_observer(self._scheduler)
             else:
                 return False
             return True

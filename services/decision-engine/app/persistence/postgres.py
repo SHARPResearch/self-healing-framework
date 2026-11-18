@@ -681,5 +681,402 @@ class PostgresStore:
             except Exception as e:
                 log.exception("save_shadow_record failed: %s", e)
                 return False
+    
+        # ── COOLDOWNS (Phase 3) ──────────────────────────────────────
+    async def upsert_cooldown(
+        self,
+        service_id: str,
+        decision_id: str,
+        expires_at,
+    ) -> bool:
+        """
+        Start / extend the cooldown for a service. Source of truth —
+        Redis (or in-memory) is only a cache in front of this.
+        """
+        async with self.pool.acquire() as conn:
+            try:
+                await conn.execute(
+                    """
+                    INSERT INTO cooldowns (service_id, decision_id, started_at, expires_at)
+                    VALUES ($1, $2, NOW(), $3)
+                    ON CONFLICT (service_id) DO UPDATE SET
+                        decision_id = EXCLUDED.decision_id,
+                        started_at  = EXCLUDED.started_at,
+                        expires_at  = EXCLUDED.expires_at
+                    """,
+                    service_id, decision_id, expires_at,
+                )
+                return True
+            except Exception as e:
+                log.exception("upsert_cooldown failed: %s", e)
+                return False
+
+    async def get_active_cooldown(self, service_id: str) -> dict | None:
+        """Return the cooldown row for a service if it has not yet expired."""
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT service_id, decision_id, started_at, expires_at
+                FROM cooldowns
+                WHERE service_id = $1
+                  AND expires_at > NOW()
+                """,
+                service_id,
+            )
+        return dict(row) if row else None
+
+    # ── IDEMPOTENCY (Phase 3) ───────────────────────────────────
+    async def get_idempotency_key(self, key: str) -> dict | None:
+        """Return the row for a key if it has not yet expired."""
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT key, decision_id, created_at, expires_at
+                FROM idempotency_keys
+                WHERE key = $1
+                  AND expires_at > NOW()
+                """,
+                key,
+            )
+        return dict(row) if row else None
+
+    async def save_idempotency_key(
+        self,
+        key: str,
+        decision_id: str,
+        expires_at,
+    ) -> bool:
+        async with self.pool.acquire() as conn:
+            try:
+                await conn.execute(
+                    """
+                    INSERT INTO idempotency_keys (key, decision_id, created_at, expires_at)
+                    VALUES ($1, $2, NOW(), $3)
+                    ON CONFLICT (key) DO NOTHING
+                    """,
+                    key, decision_id, expires_at,
+                )
+                return True
+            except Exception as e:
+                log.exception("save_idempotency_key failed: %s", e)
+                return False
+
+    # ── ACTION COUNT (Phase 3 — action_counter guardrail) ────────
+    async def count_recent_actions(
+        self,
+        service_id: str,
+        window_min: int = 60,
+    ) -> int:
+        """
+        Number of actions on this service in the last `window_min` minutes.
+        Derived from `action_history` — no separate counter table.
+        """
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT COUNT(*) AS n
+                FROM action_history
+                WHERE service_id = $1
+                  AND occurred_at >= NOW() - INTERVAL '1 minute' * $2
+                """,
+                service_id, window_min,
+            )
+        return int(row["n"]) if row else 0
+    
+        # ── ESCALATIONS (Phase 4) ────────────────────────────────────
+    async def save_escalation(self, payload: dict) -> bool:
+        """
+        Upsert an escalation row. `payload` is Escalation.to_dict() shape.
+        """
+        async with self.pool.acquire() as conn:
+            try:
+                await conn.execute(
+                    """
+                    INSERT INTO escalations (
+                        id, decision_id, anomaly_id, service_id,
+                        status, attempt, max_attempts,
+                        notifications, response, failure_report,
+                        next_attempt_at, created_at, updated_at
+                    ) VALUES (
+                        $1, $2, $3, $4,
+                        $5, $6, $7,
+                        $8, $9, $10,
+                        $11, NOW(), NOW()
+                    )
+                    ON CONFLICT (id) DO UPDATE SET
+                        status          = EXCLUDED.status,
+                        attempt         = EXCLUDED.attempt,
+                        notifications   = EXCLUDED.notifications,
+                        response        = EXCLUDED.response,
+                        failure_report  = EXCLUDED.failure_report,
+                        next_attempt_at = EXCLUDED.next_attempt_at,
+                        updated_at      = NOW()
+                    """,
+                    payload["id"],
+                    payload["decision_id"],
+                    payload["anomaly_id"],
+                    payload["service_id"],
+                    payload["status"],
+                    payload["attempt"],
+                    payload["max_attempts"],
+                    _json_safe(payload.get("notifications") or []),
+                    _json_safe(payload.get("response")) if payload.get("response") else None,
+                    payload.get("failure_report"),
+                    payload.get("next_attempt_at"),
+                )
+                return True
+            except Exception as e:
+                log.exception("save_escalation failed: %s", e)
+                return False
+
+    async def get_escalation(self, escalation_id: str) -> dict | None:
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM escalations WHERE id = $1",
+                escalation_id,
+            )
+        return dict(row) if row else None
+
+    async def list_escalations(
+        self,
+        statuses: list[str] | None = None,
+        limit: int = 100,
+    ) -> list[dict]:
+        if statuses:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT * FROM escalations
+                    WHERE status = ANY($1::text[])
+                    ORDER BY created_at DESC
+                    LIMIT $2
+                    """,
+                    statuses, limit,
+                )
+        else:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT * FROM escalations ORDER BY created_at DESC LIMIT $1",
+                    limit,
+                )
+        return [dict(r) for r in rows]
+
+    async def list_escalations_due(self, now=None) -> list[dict]:
+        """
+        Escalations whose next_attempt_at is <= now and status is not terminal.
+        """
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT * FROM escalations
+                WHERE next_attempt_at IS NOT NULL
+                  AND next_attempt_at <= NOW()
+                  AND status IN ('PENDING', 'AWAITING_HUMAN')
+                ORDER BY next_attempt_at ASC
+                LIMIT 200
+                """
+            )
+        return [dict(r) for r in rows]
+
+    # ── SHADOW RECORDS (Phase A — observer + metrics) ───────────
+    async def list_open_shadows(self, min_age_sec: int = 300, limit: int = 200) -> list[dict]:
+        """
+        Shadow rows that:
+          * have no verdict yet
+          * are at least min_age_sec old (so the anomaly had a chance to resolve)
+        Ordered oldest-first so we handle the longest-waiting rows first.
+        """
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT * FROM shadow_records
+                WHERE verdict IS NULL
+                  AND actual_outcome IS NULL
+                  AND created_at <= NOW() - INTERVAL '1 second' * $1
+                ORDER BY created_at ASC
+                LIMIT $2
+                """,
+                min_age_sec, limit,
+            )
+        return [dict(r) for r in rows]
+
+    async def get_shadow(self, shadow_id: str) -> dict | None:
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM shadow_records WHERE id = $1", shadow_id
+            )
+        return dict(row) if row else None
+
+    async def update_shadow_outcome(
+        self,
+        shadow_id: str,
+        *,
+        actual_outcome: dict,
+        verdict: str,
+        learning: str,
+        observed_at,
+        resolved_at,
+    ) -> bool:
+        async with self.pool.acquire() as conn:
+            try:
+                await conn.execute(
+                    """
+                    UPDATE shadow_records
+                    SET actual_outcome = $2,
+                        verdict        = $3,
+                        learning       = $4,
+                        observed_at    = $5,
+                        resolved_at    = $6
+                    WHERE id = $1
+                      AND verdict IS NULL
+                    """,
+                    shadow_id,
+                    _json_safe(actual_outcome),
+                    verdict,
+                    learning,
+                    observed_at,
+                    resolved_at,
+                )
+                return True
+            except Exception as e:
+                log.exception("update_shadow_outcome failed: %s", e)
+                return False
+
+    async def mark_shadow_abandoned(
+        self,
+        *,
+        shadow_id: str,
+        reason: str,
+        observed_at,
+    ) -> bool:
+        """
+        Terminal, no verdict. Used when the anomaly never resolved
+        within SHADOW_MAX_WAIT_MIN (so we can't compare outcomes).
+        """
+        async with self.pool.acquire() as conn:
+            try:
+                await conn.execute(
+                    """
+                    UPDATE shadow_records
+                    SET verdict     = $2,
+                        learning    = $3,
+                        observed_at = $4
+                    WHERE id = $1
+                      AND verdict IS NULL
+                    """,
+                    shadow_id,
+                    reason,
+                    f"anomaly never resolved within budget ({reason})",
+                    observed_at,
+                )
+                return True
+            except Exception as e:
+                log.exception("mark_shadow_abandoned failed: %s", e)
+                return False
+
+    async def list_shadows(
+        self,
+        limit: int = 100,
+        verdict: str | None = None,
+        service_id: str | None = None,
+    ) -> list[dict]:
+        clauses = []
+        args: list = []
+        if verdict:
+            args.append(verdict)
+            clauses.append(f"verdict = ${len(args)}")
+        if service_id:
+            args.append(service_id)
+            clauses.append(f"service_id = ${len(args)}")
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        args.append(limit)
+        sql = f"""
+            SELECT * FROM shadow_records
+            {where}
+            ORDER BY created_at DESC
+            LIMIT ${len(args)}
+        """
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(sql, *args)
+        return [dict(r) for r in rows]
+
+    async def get_escalation_by_decision(self, decision_id: str) -> dict | None:
+        """
+        Return the (most recent) escalation row for a decision_id.
+        """
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT * FROM escalations
+                WHERE decision_id = $1
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                decision_id,
+            )
+        return dict(row) if row else None
+
+    async def shadow_metrics(self) -> dict:
+        """
+        Aggregate metrics for the research chapter §8.2.
+
+        Returns:
+            total_shadows        — all shadow records, any state
+            open                 — verdict IS NULL
+            resolved_naturally   — self-resolved without action
+            would_have_helped    — would have shortened resolution
+            unnecessary          — action would have been wasted
+            unknown              — operator declined / data insufficient
+            still_active         — anomaly never resolved within budget
+            unnecessary_action_rate = unnecessary / (unnecessary + would_have_helped)
+            mean_resolution_time_sec — for resolved_naturally rows only
+        """
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT
+                    COUNT(*)                                                    AS total,
+                    COUNT(*) FILTER (WHERE verdict IS NULL)                     AS open,
+                    COUNT(*) FILTER (WHERE verdict = 'ACTION_WOULD_HAVE_BEEN_UNNECESSARY') AS unnecessary,
+                    COUNT(*) FILTER (WHERE verdict = 'ACTION_WOULD_HAVE_HELPED') AS would_have_helped,
+                    COUNT(*) FILTER (WHERE verdict = 'UNKNOWN')                 AS unknown,
+                    COUNT(*) FILTER (WHERE verdict = 'ANOMALY_STILL_ACTIVE')    AS still_active,
+                    AVG(
+                        (actual_outcome->>'RESOLUTION_TIME_SEC')::float
+                    ) FILTER (
+                        WHERE actual_outcome->>'ANOMALY_RESOLVED_NATURALLY' = 'true'
+                    ) AS mean_resolution_sec
+                FROM shadow_records
+                """
+            )
+        if not row:
+            return {
+                "total_shadows": 0, "open": 0,
+                "resolved_naturally": 0, "would_have_helped": 0,
+                "unnecessary": 0, "unknown": 0, "still_active": 0,
+                "unnecessary_action_rate": 0.0,
+                "mean_resolution_time_sec": 0.0,
+            }
+
+        d = dict(row)
+        unnecessary = int(d.get("unnecessary") or 0)
+        helpful = int(d.get("would_have_helped") or 0)
+        denom = unnecessary + helpful
+        rate = round(unnecessary / denom, 4) if denom else 0.0
+
+        return {
+            "total_shadows": int(d.get("total") or 0),
+            "open": int(d.get("open") or 0),
+            # Note: "resolved_naturally" isn't a stored verdict, it's
+            # inferred from actual_outcome. Count it here for completeness:
+            "resolved_naturally": int(d.get("unnecessary") or 0)
+                                + int(d.get("would_have_helped") or 0),
+            "would_have_helped": helpful,
+            "unnecessary": unnecessary,
+            "unknown": int(d.get("unknown") or 0),
+            "still_active": int(d.get("still_active") or 0),
+            "unnecessary_action_rate": rate,
+            "mean_resolution_time_sec": round(float(d.get("mean_resolution_sec") or 0.0), 2),
+        }
 
 postgres_store = PostgresStore()

@@ -78,6 +78,16 @@ class Settings:
     SHADOW_MIN_AGE_SEC: int = int(os.getenv("SHADOW_MIN_AGE_SEC", "300"))
     SHADOW_MAX_WAIT_MIN: int = int(os.getenv("SHADOW_MAX_WAIT_MIN", "60"))
     
+    # ── Kubernetes executor ───────────────────────────────────
+    # dry_run: log the call, don't touch the cluster (default safe).
+    # in_cluster: running inside a Pod, use ServiceAccount token.
+    # local: running on a dev machine, use ~/.kube/config.
+    KUBERNETES_DRY_RUN: bool = os.getenv("KUBERNETES_DRY_RUN", "1").lower() not in ("0", "false", "no")
+    KUBERNETES_NAMESPACE: str = os.getenv("KUBERNETES_NAMESPACE", "default")
+    KUBERNETES_IN_CLUSTER: bool = os.getenv("KUBERNETES_IN_CLUSTER", "0").lower() in ("1", "true", "yes")
+    KUBERNETES_REQUEST_TIMEOUT_SEC: int = int(os.getenv("KUBERNETES_REQUEST_TIMEOUT_SEC", "20"))
+    KUBERNETES_DEFAULT_GRACE_SEC: int = int(os.getenv("KUBERNETES_DEFAULT_GRACE_SEC", "30"))
+    
     def validate(self):
         """Fail-fast if any required secret is missing."""
         missing = []

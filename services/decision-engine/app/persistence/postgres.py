@@ -1079,4 +1079,47 @@ class PostgresStore:
             "mean_resolution_time_sec": round(float(d.get("mean_resolution_sec") or 0.0), 2),
         }
 
+    # ── EXECUTION LOG (Phase B) ─────────────────────────────────
+    async def save_execution(self, payload: dict) -> bool:
+        async with self.pool.acquire() as conn:
+            try:
+                await conn.execute(
+                    """
+                    INSERT INTO execution_log (
+                        decision_id, service_id, action, status, message, detail
+                    ) VALUES ($1, $2, $3, $4, $5, $6)
+                    """,
+                    payload["decision_id"],
+                    payload["service_id"],
+                    payload["action"],
+                    payload["status"],
+                    payload.get("message"),
+                    _json_safe(payload.get("detail") or {}),
+                )
+                return True
+            except Exception as e:
+                log.exception("save_execution failed: %s", e)
+                return False
+
+    async def list_executions(
+        self, limit: int = 100, service_id: str | None = None,
+    ) -> list[dict]:
+        if service_id:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT * FROM execution_log
+                    WHERE service_id = $1
+                    ORDER BY executed_at DESC
+                    LIMIT $2
+                    """,
+                    service_id, limit,
+                )
+        else:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT * FROM execution_log ORDER BY executed_at DESC LIMIT $1",
+                    limit,
+                )
+        return [dict(r) for r in rows]
 postgres_store = PostgresStore()

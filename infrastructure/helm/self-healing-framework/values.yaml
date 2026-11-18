@@ -29,3 +29,9 @@ yarpGateway:
     repository: self-healing/yarp-gateway
     tag: dev
   replicas: 3
+
+executor:
+  enabled: true
+  # dry-run keeps the executor safe in dev; turn off in prod
+  dryRun: true
+  inCluster: true

@@ -45,7 +45,7 @@ from app.ingestion.anomaly_sink import start_anomaly_sink, resume_pending_snapsh
 from app.decision.job import start_decision_pipeline
 from app.api.routes import (
     graph, health, mock_data, anomaly_evidence, telemetry_history,
-    rules, decisions,  escalations, shadow,                          
+    rules, decisions,  escalations, shadow, executions,                                   
 )
 from app.api.routes import settings as settings_routes
 from app.core.runtime_settings import runtime_settings
@@ -53,6 +53,9 @@ from app.rules.registry import rule_registry
 from app.decision.escalation.worker import start_escalation_worker
 from app.decision.shadow_observer import start_shadow_observer
 
+# Pick the executor based on KUBERNETES_DRY_RUN
+from app.decision.executor import get_executor
+from app.decision import executor as executor_mod
 
 logging.basicConfig(
     level=logging.INFO,
@@ -113,6 +116,14 @@ async def lifespan(app: FastAPI):
     )
     log.info("Topology pushed to Neo4j (%d nodes, %d edges)",
              len(snapshot.nodes), len(snapshot.edges))
+
+    executor_mod.executor = get_executor()
+    log.info(
+        "Executor: %s (dry_run=%s)",
+        type(executor_mod.executor).__name__,
+        getattr(settings, "KUBERNETES_DRY_RUN", True),
+    )
+
 
     scheduler.start()
     start_telemetry_puller(scheduler)
@@ -190,6 +201,7 @@ app.include_router(decisions.router)
 app.include_router(settings_routes.router)
 app.include_router(escalations.router)
 app.include_router(shadow.router)
+app.include_router(executions.router)      
 
 # Expose the scheduler for runtime rescheduling (settings, diagnostics).
 app.state.scheduler = scheduler

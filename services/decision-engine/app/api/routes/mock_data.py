@@ -218,6 +218,23 @@ SERVICES = {
         "base_err": 0.002, "base_conns": 240, "base_db_p95": 26, "base_cache": 0.93,
         "base_queue": 1,
     },
+        # ── Ops / outbound-only service (LEAF — no callers) ────────────
+    "metrics-collector": {
+        "display_name": "Metrics Collector",
+        "layer": "domain",
+        "team": "platform",
+        "tier": 3,
+        "runtime": "go1.22",
+        "version": "1.0.0",
+        "region": "us-east-1a",
+        "node_pool": "app-pool",
+        "replicas": 2,
+        "cpu_limit_mc": 400, "mem_limit_mb": 512,
+        "base_cpu": 0.12, "base_mem_mb": 180, "base_rps": 60.0,
+        "base_p50": 5.0, "base_p95": 18.0, "base_p99": 40.0,
+        "base_err": 0.001, "base_conns": 20, "base_db_p95": 0, "base_cache": 0.0,
+        "base_queue": 0,
+    },
 
     # ── Data layer ─────────────────────────────────────────────────
     "postgres-primary": {
@@ -315,6 +332,10 @@ EDGES = [
     ("shipping-service", "postgres-primary"),
     ("notification-service", "kafka-broker"),
     ("search-service", "redis-cache"),
+    
+    # observability → data (outbound only — nothing calls metrics-collector)
+    ("metrics-collector", "kafka-broker"),
+    ("metrics-collector", "postgres-primary"),
 ]
 
 
@@ -376,6 +397,11 @@ SCENARIOS = {
         "api-gateway": "failing",
         "web-bff": "degraded",
         "mobile-bff": "degraded",
+    },
+    
+    # Leaf-service anomaly — high confidence + LOW risk → AUTO_EXECUTE demo
+    "metrics_collector_slow": {
+        "metrics-collector": "failing",
     },
 }
 CURRENT_SCENARIO = "all_healthy"

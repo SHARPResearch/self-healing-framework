@@ -1,0 +1,35 @@
+{{- if .Values.executor.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "self-healing-framework.fullname" . }}-executor
+  namespace: {{ .Release.Namespace }}
+rules:
+  # Pods — restart
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "delete"]
+
+  # Deployments — scale, rollback
+  - apiGroups: ["apps"]
+    resources: ["deployments", "deployments/scale"]
+    verbs: ["get", "list", "patch", "update"]
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get", "list"]
+
+  # ConfigMaps — YARP traffic, db-pool tuning
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "patch", "update"]
+
+  # Nodes — drain (only used when HUMAN_LOOP approves DRAIN_NODE)
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "patch"]
+
+  # Service status read
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list"]
+{{- end }}

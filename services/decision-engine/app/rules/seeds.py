@@ -476,4 +476,51 @@ SEED_TEMPLATES: list[dict] = [
         },
         "tags": ["template", "kafka", "queue"],
     },
+        # ─────────────────────────────────────────────────────────────
+    # 9. RESTART_POD on a genuine leaf service
+    #
+    # Fires only when the service has ZERO reverse dependencies,
+    # meaning restarting it cannot propagate. This is why the rule
+    # is allowed to declare base_risk=LOW while every other restart
+    # rule is MEDIUM. In the context of the framework's safety model,
+    # "leaf + high confidence" is the only combination that can be
+    # auto-executed without a human in the loop.
+    # ─────────────────────────────────────────────────────────────
+    {
+        "id": "restart_isolated_leaf_service",
+        "version": 1,
+        "priority": 115,          # higher than restart_pod_high_error_rate (105)
+        "description": "Restart a leaf service on a high-confidence isolated anomaly",
+        "enabled": True,
+        "is_default": True,
+        "applies_to": {
+            "layers": ["*"],       # any layer — leafness is the gate, not layer
+            "services": ["*"],
+            "exclude_services": ["postgres-primary", "redis-cache", "kafka-broker"],
+        },
+        "when": {
+            "all": [
+                {"metric": "anomaly.severity",   "op": "in", "value": ["high", "critical"]},
+                {"metric": "anomaly.confidence", "op": ">=", "value": 0.85},
+                {"metric": "classification.is_isolated", "op": "==", "value": True},
+                {"metric": "blast_radius.size",  "op": "<=", "value": 0},
+            ]
+        },
+        "then": {
+            "action": "RESTART_POD",
+            "params": {
+                "namespace": "{{ service.namespace }}",
+                "selector":  "app={{ service.id }}",
+                "grace_period_seconds": 30,
+            },
+            "base_confidence": 0.90,
+            "base_risk": "LOW",       # safe: nothing depends on this service
+        },
+        "guardrails": {
+            "cooldown_seconds": 120,
+            "max_per_hour": 3,
+            "idempotency_key": "restart-leaf:{{ service.id }}:{{ anomaly.id }}",
+        },
+        "tags": ["leaf", "isolated", "restart"],
+    },
 ]

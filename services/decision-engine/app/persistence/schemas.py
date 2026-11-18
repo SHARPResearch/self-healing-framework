@@ -359,6 +359,13 @@ CREATE INDEX IF NOT EXISTS idx_shadow_verdict_open
     ON shadow_records (created_at)
     WHERE verdict IS NULL;
 """
+ESCALATIONS_ALTER_DDL = """
+ALTER TABLE escalations
+    ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_escalations_next
+    ON escalations (next_attempt_at)
+    WHERE status IN ('PENDING', 'AWAITING_HUMAN');
+"""
 
 # ─────────────────────────────────────────────────────────────────────
 # Register all new DDL in the list that run_migrations() iterates.
@@ -372,7 +379,8 @@ BATCH1_DDL = [
     ESCALATIONS_DDL,
     ACTION_HISTORY_DDL,
     IN_FLIGHT_ACTIONS_DDL,
-    INCIDENT_STATE_DDL,       
+    INCIDENT_STATE_DDL, 
+    ESCALATIONS_ALTER_DDL      
 ]
 
 # ─────────────────────────────────────────────────────────────────────
@@ -465,6 +473,23 @@ CREATE INDEX IF NOT EXISTS idx_idempotency_expiry
     ON idempotency_keys (expires_at);
 """
 
+EXECUTION_LOG_DDL = """
+CREATE TABLE IF NOT EXISTS execution_log (
+    id            BIGSERIAL PRIMARY KEY,
+    decision_id   TEXT NOT NULL,
+    service_id    TEXT NOT NULL,
+    action        TEXT NOT NULL,
+    status        TEXT NOT NULL,              -- SUCCESS / FAILED / DRY_RUN / NOT_IMPLEMENTED
+    message       TEXT,
+    detail        JSONB,
+    executed_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_execution_log_decision
+    ON execution_log (decision_id, executed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_execution_log_service
+    ON execution_log (service_id, executed_at DESC);
+"""
+
 # ─────────────────────────────────────────────────────────────────────
 # BATCH 3 — Runtime engine settings + notifications. Runs after Batch 2.
 # ─────────────────────────────────────────────────────────────────────
@@ -473,5 +498,6 @@ BATCH3_DDL = [
     SETTINGS_AUDIT_DDL,
     NOTIFICATIONS_DDL,
     COOLDOWNS_DDL,             
-    IDEMPOTENCY_KEYS_DDL,       
+    IDEMPOTENCY_KEYS_DDL,  
+    EXECUTION_LOG_DDL,             
 ]

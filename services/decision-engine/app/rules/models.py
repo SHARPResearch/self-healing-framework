@@ -131,7 +131,7 @@ class RuleAppliesTo(BaseModel):
     exclude_services: list[str] = Field(default_factory=list)
 
     def matches(self, layer: str, service_id: str) -> bool:
-        if self.layers and layer not in self.layers:
+        if self.layers and "*" not in self.layers and layer not in self.layers:
             return False
         if service_id in self.exclude_services:
             return False

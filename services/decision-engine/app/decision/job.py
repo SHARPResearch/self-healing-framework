@@ -29,13 +29,9 @@ log = logging.getLogger(__name__)
 
 async def poll_and_decide():
     """
-    One cycle of the pipeline:
-      - Find anomalies without decisions
-      - Decide on each
-      - Persist results
+    One cycle of the pipeline: validation → guardrails → execute / shadow / escalate.
     """
     try:
-        # ── 1. Fetch new anomalies ──────────────────────────────
         window = getattr(settings, "DECISION_WINDOW_SEC", 300)
         anomalies = await postgres_store.get_anomalies_without_decisions(
             window_sec=window,
@@ -46,7 +42,6 @@ async def poll_and_decide():
 
         log.info("Pipeline: %d new anomalies without decisions", len(anomalies))
 
-        # ── 2. For each anomaly ─────────────────────────────────
         for anomaly in anomalies:
             try:
                 sid = anomaly.get("service_id")
@@ -54,7 +49,7 @@ async def poll_and_decide():
                     log.warning("Pipeline: unknown service %s, skipping", sid)
                     continue
 
-                # Build context
+                # ── 1. Build context ─────────────────────────────
                 builder = ContextBuilder()
                 builder.set_services_catalog(SERVICES)
                 ctx = builder.build(
@@ -65,13 +60,11 @@ async def poll_and_decide():
                 )
                 classify(ctx)
 
-                # Evaluate rules
+                # ── 2. Evaluate rules ────────────────────────────
                 candidates = rule_engine.evaluate(ctx)
 
                 if not candidates:
-                        # Write a NO_RULE_MATCHED decision so we don't retry
-                    # this anomaly forever. This IS a decision — just a
-                    # negative one.
+                    # NO_RULE_MATCHED — unchanged from before
                     import secrets
                     from datetime import datetime as _dt, timezone as _tz
 
@@ -95,71 +88,113 @@ async def poll_and_decide():
                         "policy_reason": f"no rule matched {ctx.kind} anomaly for {sid}",
                         "context": ctx.to_dict(),
                     }
-                    saved = await postgres_store.save_decision(no_match_row)
-                    log.info(
-                        "Pipeline: NO_MATCH recorded for %s (%s, kind=%s, saved=%s)",
-                        anomaly.get("id"), sid, ctx.kind, saved,
-                    )
-                    try:
-                        from app.notifications.emailer import notify_decision_made
-                        from app.decision.log import row_to_decision
-                        await notify_decision_made(
-                            row_to_decision({**no_match_row, "created_at": now}),
-                            anomaly,
-                        )
-                    except Exception:
-                        log.exception(
-                            "notify_decision_made failed for %s", anomaly.get("id")
-                        )
+                    await postgres_store.save_decision(no_match_row)
+                    log.info("Pipeline: NO_MATCH recorded for %s (%s)", anomaly.get("id"), sid)
                     continue
 
-                # Build decision
+                # ── 3. Build decision (Phase 1) ──────────────────
+                from app.decision.action_selector import select_recovery_action
+                recovery_action = select_recovery_action(candidates, sid)
+                if recovery_action is None:
+                    log.warning("Pipeline: select_recovery_action returned None for %s", anomaly.get("id"))
+                    continue
+
                 decision = build_decision(ctx, candidates)
                 if decision is None:
-                    log.warning(
-                        "Pipeline: build_decision returned None for %s",
-                        anomaly.get("id"),
-                    )
+                    log.warning("Pipeline: build_decision returned None for %s", anomaly.get("id"))
                     continue
 
-                # Persist
+                # ── 4. Validation (Phase 2) ──────────────────────
+                from app.decision.validation import validate
+                validation = await validate(recovery_action, ctx)
+
+                decision.policy_outcome = validation.outcome
+                decision.policy_reason = validation.reason
+
+                # ── 5. Guardrails (Phase 3) — only for AUTO_EXECUTE ──
+                from app.decision.models import PolicyOutcome
+                from app.decision.guardrails import check as guardrails_check, mark as guardrails_mark
+
+                if validation.outcome == PolicyOutcome.AUTO_EXECUTE:
+                    verdict = await guardrails_check(recovery_action, str(anomaly.get("id")))
+                    if not verdict.allowed:
+                        decision.policy_outcome = PolicyOutcome.BLOCK
+                        decision.policy_reason = f"guardrail blocked: {verdict.reason}"
+                        log.info(
+                            "Pipeline: guardrail BLOCKED %s → %s",
+                            anomaly.get("id"), verdict.blocker,
+                        )
+                    else:
+                        # Pass — mark side effects
+                        await guardrails_mark(
+                            recovery_action, str(anomaly.get("id")), decision.decision_id
+                        )
+
+                # ── 6. Persist decision ──────────────────────────
                 saved = await persist_decision(decision)
-                if saved:
+                if not saved:
+                    log.warning("Pipeline: failed to persist decision for %s", anomaly.get("id"))
+                    continue
+
+                # ── 7. Side effects by outcome ───────────────────
+                if decision.policy_outcome == PolicyOutcome.AUTO_EXECUTE:
+                    # Execute via the (currently Noop) executor
+                    from app.decision.executor import executor as _executor
+                    result = await _executor.execute(decision)
                     log.info(
-                        "Pipeline: DECIDED anomaly=%s service=%s action=%s conf=%.3f sev=%.2f(%s)",
-                        anomaly.get("id"),
-                        sid,
-                        decision.action.value,
-                        decision.final_conf,
-                        decision.severity.effective_severity,
-                        decision.severity.label,
+                        "Pipeline: EXECUTED %s → %s status=%s",
+                        anomaly.get("id"), decision.action.value, result.status.value,
                     )
+                    # Record outcome for future action_counter
                     try:
-                        from app.notifications.emailer import notify_decision_made
-                        from app.decision.log import row_to_decision
-                        await notify_decision_made(
-                            row_to_decision(decision.to_log_row()), anomaly
+                        await postgres_store.record_action_outcome(
+                            decision_id=decision.decision_id,
+                            service_id=decision.service_id,
+                            action=decision.action.value,
+                            outcome="SUCCESS" if result.status.value == "SUCCESS" else "UNKNOWN",
                         )
                     except Exception:
-                        log.exception(
-                            "notify_decision_made failed for %s", anomaly.get("id")
-                        )
-                else:
-                    log.warning(
-                        "Pipeline: failed to persist decision for %s",
-                        anomaly.get("id"),
+                        log.exception("Pipeline: record_action_outcome failed")
+
+                elif decision.policy_outcome == PolicyOutcome.SHADOW_MODE:
+                    if validation.shadow_payload:
+                        validation.shadow_payload["DECISION_ID"] = decision.decision_id
+                        await postgres_store.save_shadow_record(validation.shadow_payload)
+
+                elif decision.policy_outcome == PolicyOutcome.HUMAN_LOOP:
+                    from app.decision.escalation import escalate
+                    await escalate(
+                        decision_id=decision.decision_id,
+                        anomaly_id=str(anomaly.get("id")),
+                        service_id=sid,
                     )
 
-            except Exception:
-                log.exception(
-                    "Pipeline: error processing anomaly %s",
-                    anomaly.get("id"),
+                log.info(
+                    "Pipeline: DECIDED anomaly=%s service=%s action=%s outcome=%s conf=%.3f sev=%.2f(%s)",
+                    anomaly.get("id"), sid, decision.action.value,
+                    decision.policy_outcome.value,
+                    decision.final_conf,
+                    decision.severity.effective_severity,
+                    decision.severity.label,
                 )
+
+                # ── 8. Notify (existing) ─────────────────────────
+                try:
+                    from app.notifications.emailer import notify_decision_made
+                    from app.decision.log import row_to_decision
+                    await notify_decision_made(
+                        row_to_decision(decision.to_log_row()), anomaly
+                    )
+                except Exception:
+                    log.exception("notify_decision_made failed for %s", anomaly.get("id"))
+
+            except Exception:
+                log.exception("Pipeline: error processing anomaly %s", anomaly.get("id"))
                 continue
 
     except Exception:
         log.exception("Pipeline: poll_and_decide crashed")
-
+        
 
 def start_decision_pipeline(scheduler: AsyncIOScheduler):
     """Register the pipeline job on the scheduler."""

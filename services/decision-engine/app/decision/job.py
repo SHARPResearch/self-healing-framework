@@ -23,6 +23,7 @@ from app.persistence.postgres import postgres_store
 from app.rules.classifier import classify
 from app.rules.context import ContextBuilder
 from app.rules.engine import rule_engine
+from app.decision.executor import ExecutionStatus
 
 log = logging.getLogger(__name__)
 
@@ -138,20 +139,33 @@ async def poll_and_decide():
 
                 # ── 7. Side effects by outcome ───────────────────
                 if decision.policy_outcome == PolicyOutcome.AUTO_EXECUTE:
-                    # Execute via the (currently Noop) executor
                     from app.decision.executor import executor as _executor
                     result = await _executor.execute(decision)
                     log.info(
-                        "Pipeline: EXECUTED %s → %s status=%s",
-                        anomaly.get("id"), decision.action.value, result.status.value,
+                        "Pipeline: EXECUTED %s → %s status=%s msg=%s",
+                        anomaly.get("id"), decision.action.value,
+                        result.status.value, result.message,
                     )
-                    # Record outcome for future action_counter
+                    # Record execution row (Phase B — audit trail)
                     try:
+                        await postgres_store.save_execution(result.to_dict())
+                    except Exception:
+                        log.exception("Pipeline: save_execution failed")
+
+                    # Record outcome for the action_counter/repeat-failure bumps
+                    try:
+                        outcome_map = {
+                            ExecutionStatus.SUCCESS: "SUCCESS",
+                            ExecutionStatus.DRY_RUN: "NEUTRAL",
+                            ExecutionStatus.SKIPPED: "NEUTRAL",
+                            ExecutionStatus.NOT_IMPLEMENTED: "NEUTRAL",
+                            ExecutionStatus.FAILED: "FAILED",
+                        }
                         await postgres_store.record_action_outcome(
                             decision_id=decision.decision_id,
                             service_id=decision.service_id,
                             action=decision.action.value,
-                            outcome="SUCCESS" if result.status.value == "SUCCESS" else "UNKNOWN",
+                            outcome=outcome_map.get(result.status, "UNKNOWN"),
                         )
                     except Exception:
                         log.exception("Pipeline: record_action_outcome failed")

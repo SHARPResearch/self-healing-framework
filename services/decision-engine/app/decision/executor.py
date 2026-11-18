@@ -114,7 +114,39 @@ class NoopExecutor:
             },
         )
 
+# Old One -----------------------------------------------------------
+# # Module-level singleton — swap this out in `main.py` when the real
+# # executor lands.
+# executor: Executor = NoopExecutor()
 
-# Module-level singleton — swap this out in `main.py` when the real
-# executor lands.
+
+# New One -----------------------------------------------------------
+
+# ─────────────────────────────────────────────────────────────────────
+# Factory — main.py calls this once at startup
+# ─────────────────────────────────────────────────────────────────────
+def get_executor() -> Executor:
+    """
+    Pick the executor based on settings.KUBERNETES_DRY_RUN.
+
+    The import is lazy so tests that never touch Kubernetes don't pay
+    the `kubernetes` package import cost.
+    """
+    from app.config import settings
+
+    if getattr(settings, "KUBERNETES_DRY_RUN", True):
+        log.info("Executor: NoopExecutor (KUBERNETES_DRY_RUN=true)")
+        return NoopExecutor()
+
+    try:
+        from app.decision.executor_kubernetes import KubernetesExecutor
+        return KubernetesExecutor()
+    except Exception:
+        log.exception(
+            "Executor: KubernetesExecutor unavailable — falling back to Noop"
+        )
+        return NoopExecutor()
+
+
+# Kept for backwards compat with anything still importing the singleton.
 executor: Executor = NoopExecutor()

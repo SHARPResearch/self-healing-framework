@@ -1,3 +1,4 @@
+// frontend\src\lib\liveServiceData.ts
 import type { IncidentEntry, ServiceHealth } from "@/features/dashboard/types";
 import type { ServiceRow } from "@/features/services/types";
 import type { Severity } from "@/shared/types";

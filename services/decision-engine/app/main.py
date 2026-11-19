@@ -197,10 +197,13 @@ app.include_router(mock_data.router)
 app.include_router(anomaly_evidence.router)
 app.include_router(telemetry_history.router)
 app.include_router(rules.router)  
-app.include_router(decisions.router)
-app.include_router(settings_routes.router)
+# Order matters: decisions.router owns the catch-all GET /api/decisions/{decision_id},
+# so escalations and shadow must be registered BEFORE it or the wildcard swallows
+# /api/decisions/escalations and /api/decisions/shadow and answers 404 instead.
 app.include_router(escalations.router)
 app.include_router(shadow.router)
+app.include_router(decisions.router)
+app.include_router(settings_routes.router)
 app.include_router(executions.router)      
 
 # Expose the scheduler for runtime rescheduling (settings, diagnostics).

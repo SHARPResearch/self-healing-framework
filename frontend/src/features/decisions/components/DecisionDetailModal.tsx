@@ -7,6 +7,7 @@ import {
   ShieldCheck,
   ListFilter,
   Network,
+  GitBranch,
 } from "lucide-react";
 import type { ApiDecision } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -37,6 +38,10 @@ export function DecisionDetailModal({ decision, onClose }: Props) {
     onClose();
     navigate(`/anomalies?service=${encodeURIComponent(d.service_id)}`);
   };
+  const goToRun = () => {
+    onClose();
+    navigate(`/decisions/${encodeURIComponent(d.decision_id)}`);
+  };
   const goToGraph = () => {
     onClose();
     navigate(`/dependency-graph?highlight=${encodeURIComponent(d.service_id)}`);
@@ -48,7 +53,7 @@ export function DecisionDetailModal({ decision, onClose }: Props) {
       onClick={onClose}
     >
       <div
-        className="relative max-h-[92vh] w-full max-w-5xl overflow-y-auto rounded-xl border border-border bg-background shadow-2xl"
+        className="relative max-h-[92vh] w-full max-w-7xl overflow-y-auto rounded-xl border border-border bg-background shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -74,6 +79,10 @@ export function DecisionDetailModal({ decision, onClose }: Props) {
                   anomaly: {d.anomaly_id}
                 </p>
                 <div className="mt-2 flex flex-wrap gap-2">
+                  <Button variant="outline" size="sm" onClick={goToRun}>
+                    <GitBranch className="size-3.5" />
+                    Open full run
+                  </Button>
                   <Button
                     variant="outline"
                     size="sm"

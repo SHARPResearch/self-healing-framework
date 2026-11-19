@@ -17,6 +17,10 @@ import { RouteFallback } from "@/shared/components/RouteFallback";
 import { AnomalyListPage } from "@/features/anomalies/AnomalyListPage";
 import { PostMortemsPage } from "@/features/copilot/PostMortemsPage";
 import { DecisionListPage } from "@/features/decisions/DecisionListPage";
+import { DecisionRunPage } from "@/features/decisions/DecisionRunPage";
+import { EscalationsPage } from "@/features/escalations/EscalationsPage";
+import { ShadowPage } from "@/features/shadow/ShadowPage";
+import { ExecutionsPage } from "@/features/executions/ExecutionsPage";
 import { RuleListPage } from "@/features/rules/RuleListPage";
 import { RuleDetailPage } from "@/features/rules/RuleDetailPage";
 
@@ -55,6 +59,10 @@ function App() {
         <Route path="/dependency-graph" element={<DependencyGraphPage />} />
         <Route path="/anomalies" element={<AnomalyListPage />} />
         <Route path="/decisions" element={<DecisionListPage />} />
+        <Route path="/decisions/:decisionId" element={<DecisionRunPage />} />
+        <Route path="/escalations" element={<EscalationsPage />} />
+        <Route path="/shadow" element={<ShadowPage />} />
+        <Route path="/executions" element={<ExecutionsPage />} />
         <Route path="/rules" element={<RuleListPage />} />
         <Route path="/rules/:id" element={<RuleDetailPage />} />
         <Route path="/incidents" element={<IncidentsPage />} />

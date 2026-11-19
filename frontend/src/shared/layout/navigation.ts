@@ -3,6 +3,8 @@ import {
   AlertTriangle,
   Bell,
   Bot,
+  Cpu,
+  Eye,
   GitBranch,
   GitCompareArrows,
   ScrollText,
@@ -11,6 +13,7 @@ import {
   Server,
   Settings,
   Sliders,
+  UserCheck,
   Zap,
 } from "lucide-react";
 
@@ -39,6 +42,9 @@ export const navGroups: NavGroup[] = [
       { label: "Dependency graph", to: "/dependency-graph", icon: GitBranch },
       { to: "/anomalies", label: "Anomalies", icon: AlertTriangle },
       { label: "Decisions", to: "/decisions", icon: Zap },
+      { label: "Escalations", to: "/escalations", icon: UserCheck },
+      { label: "Shadow mode", to: "/shadow", icon: Eye },
+      { label: "Executions", to: "/executions", icon: Cpu },
       { label: "Rules", to: "/rules", icon: Sliders },
     ],
   },

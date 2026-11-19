@@ -36,6 +36,16 @@
   --status-degrade: oklch(0.75 0.18 70);
   --status-critical: oklch(0.63 0.24 25);
   --status-healthy: oklch(0.72 0.19 150);
+
+  /* Decision-run flow states (features/decisions FlowDiagram). Two states have
+     no existing token -- shadow means "evaluated but deliberately not acted
+     on" and escalated means "handed to a human" -- so they get their own
+     amber/orange pair rather than squatting on degrade/critical, which already
+     mean something else in the severity vocabulary. */
+  --status-shadow: oklch(0.78 0.15 85);
+  --status-escalated: oklch(0.72 0.17 52);
+  --status-idle: oklch(0.62 0.01 260);
+  --status-active: oklch(0.68 0.16 250);
 }
 
 .dark {
@@ -67,6 +77,11 @@
   --status-degrade: oklch(0.78 0.17 70);
   --status-critical: oklch(0.65 0.23 25);
   --status-healthy: oklch(0.75 0.18 150);
+
+  --status-shadow: oklch(0.8 0.15 88);
+  --status-escalated: oklch(0.74 0.16 52);
+  --status-idle: oklch(0.6 0.015 260);
+  --status-active: oklch(0.72 0.16 250);
 
   /* SHARP brand system (adapted from DESIGN.md's Supabase analysis, canvas
      polarity inverted: near-black instead of white, same rigor otherwise).
@@ -116,6 +131,10 @@
   --color-status-degrade: var(--status-degrade);
   --color-status-critical: var(--status-critical);
   --color-status-healthy: var(--status-healthy);
+  --color-status-shadow: var(--status-shadow);
+  --color-status-escalated: var(--status-escalated);
+  --color-status-idle: var(--status-idle);
+  --color-status-active: var(--status-active);
 
   --color-brand-primary: var(--brand-primary);
   --color-brand-primary-deep: var(--brand-primary-deep);
@@ -232,5 +251,43 @@
   }
   .scrollbar-hidden::-webkit-scrollbar {
     display: none;
+  }
+}
+
+/* ── Decision-run flow diagram (features/decisions) ──────────────────
+   These three animate an SVG `stroke-dashoffset` and a box-shadow ring,
+   neither of which has a clean utility-class expression in Tailwind v4,
+   and both are scoped to the one diagram that uses them. */
+@keyframes flow-dash {
+  to {
+    stroke-dashoffset: -22;
+  }
+}
+
+@keyframes flow-pulse-ring {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in oklch, var(--flow-pulse-color) 45%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 5px color-mix(in oklch, var(--flow-pulse-color) 0%, transparent);
+  }
+}
+
+/* A connector that is currently carrying the run: marching dashes. */
+.flow-edge-active {
+  stroke-dasharray: 5 6;
+  animation: flow-dash 1s linear infinite;
+}
+
+/* The step the engine is on right now: a soft expanding ring. */
+.flow-node-active {
+  animation: flow-pulse-ring 1.9s ease-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flow-edge-active,
+  .flow-node-active {
+    animation: none;
   }
 }

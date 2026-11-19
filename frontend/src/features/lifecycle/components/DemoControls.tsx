@@ -1,3 +1,5 @@
+// frontend\src\features\lifecycle\components\DemoControls.tsx
+
 import { useState } from "react";
 import { Pause, Play, RotateCcw, TrendingDown, TrendingUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -23,7 +25,11 @@ export function DemoControls() {
     setTraffic(null);
     try {
       await api.live("loadgenerator", action);
-      setTraffic(action === "traffic_up" ? "load generator x3 users" : "load generator back to baseline");
+      setTraffic(
+        action === "traffic_up"
+          ? "load generator x3 users"
+          : "load generator back to baseline",
+      );
     } catch (e) {
       setTraffic(e instanceof Error ? e.message : String(e));
     }
@@ -55,36 +61,64 @@ export function DemoControls() {
       </span>
       {live ? (
         <div className="flex items-center gap-1">
-          <Button size="sm" variant="outline" className="h-7" onClick={() => setLoad("traffic_up")}
-            title="Triple the load generator's users: a real traffic shift with no deployment event">
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7"
+            onClick={() => setLoad("traffic_up")}
+            title="Triple the load generator's users: a real traffic shift with no deployment event"
+          >
             <TrendingUp className="size-3.5" />
             Traffic x3
           </Button>
-          <Button size="sm" variant="outline" className="h-7" onClick={() => setLoad("traffic_reset")}>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7"
+            onClick={() => setLoad("traffic_reset")}
+          >
             <TrendingDown className="size-3.5" />
             Baseline
           </Button>
         </div>
       ) : (
-      <div className="flex items-center gap-1">
-        {SPEEDS.map((eps) => (
-          <Button
-            key={eps}
-            size="sm"
-            variant="ghost"
-            className={cn("h-7 px-2 font-mono text-xs", health?.eventsPerSec === eps && "bg-accent")}
-            onClick={() => speed({ eventsPerSec: eps })}
-          >
-            {eps}/s
-          </Button>
-        ))}
-      </div>
+        <div className="flex items-center gap-1">
+          {SPEEDS.map((eps) => (
+            <Button
+              key={eps}
+              size="sm"
+              variant="ghost"
+              className={cn(
+                "h-7 px-2 font-mono text-xs",
+                health?.eventsPerSec === eps && "bg-accent",
+              )}
+              onClick={() => speed({ eventsPerSec: eps })}
+            >
+              {eps}/s
+            </Button>
+          ))}
+        </div>
       )}
-      <Button size="sm" variant="outline" className="h-7" onClick={() => speed({ paused: !health?.paused })}>
-        {health?.paused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
+      <Button
+        size="sm"
+        variant="outline"
+        className="h-7"
+        onClick={() => speed({ paused: !health?.paused })}
+      >
+        {health?.paused ? (
+          <Play className="size-3.5" />
+        ) : (
+          <Pause className="size-3.5" />
+        )}
         {health?.paused ? "Resume" : "Pause"}
       </Button>
-      <Button size="sm" variant="outline" className="h-7" disabled={resetting} onClick={reset}>
+      <Button
+        size="sm"
+        variant="outline"
+        className="h-7"
+        disabled={resetting}
+        onClick={reset}
+      >
         <RotateCcw className="size-3.5" />
         {live ? "Re-warm" : "Reset"}
       </Button>

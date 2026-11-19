@@ -1,3 +1,4 @@
+// frontend\src\features\lifecycle\types.ts
 import type { ServiceHealth } from "@/features/dashboard/types";
 
 /**
@@ -19,7 +20,12 @@ export type Verdict =
   | "unattributed"
   | "scheduled";
 
-export type LifecycleAction = "hold" | "promote" | "rollback" | "resume" | "ask";
+export type LifecycleAction =
+  | "hold"
+  | "promote"
+  | "rollback"
+  | "resume"
+  | "ask";
 
 export type QueryAnswer = "new_normal" | "incident";
 

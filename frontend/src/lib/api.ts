@@ -1,3 +1,5 @@
+// frontend\src\lib\api.ts
+
 const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -176,6 +178,15 @@ export interface ApiDecision {
     outcome: string | null;
     reason: string | null;
   };
+  /**
+   * Per-stage wall-clock timings in milliseconds, written by
+   * `decision/job.py` into `decision_log.context.timings` (queue_ms,
+   * context_ms, classify_ms, rules_ms, selection_ms, severity_ms,
+   * validation_ms, guardrails_ms, persist_ms). Absent on rows persisted
+   * before the instrumentation landed — the run view renders those stages
+   * as "—" rather than inventing a number.
+   */
+  timings?: Record<string, number> | null;
   created_at: string;
 }
 
@@ -309,7 +320,9 @@ async function ruleRequest<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export async function fetchRules(filter: RuleListFilter = "all"): Promise<ApiRule[]> {
+export async function fetchRules(
+  filter: RuleListFilter = "all",
+): Promise<ApiRule[]> {
   const qs = filter === "all" ? "" : `?type=${filter}`;
   const data = await ruleRequest<ApiRulesResponse>(`/api/rules${qs}`);
   return data.rules;
@@ -368,7 +381,10 @@ export async function createCustomRule(
   });
 }
 
-export async function deleteRule(ruleId: string, actor = "admin"): Promise<void> {
+export async function deleteRule(
+  ruleId: string,
+  actor = "admin",
+): Promise<void> {
   await ruleRequest(`/api/rules/${encodeURIComponent(ruleId)}`, {
     method: "DELETE",
     headers: { "X-Actor": actor },
@@ -389,10 +405,14 @@ export async function validateRule(
   });
 }
 
-export async function fetchRuleAudit(ruleId: string): Promise<ApiRuleAuditEntry[]> {
-  const data = await ruleRequest<{ rule_id: string; count: number; entries: ApiRuleAuditEntry[] }>(
-    `/api/rules/${encodeURIComponent(ruleId)}/audit`,
-  );
+export async function fetchRuleAudit(
+  ruleId: string,
+): Promise<ApiRuleAuditEntry[]> {
+  const data = await ruleRequest<{
+    rule_id: string;
+    count: number;
+    entries: ApiRuleAuditEntry[];
+  }>(`/api/rules/${encodeURIComponent(ruleId)}/audit`);
   return data.entries;
 }
 
@@ -487,18 +507,20 @@ export async function reloadSettings(
 export async function fetchSettingsAudit(
   limit = 50,
 ): Promise<ApiSettingsAuditEntry[]> {
-  const data = await ruleRequest<{ count: number; entries: ApiSettingsAuditEntry[] }>(
-    `/api/settings/audit?limit=${limit}`,
-  );
+  const data = await ruleRequest<{
+    count: number;
+    entries: ApiSettingsAuditEntry[];
+  }>(`/api/settings/audit?limit=${limit}`);
   return data.entries;
 }
 
 export async function fetchNotifications(
   limit = 50,
 ): Promise<ApiNotificationEntry[]> {
-  const data = await ruleRequest<{ count: number; entries: ApiNotificationEntry[] }>(
-    `/api/settings/notifications?limit=${limit}`,
-  );
+  const data = await ruleRequest<{
+    count: number;
+    entries: ApiNotificationEntry[];
+  }>(`/api/settings/notifications?limit=${limit}`);
   return data.entries;
 }
 
@@ -584,20 +606,217 @@ export async function postCopilotQuery(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-  if (!response.ok) throw new Error(`Copilot API request failed (${response.status})`);
+  if (!response.ok)
+    throw new Error(`Copilot API request failed (${response.status})`);
   return response.json() as Promise<CopilotQueryResponse>;
 }
 
 export async function fetchPostMortems(): Promise<PostMortemReport[]> {
   const response = await fetch(`${getCopilotBase()}/api/postmortem`);
-  if (!response.ok) throw new Error(`Post-mortems API request failed (${response.status})`);
+  if (!response.ok)
+    throw new Error(`Post-mortems API request failed (${response.status})`);
   return response.json() as Promise<PostMortemReport[]>;
 }
 
-export async function fetchPostMortem(decisionId: string): Promise<PostMortemReport> {
-  const response = await fetch(`${getCopilotBase()}/api/postmortem/${encodeURIComponent(decisionId)}`);
-  if (!response.ok) throw new Error(`Post-mortem detail API request failed (${response.status})`);
+export async function fetchPostMortem(
+  decisionId: string,
+): Promise<PostMortemReport> {
+  const response = await fetch(
+    `${getCopilotBase()}/api/postmortem/${encodeURIComponent(decisionId)}`,
+  );
+  if (!response.ok)
+    throw new Error(
+      `Post-mortem detail API request failed (${response.status})`,
+    );
   return response.json() as Promise<PostMortemReport>;
+}
+
+// ─── Decision run: side-effect tables ──────────────────────────────
+// These are the four tables app/decision/ writes after a decision exists.
+// The run view joins them by decision_id to reconstruct what actually
+// happened after validation: guardrail verdict, execution, shadow record,
+// and the human escalation with its three email attempts.
+
+export type ExecutionStatus =
+  | "SUCCESS"
+  | "FAILED"
+  | "DRY_RUN"
+  | "SKIPPED"
+  | "NOT_IMPLEMENTED"
+  | (string & {});
+
+export interface ApiExecutionRow {
+  id: number;
+  decision_id: string;
+  service_id: string;
+  action: string;
+  status: ExecutionStatus;
+  message: string | null;
+  detail: Record<string, unknown> | null;
+  executed_at: string;
+}
+
+/** One entry of `escalations.notifications[]` — one email attempt. */
+export interface ApiEscalationAttempt {
+  attempt: number;
+  sent_at: string | null;
+  subject?: string | null;
+  sent?: boolean;
+  error?: string | null;
+  message_id?: string | null;
+}
+
+export type EscalationStatusKey =
+  | "PENDING"
+  | "AWAITING_HUMAN"
+  | "RESOLVED"
+  | "MANUAL_REQUIRED"
+  | (string & {});
+
+export interface ApiEscalationRow {
+  id: string;
+  decision_id: string;
+  anomaly_id: string;
+  service_id: string;
+  status: EscalationStatusKey;
+  attempt: number;
+  max_attempts: number;
+  notifications: ApiEscalationAttempt[] | null;
+  response: {
+    decision?: string;
+    by?: string;
+    at?: string;
+    note?: string;
+  } | null;
+  failure_report: string | null;
+  next_attempt_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ApiShadowRow {
+  id: string;
+  decision_id: string;
+  anomaly_id: string;
+  service_id: string;
+  candidate_action: string;
+  confidence: number;
+  risk: string;
+  simulated_outcome: Record<string, unknown> | null;
+  actual_outcome: Record<string, unknown> | null;
+  verdict: string | null;
+  learning: string | null;
+  observed_at: string | null;
+  resolved_at?: string | null;
+  created_at: string;
+}
+
+/** `GET /api/anomalies/with-decisions` — one row per anomaly, decision columns LEFT JOINed. */
+export interface ApiAnomalyDecisionRow extends ApiDbAnomaly {
+  decision_id: string | null;
+  decision_rule_id: string | null;
+  decision_action: string | null;
+  decision_final_conf: number | null;
+  decision_effective_severity: number | null;
+  decision_policy_outcome: string | null;
+  decision_policy_reason: string | null;
+  decision_created_at: string | null;
+}
+
+export async function fetchExecutions(
+  limit = 100,
+  serviceId?: string,
+): Promise<ApiExecutionRow[]> {
+  const qs = new URLSearchParams({ limit: String(limit) });
+  if (serviceId) qs.set("service_id", serviceId);
+  const data = await ruleRequest<{ count: number; executions: ApiExecutionRow[] }>(
+    `/api/executions?${qs.toString()}`,
+  );
+  return data.executions ?? [];
+}
+
+export async function fetchEscalations(opts?: {
+  status?: EscalationStatusKey;
+  limit?: number;
+}): Promise<ApiEscalationRow[]> {
+  const qs = new URLSearchParams({ limit: String(opts?.limit ?? 100) });
+  if (opts?.status) qs.set("status", opts.status);
+  const data = await ruleRequest<{
+    count: number;
+    escalations: ApiEscalationRow[];
+  }>(`/api/decisions/escalations?${qs.toString()}`);
+  return data.escalations ?? [];
+}
+
+/** `POST /api/decisions/escalations/{id}/ack` — the operator's verdict. */
+export async function acknowledgeEscalation(
+  escalationId: string,
+  decision: "APPROVED" | "REJECTED",
+  actor: string,
+  note = "",
+): Promise<ApiEscalationRow> {
+  const qs = new URLSearchParams({ decision, actor, note });
+  const data = await ruleRequest<{ ok: boolean; escalation: ApiEscalationRow }>(
+    `/api/decisions/escalations/${encodeURIComponent(escalationId)}/ack?${qs.toString()}`,
+    { method: "POST" },
+  );
+  return data.escalation;
+}
+
+/** `POST /api/decisions/escalations/{id}/fire` — debug: run the next attempt now. */
+export async function fireEscalation(
+  escalationId: string,
+): Promise<ApiEscalationRow | null> {
+  const data = await ruleRequest<{
+    ok: boolean;
+    fired: number;
+    escalation: ApiEscalationRow | null;
+  }>(`/api/decisions/escalations/${encodeURIComponent(escalationId)}/fire`, {
+    method: "POST",
+  });
+  return data.escalation;
+}
+
+export async function fetchShadowRecords(
+  limit = 100,
+  verdict?: string,
+): Promise<ApiShadowRow[]> {
+  const qs = new URLSearchParams({ limit: String(limit) });
+  if (verdict) qs.set("verdict", verdict);
+  const data = await ruleRequest<{ count: number; shadows: ApiShadowRow[] }>(
+    `/api/decisions/shadow?${qs.toString()}`,
+  );
+  return data.shadows ?? [];
+}
+
+export async function fetchShadowMetrics(): Promise<Record<string, unknown>> {
+  return ruleRequest<Record<string, unknown>>(`/api/decisions/shadow/metrics`);
+}
+
+export async function resolveShadow(
+  shadowId: string,
+  resolvedNaturally = true,
+  resolutionTimeSec = 60,
+): Promise<ApiShadowRow | null> {
+  const qs = new URLSearchParams({
+    resolved_naturally: String(resolvedNaturally),
+    resolution_time_sec: String(resolutionTimeSec),
+  });
+  const data = await ruleRequest<{ ok: boolean; shadow: ApiShadowRow | null }>(
+    `/api/decisions/shadow/${encodeURIComponent(shadowId)}/resolve?${qs.toString()}`,
+    { method: "POST" },
+  );
+  return data.shadow;
+}
+
+export async function fetchAnomaliesWithDecisions(
+  limit = 100,
+): Promise<ApiAnomalyDecisionRow[]> {
+  const data = await ruleRequest<{
+    count: number;
+    items: ApiAnomalyDecisionRow[];
+  }>(`/api/anomalies/with-decisions?limit=${limit}`);
+  return data.items ?? [];
 }
 
 export const API_URL = API_BASE;

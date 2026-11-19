@@ -226,6 +226,19 @@ async def record_attempt(
 # ─────────────────────────────────────────────────────────────────────
 # Internals
 # ─────────────────────────────────────────────────────────────────────
+async def set_response(escalation: Escalation, response: dict[str, Any]) -> None:
+    """
+    Persist a new `response` payload on an existing escalation.
+
+    Used after a side effect that belongs to the operator's verdict — the
+    approved-execution result — so the escalation row stays the single record
+    of what the human decided and what that decision caused.
+    """
+    escalation.response = response
+    escalation.updated_at = datetime.now(timezone.utc)
+    await _persist(escalation)
+
+
 async def _persist(esc: Escalation) -> None:
     from app.persistence.postgres import postgres_store
     await postgres_store.save_escalation(esc.to_dict())

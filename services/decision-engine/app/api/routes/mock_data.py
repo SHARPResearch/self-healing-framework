@@ -1,3 +1,4 @@
+# services\decision-engine\app\api\routes\mock_data.py
 """
 Advanced mock telemetry — Component 1 will replace this later.
 

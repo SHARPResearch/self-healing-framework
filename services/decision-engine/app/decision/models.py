@@ -134,6 +134,12 @@ class Decision(BaseModel):
     # bookkeeping
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+    # Per-stage wall-clock timings (ms), filled in by job.py. Stays empty when
+    # a caller does not instrument (e.g. the manual POST /evaluate route), and
+    # an empty dict is omitted from the persisted context so rows written by
+    # those callers look exactly as they did before.
+    timings: dict[str, float] = Field(default_factory=dict)
+
     # ── helpers ───────────────────────────────────────────────────
     def to_log_row(self) -> dict[str, Any]:
         """Flatten into the exact columns of decision_log."""
@@ -162,6 +168,7 @@ class Decision(BaseModel):
                 "upstream": self.upstream,
                 "downstream": self.downstream,
                 "blast_members": self.blast_members,
+                **({"timings": self.timings} if self.timings else {}),
             },
             "created_at": self.created_at.isoformat(),
         }

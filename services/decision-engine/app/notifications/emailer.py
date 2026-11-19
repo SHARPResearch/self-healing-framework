@@ -372,19 +372,33 @@ async def _send(recipient: str, subject: str, text: str, html: str) -> tuple[boo
         )
     msg.add_alternative(html_part)
 
+    # Google displays app passwords as four space-separated groups; the spaces
+    # are cosmetic. Strip them so a pasted password authenticates.
+    password = (settings.SMTP_PASSWORD or "").replace(" ", "")
+
     try:
         await aiosmtplib.send(
             msg,
             hostname=settings.SMTP_HOST,
             port=settings.SMTP_PORT,
             username=settings.SMTP_USER,
-            password=settings.SMTP_PASSWORD,
+            password=password,
             start_tls=settings.SMTP_USE_TLS,
             timeout=20,
         )
         return True, None
     except Exception as e:
         log.exception("Email send failed (to=%s): %s", recipient, e)
+        # Gmail answers a bad app password with 535 and *then* drops the
+        # connection, so aiosmtplib reports SMTPServerDisconnected ("Unexpected
+        # EOF" / "Connection lost") and the real cause is lost. Name it.
+        if type(e).__name__ == "SMTPServerDisconnected":
+            return False, (
+                "smtp_auth_rejected: the server closed the session — Gmail does "
+                "this after 535 BadCredentials. Check SMTP_USER and the app "
+                "password (2-Step Verification must be on; the password is 16 "
+                "characters)"
+            )
         return False, str(e)
 
 

@@ -6,6 +6,7 @@ Async pool for the anomaly events DB (Neon Postgres).
 import asyncpg
 import json
 import logging
+from datetime import datetime
 from typing import Optional
 from app.config import settings
 
@@ -787,7 +788,24 @@ class PostgresStore:
     async def save_escalation(self, payload: dict) -> bool:
         """
         Upsert an escalation row. `payload` is Escalation.to_dict() shape.
+
+        `Escalation.to_dict()` serialises `next_attempt_at` to an ISO string for
+        JSON, but asyncpg refuses a str for a TIMESTAMPTZ parameter — it wants a
+        real datetime. Coercing here (rather than in every caller) keeps the
+        JSON contract of to_dict() and lets the pipeline, the worker and ack all
+        go through one correct path.
         """
+        next_at = payload.get("next_attempt_at")
+        if isinstance(next_at, str):
+            try:
+                next_at = datetime.fromisoformat(next_at)
+            except ValueError:
+                log.warning(
+                    "save_escalation: unparseable next_attempt_at %r — storing NULL",
+                    next_at,
+                )
+                next_at = None
+
         async with self.pool.acquire() as conn:
             try:
                 await conn.execute(
@@ -822,7 +840,7 @@ class PostgresStore:
                     _json_safe(payload.get("notifications") or []),
                     _json_safe(payload.get("response")) if payload.get("response") else None,
                     payload.get("failure_report"),
-                    payload.get("next_attempt_at"),
+                    next_at,
                 )
                 return True
             except Exception as e:

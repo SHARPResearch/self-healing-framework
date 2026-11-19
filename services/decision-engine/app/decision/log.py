@@ -149,5 +149,7 @@ def row_to_decision(row: dict[str, Any]) -> dict[str, Any]:
             "outcome": row["policy_outcome"],
             "reason": row["policy_reason"],
         },
+        # Present only for rows written by the instrumented pipeline job.
+        "timings": ctx.get("timings"),
         "created_at": row["created_at"].isoformat() if hasattr(row["created_at"], "isoformat") else row["created_at"],
     }

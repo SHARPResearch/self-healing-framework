@@ -1,0 +1,84 @@
+# Blackbox exporter for the SHARP live demo (namespace: monitoring): one real request to every
+# Online Boutique service every 5 s, so response time is a feature (probe_latency in
+# services/ml-backend/app/prom.py). Without it a network delay fault is invisible: the other seven
+# features are resource counters, and a delayed pod uses no more CPU or memory (docs/adr/0010).
+#
+# Each service is probed through its ClusterIP Service with the protocol its own readiness probe
+# uses: gRPC health (grpc.health.v1) for the gRPC services, HTTP /_healthz for the frontend and a
+# TCP connect for redis-cart. Each probe's metrics carry app=<Deployment> like the pod metrics.
+config:
+  modules:
+    grpc:
+      prober: grpc
+      timeout: 3s
+      grpc:
+        tls: false
+        preferred_ip_protocol: ip4
+    http_2xx:
+      prober: http
+      timeout: 3s
+      http:
+        preferred_ip_protocol: ip4
+        headers:
+          Cookie: shop_session-id=x-sharp-probe   # same trick as the frontend readiness probe: no new session per probe
+    tcp_connect:
+      prober: tcp
+      timeout: 3s
+      tcp:
+        preferred_ip_protocol: ip4
+resources:
+  requests:
+    cpu: 10m
+    memory: 24Mi
+  limits:
+    memory: 64Mi
+serviceMonitor:
+  enabled: true
+  defaults:
+    interval: 5s
+    scrapeTimeout: 4s
+  targets:
+    - name: adservice
+      url: adservice.online-boutique.svc:9555
+      module: grpc
+      additionalMetricsRelabels: { app: adservice, probe_namespace: online-boutique }
+    - name: cartservice
+      url: cartservice.online-boutique.svc:7070
+      module: grpc
+      additionalMetricsRelabels: { app: cartservice, probe_namespace: online-boutique }
+    - name: checkoutservice
+      url: checkoutservice.online-boutique.svc:5050
+      module: grpc
+      additionalMetricsRelabels: { app: checkoutservice, probe_namespace: online-boutique }
+    - name: currencyservice
+      url: currencyservice.online-boutique.svc:7000
+      module: grpc
+      additionalMetricsRelabels: { app: currencyservice, probe_namespace: online-boutique }
+    - name: emailservice
+      url: emailservice.online-boutique.svc:5000
+      module: grpc
+      additionalMetricsRelabels: { app: emailservice, probe_namespace: online-boutique }
+    - name: frontend
+      url: http://frontend.online-boutique.svc/_healthz
+      module: http_2xx
+      additionalMetricsRelabels: { app: frontend, probe_namespace: online-boutique }
+    - name: paymentservice
+      url: paymentservice.online-boutique.svc:50051
+      module: grpc
+      additionalMetricsRelabels: { app: paymentservice, probe_namespace: online-boutique }
+    - name: productcatalogservice
+      url: productcatalogservice.online-boutique.svc:3550
+      module: grpc
+      additionalMetricsRelabels: { app: productcatalogservice, probe_namespace: online-boutique }
+    - name: recommendationservice
+      url: recommendationservice.online-boutique.svc:8080
+      module: grpc
+      additionalMetricsRelabels: { app: recommendationservice, probe_namespace: online-boutique }
+    - name: redis-cart
+      url: redis-cart.online-boutique.svc:6379
+      module: tcp_connect
+      additionalMetricsRelabels: { app: redis-cart, probe_namespace: online-boutique }
+    - name: shippingservice
+      url: shippingservice.online-boutique.svc:50051
+      module: grpc
+      additionalMetricsRelabels: { app: shippingservice, probe_namespace: online-boutique }

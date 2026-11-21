@@ -3,13 +3,21 @@ Chaos campaign on the live Online Boutique: real faults with ground truth, for e
 detector and CADAL on a running Kubernetes cluster (Doc3 Phase 8).
 
 For every (service, fault) it injects one Chaos Mesh fault, waits for the fault plus a recovery
-gap, and records the fault window. At the end it exports every service's feature rows for the
-whole campaign (plus a warm-up hour before it) from Prometheus, so the evaluation can be replayed
-offline as often as needed (ml-pipeline/evaluate_live_chaos.py).
+gap, and records the fault window (windows.csv). Then a benign phase (unless --no-benign) makes
+the changes a model should learn or shrug off, recorded in changes.csv:
+
+  rollout   a real rolling update of each service, 10 min apart: a deployment change event, the
+            case CADAL may repair the model for
+  traffic   the load generator's users x3 for --traffic-minutes, then back: every service's
+            workload shifts with no deployment event on it (a real silent change)
+
+At the end it exports every service's feature rows for the whole campaign (plus the warm-up
+before it) from Prometheus, so the evaluation can be replayed offline as often as needed
+(ml-pipeline/evaluate_live_chaos.py).
 
 Run from services/ml-backend while the cluster is up (infrastructure/online-boutique/up.ps1):
 
-    uv run python scripts/chaos_campaign.py                      # 3 services x 4 faults, ~2 h
+    uv run python scripts/chaos_campaign.py --warmup-minutes 60  # 3 services x 4 faults + benign phase, ~3.7 h
     uv run python scripts/chaos_campaign.py --services paymentservice --faults cpu_stress --recover 120
 
 Prometheus keeps 6 hours, so the export must run within 6 hours of the warm-up start; the script
@@ -57,6 +65,39 @@ def export(run_dir: Path, start: float, end: float, warmup_min: float) -> None:
     print(f"exported {sum(len(f) for f in frames)} rows for {len(frames)} services to {run_dir}")
 
 
+def benign(actions: LiveActions, args, run_dir: Path) -> None:
+    """Changes that are not faults: a rollout per service, then a held traffic shift."""
+    gap = args.fault_seconds + args.recover
+    with open(run_dir / "changes.csv", "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["service", "kind", "time", "time_iso", "detail"])
+
+        def record(service: str, kind: str, detail: str) -> float:
+            t = time.time()
+            w.writerow([service, kind, round(t, 3), iso(t), detail])
+            f.flush()
+            print(f"[benign] {iso(t)} {kind} {service} {detail}", flush=True)
+            return t
+
+        for svc in args.services:
+            t0 = time.time()
+            try:
+                info = actions.rollout(svc)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[benign] rollout of {svc} FAILED: {getattr(exc, 'reason', exc)}", flush=True)
+                continue
+            record(svc, "deployment", info.get("release", ""))
+            time.sleep(max(0.0, t0 + gap - time.time()))
+        t0 = time.time()
+        info = actions.traffic_up()
+        record("*", "traffic_up", f"users={info.get('users')}")
+        time.sleep(max(0.0, t0 + args.traffic_minutes * 60 - time.time()))
+        t0 = time.time()
+        info = actions.traffic_reset()
+        record("*", "traffic_reset", f"users={info.get('users')}")
+        time.sleep(max(0.0, t0 + gap - time.time()))
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--services", nargs="*", default=list(DEFAULT_SERVICES))
@@ -67,6 +108,9 @@ def main() -> int:
                     help="clean history before the first fault that the evaluation trains on")
     ap.add_argument("--delay-minutes", type=float, default=0,
                     help="wait this long first, e.g. so the warm-up window misses a fresh cluster's startup")
+    ap.add_argument("--no-benign", action="store_true", help="faults only (the 2026-10-21 campaign)")
+    ap.add_argument("--traffic-minutes", type=float, default=60,
+                    help="how long the x3 traffic shift is held before it is reset")
     ap.add_argument("--export-only", type=Path, default=None)
     args = ap.parse_args()
 
@@ -80,6 +124,9 @@ def main() -> int:
     actions = LiveActions(settings.k8s_namespace, fault_seconds=args.fault_seconds)
     plan = [(svc, fault) for fault in args.faults for svc in args.services]
     total = len(plan) * (args.fault_seconds + args.recover)
+    if not args.no_benign:
+        total += len(args.services) * (args.fault_seconds + args.recover) + args.traffic_minutes * 60 \
+            + args.fault_seconds + args.recover
     print(f"{len(plan)} faults, about {timedelta(seconds=total)}; results in {run_dir}")
 
     if args.delay_minutes:
@@ -102,13 +149,16 @@ def main() -> int:
             f.flush()
             print(f"[{i}/{len(plan)}] {iso(t0)} {fault} on {svc}", flush=True)
             time.sleep(max(0.0, t0 + args.fault_seconds + args.recover - time.time()))
+    if not args.no_benign:
+        benign(actions, args, run_dir)
     end = time.time()
 
     (run_dir / "meta.json").write_text(json.dumps({
         "start": start, "end": end, "warmup_minutes": args.warmup_minutes,
         "fault_seconds": args.fault_seconds, "recover_seconds": args.recover,
         "scrape_seconds": settings.live_scrape_seconds, "namespace": settings.k8s_namespace,
-        "services": args.services, "faults": args.faults}, indent=2))
+        "services": args.services, "faults": args.faults, "benign": not args.no_benign,
+        "traffic_minutes": None if args.no_benign else args.traffic_minutes}, indent=2))
     removed = actions.cleanup()
     print(f"campaign done, removed {removed} finished chaos objects")
     export(run_dir, start, end, args.warmup_minutes)

@@ -6,6 +6,8 @@
 # Each service is probed through its ClusterIP Service with the protocol its own readiness probe
 # uses: gRPC health (grpc.health.v1) for the gRPC services, HTTP /_healthz for the frontend and a
 # TCP connect for redis-cart. Each probe's metrics carry app=<Deployment> like the pod metrics.
+# Targets are fully qualified: the exporter's gRPC resolver does not apply the cluster DNS search
+# domains, so "cartservice.online-boutique.svc:7070" times out while the .cluster.local name works.
 config:
   modules:
     grpc:
@@ -39,46 +41,46 @@ serviceMonitor:
     scrapeTimeout: 4s
   targets:
     - name: adservice
-      url: adservice.online-boutique.svc:9555
+      url: adservice.online-boutique.svc.cluster.local:9555
       module: grpc
       additionalMetricsRelabels: { app: adservice, probe_namespace: online-boutique }
     - name: cartservice
-      url: cartservice.online-boutique.svc:7070
+      url: cartservice.online-boutique.svc.cluster.local:7070
       module: grpc
       additionalMetricsRelabels: { app: cartservice, probe_namespace: online-boutique }
     - name: checkoutservice
-      url: checkoutservice.online-boutique.svc:5050
+      url: checkoutservice.online-boutique.svc.cluster.local:5050
       module: grpc
       additionalMetricsRelabels: { app: checkoutservice, probe_namespace: online-boutique }
     - name: currencyservice
-      url: currencyservice.online-boutique.svc:7000
+      url: currencyservice.online-boutique.svc.cluster.local:7000
       module: grpc
       additionalMetricsRelabels: { app: currencyservice, probe_namespace: online-boutique }
     - name: emailservice
-      url: emailservice.online-boutique.svc:5000
+      url: emailservice.online-boutique.svc.cluster.local:5000
       module: grpc
       additionalMetricsRelabels: { app: emailservice, probe_namespace: online-boutique }
     - name: frontend
-      url: http://frontend.online-boutique.svc/_healthz
+      url: http://frontend.online-boutique.svc.cluster.local/_healthz
       module: http_2xx
       additionalMetricsRelabels: { app: frontend, probe_namespace: online-boutique }
     - name: paymentservice
-      url: paymentservice.online-boutique.svc:50051
+      url: paymentservice.online-boutique.svc.cluster.local:50051
       module: grpc
       additionalMetricsRelabels: { app: paymentservice, probe_namespace: online-boutique }
     - name: productcatalogservice
-      url: productcatalogservice.online-boutique.svc:3550
+      url: productcatalogservice.online-boutique.svc.cluster.local:3550
       module: grpc
       additionalMetricsRelabels: { app: productcatalogservice, probe_namespace: online-boutique }
     - name: recommendationservice
-      url: recommendationservice.online-boutique.svc:8080
+      url: recommendationservice.online-boutique.svc.cluster.local:8080
       module: grpc
       additionalMetricsRelabels: { app: recommendationservice, probe_namespace: online-boutique }
     - name: redis-cart
-      url: redis-cart.online-boutique.svc:6379
+      url: redis-cart.online-boutique.svc.cluster.local:6379
       module: tcp_connect
       additionalMetricsRelabels: { app: redis-cart, probe_namespace: online-boutique }
     - name: shippingservice
-      url: shippingservice.online-boutique.svc:50051
+      url: shippingservice.online-boutique.svc.cluster.local:50051
       module: grpc
       additionalMetricsRelabels: { app: shippingservice, probe_namespace: online-boutique }

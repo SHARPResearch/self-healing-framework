@@ -1,0 +1,63 @@
+{{- if .Values.redis.enabled }}
+{{- $name := include "sharp.redis.name" . }}
+# Redis for ml-backend: Pub/Sub fan-out to dashboard WebSockets (ws:anomaly_broadcast) and the
+# anomaly_events stream the decision engine consumes. Both are transient, so no volume.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "sharp.labels" . | nindent 4 }}
+    {{- include "sharp.selector" (dict "name" $name "root" .) | nindent 4 }}
+spec:
+  selector:
+    {{- include "sharp.selector" (dict "name" $name "root" .) | nindent 4 }}
+  ports:
+    - name: redis
+      port: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "sharp.labels" . | nindent 4 }}
+    {{- include "sharp.selector" (dict "name" $name "root" .) | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "sharp.selector" (dict "name" $name "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "sharp.labels" . | nindent 8 }}
+        {{- include "sharp.selector" (dict "name" $name "root" .) | nindent 8 }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: redis
+          image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
+          args: ["--save", "", "--appendonly", "no"]
+          ports:
+            - name: redis
+              containerPort: 6379
+          readinessProbe:
+            exec: { command: ["redis-cli", "ping"] }
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.redis.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          emptyDir: {}
+{{- end }}

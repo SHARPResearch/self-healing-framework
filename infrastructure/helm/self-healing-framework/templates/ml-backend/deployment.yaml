@@ -1,0 +1,98 @@
+{{- if .Values.mlBackend.enabled }}
+{{- $name := include "sharp.mlBackend.name" . }}
+{{- $v := .Values.mlBackend }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "sharp.labels" . | nindent 4 }}
+    {{- include "sharp.selector" (dict "name" $name "root" .) | nindent 4 }}
+spec:
+  replicas: {{ $v.replicas }}
+  # Never two scorers at once, not even during a rollout: they would both open quarantines and
+  # write lifecycle decisions for the same models (docs/adr/0009).
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "sharp.selector" (dict "name" $name "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "sharp.labels" . | nindent 8 }}
+        {{- include "sharp.selector" (dict "name" $name "root" .) | nindent 8 }}
+    spec:
+      serviceAccountName: {{ $name }}
+      # Shutdown writes every service's checkpoint; give it time before SIGKILL.
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: ml-backend
+          image: "{{ $v.image.repository }}:{{ $v.image.tag }}"
+          imagePullPolicy: {{ $v.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8002
+          env:
+            - name: TELEMETRY_MODE
+              value: prometheus
+            - name: PROMETHEUS_URL
+              value: {{ $v.prometheusUrl | quote }}
+            - name: K8S_NAMESPACE
+              value: {{ .Values.targetNamespace | quote }}
+            - name: LIVE_SCRAPE_SECONDS
+              value: {{ $v.scrapeSeconds | quote }}
+            - name: LIVE_LIFECYCLE_DAY_MINUTES
+              value: {{ $v.lifecycleDayMinutes | quote }}
+            - name: LIVE_WARMUP_MINUTES
+              value: {{ $v.warmupMinutes | quote }}
+            - name: LIVE_MIN_WARMUP_MINUTES
+              value: {{ $v.minWarmupMinutes | quote }}
+            - name: MODEL_CHECKPOINTS
+              value: {{ $v.checkpoints | quote }}
+            - name: FOLLOW_CONTAINER_LOGS
+              value: "false"
+            {{- if .Values.timescaledb.enabled }}
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: {{ include "sharp.timescaledb.name" . }}, key: password }
+            - name: DATABASE_URL
+              value: "postgresql://postgres:$(DB_PASSWORD)@{{ include "sharp.timescaledb.name" . }}:5432/{{ .Values.timescaledb.database }}"
+            {{- end }}
+            {{- if .Values.redis.enabled }}
+            - name: REDIS_URL
+              value: "redis://{{ include "sharp.redis.name" . }}:6379"
+            {{- end }}
+            {{- range $key, $value := $v.extraEnv }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          # Live: once the fleet has warmed up on Prometheus history (503 until then, docs/adr/0009).
+          readinessProbe:
+            httpGet: { path: /api/ready, port: http }
+            periodSeconds: 10
+            failureThreshold: 3
+          # The API itself; it answers while the fleet is still waiting for Prometheus.
+          livenessProbe:
+            httpGet: { path: /api/health, port: http }
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            {{- toYaml $v.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+{{- end }}

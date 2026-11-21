@@ -1,6 +1,9 @@
 apiVersion: v2
 name: self-healing-framework
-description: Helm chart for the self-healing microservice framework (ml-backend, decision-engine, yarp-gateway, redis, mlflow, monitoring)
+description: >-
+  SHARP self-healing framework on Kubernetes. Renders ml-backend (anomaly detection and the CADAL
+  model lifecycle) with TimescaleDB, Redis, RBAC on the monitored namespace, a ServiceMonitor and a
+  Grafana dashboard. Templates for the other services are added by their owners.
 type: application
-version: 0.1.0
-appVersion: "0.1.0"
+version: 0.2.0
+appVersion: "0.2.0"

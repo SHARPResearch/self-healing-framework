@@ -1,20 +1,77 @@
-# Default values for the self-healing-framework Helm chart.
-# Per docs/Doc2_GitHub_Monorepo_Structure.md: single source of truth for image tags,
-# resource limits, replica counts, and env var injection. CI/CD substitutes image.tag
-# via `helm upgrade --set image.tag=$GIT_SHA`.
+# Values for the self-healing-framework Helm chart.
 #
-# This is a placeholder until services/* have real Dockerfiles to build against
-# (docs/Doc3_Execution_Guide.md Phase 8).
+# What renders today: ml-backend (Components 1 and 2: the anomaly detector and the CADAL model
+# lifecycle) with the two stores it uses, TimescaleDB and Redis, its RBAC on the monitored
+# namespace, a ServiceMonitor for its /metrics and a Grafana dashboard. The decision-engine and
+# yarp-gateway keys are kept for their owners; their templates are not written yet.
+#
+# Local install (minikube profile "sharp", after infrastructure/online-boutique/up.ps1):
+#   infrastructure/online-boutique/deploy-sharp.ps1
+# CI substitutes the image tag: helm upgrade --set mlBackend.image.tag=$GIT_SHA
+
+# The namespace whose Deployments are monitored, rolled out and fault-injected (Online Boutique).
+# The chart grants ml-backend a Role there; it does not install anything into it.
+targetNamespace: online-boutique
 
 mlBackend:
+  enabled: true
   image:
-    repository: self-healing/ml-backend
+    repository: sharp/ml-backend
     tag: dev
-  replicas: 2
+    pullPolicy: IfNotPresent
+  # One replica on purpose (docs/adr/0009): every replica would score every service and open its
+  # own quarantines, so two replicas would make two different lifecycle decisions about the same
+  # model. A restart resumes from the TimescaleDB checkpoint instead of warming up again.
+  replicas: 1
   resources:
-    requests: { cpu: 250m, memory: 256Mi }
-    limits: { cpu: 500m, memory: 512Mi }
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { memory: 1Gi }
+  prometheusUrl: http://kube-prom-kube-prometheus-prometheus.monitoring.svc:9090
+  # Live pacing (services/ml-backend/README.md): one lifecycle "day" of evidence is this many
+  # minutes, and each service warms up on this much Prometheus history.
+  scrapeSeconds: 5
+  lifecycleDayMinutes: 30
+  warmupMinutes: 60
+  minWarmupMinutes: 10
+  checkpoints: "on"
+  # Extra environment variables for app/config.py settings not listed above.
+  extraEnv: {}
+  rbac:
+    create: true
+    # Let the dashboard's live actions inject Chaos Mesh faults (StressChaos, PodChaos, NetworkChaos).
+    chaosActions: true
+  serviceMonitor:
+    enabled: true
+    interval: 15s
 
+timescaledb:
+  enabled: true
+  image:
+    repository: timescale/timescaledb
+    tag: 2.17.2-pg16
+  database: selfheal
+  # Left empty, a random password is generated once and kept across upgrades.
+  password: ""
+  storage: 2Gi
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 512Mi }
+
+redis:
+  enabled: true
+  image:
+    repository: redis
+    tag: 7-alpine
+  resources:
+    requests: { cpu: 25m, memory: 32Mi }
+    limits: { memory: 128Mi }
+
+grafanaDashboard:
+  enabled: true
+  # The kube-prometheus-stack Grafana sidecar loads ConfigMaps with this label from any namespace.
+  label: grafana_dashboard
+
+# Owned by other components; kept so their owners can add templates against the same keys.
 decisionEngine:
   image:
     repository: self-healing/decision-engine

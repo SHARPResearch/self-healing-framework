@@ -1,4 +1,4 @@
-# Grafana dashboard "SHARP Online Boutique": the seven per-service metrics ml-backend feeds to the
+# Grafana dashboard "SHARP Online Boutique": the eight per-service metrics ml-backend feeds to the
 # detector. The queries are the ones in services/ml-backend/app/prom.py (feature_queries), with an
 # app filter added. Loaded by the Grafana sidecar through the grafana_dashboard label
 # (see prometheus-values.yaml). Applied by up.ps1.
@@ -84,6 +84,14 @@ data:
           "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1.1 }, "overrides": [] },
           "targets": [ { "refId": "A", "legendFormat": "{{app}}",
             "expr": "sum by (app) (label_replace(kube_deployment_status_replicas_available{namespace=\"online-boutique\", deployment=~\"$app\"}, \"app\", \"$1\", \"deployment\", \"(.*)\")) / clamp_min(sum by (app) (label_replace(kube_deployment_spec_replicas{namespace=\"online-boutique\", deployment=~\"$app\"}, \"app\", \"$1\", \"deployment\", \"(.*)\")), 1)" } ]
+        },
+        {
+          "id": 8, "type": "timeseries", "title": "Response time (blackbox probe, 1 min mean)", "gridPos": { "x": 0, "y": 24, "w": 24, "h": 8 },
+          "description": "One real request per service every 5 s (gRPC health, HTTP /_healthz or TCP connect). The eighth feature: a network delay shows here and nowhere else.",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "s", "min": 0 }, "overrides": [] },
+          "targets": [ { "refId": "A", "legendFormat": "{{app}}",
+            "expr": "max by (app) (avg_over_time(probe_duration_seconds{probe_namespace=\"online-boutique\", app=~\"$app\"}[1m]))" } ]
         }
       ]
     }

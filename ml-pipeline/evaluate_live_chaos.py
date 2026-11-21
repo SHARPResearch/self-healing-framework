@@ -76,9 +76,13 @@ def restart_steps(live: pd.DataFrame, windows: pd.DataFrame) -> list[int]:
 
 
 def run_policy(policy: str, warm: list[dict], rows: list[dict], spd: int,
-               restarts: list[int] = (), labels: list[int] = ()) -> tuple[list[bool], list[dict], dict]:
+               restarts: list[int] = (), labels: list[int] = (),
+               deploys: list[int] = ()) -> tuple[list[bool], list[dict], dict]:
     with_restarts = policy in ("cadal_restart", "deployed")
     events = [ChangeEvent("svc", "restart", step=i + 1) for i in restarts] if with_restarts else []
+    # recorded rollouts reach every CADAL variant, as the Kubernetes watcher delivers them live
+    events += [ChangeEvent("svc", "deployment", step=i + 1) for i in deploys] if policy != "static" else []
+    events.sort(key=lambda e: e.step)
     mgr = DynamicModelManager("svc", lifecycle(policy, spd), detector_config("pca_s5"),
                               change_source=ReplayChangeEventSource(events))
     mgr.warm_up(warm)
@@ -98,6 +102,12 @@ def evaluate(run: Path) -> pd.DataFrame:
     meta = json.loads((run / "meta.json").read_text())
     windows = pd.read_csv(run / "windows.csv")
     tel = pd.read_parquet(run / "telemetry.parquet")
+    changes = pd.read_csv(run / "changes.csv") if (run / "changes.csv").exists() else \
+        pd.DataFrame(columns=["service", "kind", "time"])
+    gap_s = meta.get("fault_seconds", 180) + meta.get("recover_seconds", 420)
+    up = changes[changes.kind == "traffic_up"].time
+    reset = changes[changes.kind == "traffic_reset"].time
+    traffic = (float(up.iloc[0]), float(reset.iloc[0]) if len(reset) else float("inf")) if len(up) else None
     features = [f for f in ALL_FEATURES if f in tel.columns]
     print(f"features: {', '.join(features)}")
     spd = int(round(30 * 60 / meta["scrape_seconds"]))           # live pacing: 30 min "day"
@@ -120,8 +130,14 @@ def evaluate(run: Path) -> pd.DataFrame:
         after_restart = np.zeros(len(times), dtype=bool)
         for i in restarts:
             after_restart |= (times >= times[i]) & (times < times[i] + RESTART_WINDOW_S)
+        rollouts = changes[(changes.service == svc) & (changes.kind == "deployment")].time.to_numpy()
+        deploys = sorted({int(np.searchsorted(times, t)) for t in rollouts if t <= times[-1]})
+        in_rollout = np.zeros(len(times), dtype=bool)
+        for t in rollouts:
+            in_rollout |= (times >= t) & (times < t + gap_s)
+        in_traffic = (times >= traffic[0]) & (times < traffic[1]) if traffic else np.zeros(len(times), dtype=bool)
         for policy in POLICIES:
-            alarms, decisions, asked = run_policy(policy, warm_rows, live_rows, spd, restarts, labels)
+            alarms, decisions, asked = run_policy(policy, warm_rows, live_rows, spd, restarts, labels, deploys)
             m = stream_metrics(alarms, labels, None, 0.01)
             detected, delays = 0, []
             for s, e in zip(w.start, w.end):
@@ -132,19 +148,28 @@ def evaluate(run: Path) -> pd.DataFrame:
             outside = [a for a, n in zip(alarms, near) if not n]
             outside_after_restart = [a for a, n, r in zip(alarms, near, after_restart) if not n and r]
             hours = len(outside) * meta["scrape_seconds"] / 3600
-            learned = 0
+            learned = benign_learned = 0
             for d in decisions:
                 if d.get("action") != "promote" or d.get("step") is None:
                     continue
                 t = times[min(int(d["step"]) - 1, len(times) - 1)]
-                learned += any(s <= t <= e + quarantine_s for s, e in zip(w.start, w.end))
+                if any(s <= t <= e + quarantine_s for s, e in zip(w.start, w.end)):
+                    learned += 1
+                else:
+                    benign_learned += 1
+
+            def fa_rate(mask):
+                n = int(mask.sum())
+                return round(float(np.asarray(alarms)[mask].sum()) / (n * meta["scrape_seconds"] / 3600), 2) if n else None
             out.append({
                 "service": svc, "policy": policy, "faults": len(w), "detected": detected,
                 "median_ttd_s": round(statistics.median(delays), 1) if delays else None,
                 "false_alarms_per_hour": round(sum(outside) / hours, 2) if hours else None,
                 "mcc": m["mcc"], "event_recall": m["event_recall"],
                 "promotions": sum(d.get("action") == "promote" for d in decisions),
-                "incidents_learned": learned,
+                "incidents_learned": learned, "benign_promotions": benign_learned,
+                "false_alarms_per_hour_after_rollout": fa_rate(in_rollout & ~np.asarray(near)),
+                "false_alarms_per_hour_traffic_x3": fa_rate(in_traffic & ~np.asarray(near)),
                 "operator_queries": asked["queries"], "answered_new_normal": asked["said_new_normal"],
                 "restarts": len(restarts),
                 "false_alarms_after_restart_share": (round(sum(outside_after_restart) / sum(outside), 3)
@@ -163,8 +188,11 @@ def main() -> int:
     res.to_csv(args.run / "results.csv", index=False)
     print(res.to_string(index=False))
     if not res.empty:
-        tot = res.groupby("policy")[["faults", "detected", "incidents_learned"]].sum()
-        print("\n" + tot.to_string())
+        tot = res.groupby("policy")[["faults", "detected", "incidents_learned", "benign_promotions",
+                                     "operator_queries"]].sum()
+        fa = res.groupby("policy")[["false_alarms_per_hour", "false_alarms_per_hour_after_rollout",
+                                    "false_alarms_per_hour_traffic_x3"]].mean().round(1)
+        print("\n" + tot.join(fa).to_string())
     return 0
 
 

@@ -61,6 +61,7 @@ class Settings(BaseSettings):
     # start from its warm-up every time), "on" and "off" force it. Dirty services are saved every
     # CHECKPOINT_EVERY_S seconds, every service every CHECKPOINT_ALL_EVERY_S, and all on shutdown.
     model_checkpoints: str = "auto"
+    live_start_retry_seconds: int = 30    # live start: retry the fleet build until Prometheus has history
     checkpoint_every_s: float = 30.0
     checkpoint_all_every_s: float = 300.0
 

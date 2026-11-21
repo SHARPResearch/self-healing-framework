@@ -14,6 +14,7 @@ from app.config import settings
 settings.start_replay = False
 settings.use_backing_services = False
 
+from app import metrics  # noqa: E402
 from app.fleet import ServiceFleet  # noqa: E402
 from app.main import app  # noqa: E402
 from app.runtime import runtime  # noqa: E402
@@ -94,10 +95,18 @@ def test_unknown_service_and_bad_answer_are_rejected(client):
 
 
 def test_deploy_is_learned_and_can_be_rolled_back(client):
+    def promotions():
+        return sum(sample.value for family in metrics.REGISTRY.collect()
+                   if family.name == "sharp_lifecycle_decisions" for sample in family.samples
+                   if sample.name.endswith("_total") and sample.labels["service"] == SERVICE
+                   and sample.labels["action"] == "promote")
+
+    before = promotions()
     warm(client)
     assert client.post(f"/api/demo/{SERVICE}/deploy").status_code == 200
     decision = run_until_decision(client, {"promote", "hold", "ask"})
     assert decision["action"] == "promote" and decision["trigger"] == "change_event"
+    assert promotions() == before + 1                      # and it is counted on /metrics
     model = client.get(f"/api/models/{SERVICE}").json()
     assert model["productionVersion"] == 2
     rollback = client.post(f"/api/models/{SERVICE}/rollback", json={"operator": "tester"})
@@ -251,3 +260,16 @@ def test_scores_after_a_restart_are_labelled_expected(search_client):
     assert all(s["context"] == "after_restart" for s in scores)
     change = runtime.store.changes[-1]
     assert change["kind"] == "restart"
+
+
+def test_metrics_endpoint_exposes_scoring_and_lifecycle_counters(client):
+    warm(client, 50)
+    body = client.get("/metrics")
+    assert body.status_code == 200 and body.headers["content-type"].startswith("text/plain")
+    text = body.text
+    for name in ("sharp_events_scored_total", "sharp_anomaly_score", "sharp_score_seconds_bucket",
+                 "sharp_model_version", "sharp_lifecycle_phase", "sharp_ready 1.0"):
+        assert name in text, name
+    scored = [line for line in text.splitlines()
+              if line.startswith(f'sharp_events_scored_total{{service="{SERVICE}"}}')]
+    assert scored and float(scored[0].split()[-1]) >= 50

@@ -414,6 +414,7 @@ class Runtime:
                 data = {k: v for k, v in payload.items() if k != "event"}
                 self._log_lifecycle(rt, event, data)
                 metrics.observe_lifecycle(rt.service_id, event, data)
+                self._mark(rt, event, data)
                 if event == "lifecycle_decision":
                     await self.store.write_decision(data)
                     rt.drift_flag = data.get("action") in ("promote", "ask", "hold")
@@ -424,6 +425,19 @@ class Runtime:
                                                    "kind": data.get("kind") or "deployment", "detail": data})
                 if event in LIFECYCLE_TYPES:
                     await self.bus.publish(envelope(event, rt.service_id, data))
+
+    @staticmethod
+    def _mark(rt: ServiceRuntime, event: str, d: dict) -> None:
+        if event == "quarantine_opened":
+            label = f"quarantine ({d.get('trigger')})"
+        elif event == "change_observed":
+            label = f"{d.get('kind') or 'deployment'} observed"
+        elif event == "lifecycle_decision":
+            label = f"{d.get('verdict')} -> {d.get('action')}"
+        else:
+            return
+        rt.markers.append({"time": time.time(), "event": event, "label": label,
+                           "action": d.get("action"), "trigger": d.get("trigger")})
 
     def _log_lifecycle(self, rt: ServiceRuntime, event: str, d: dict) -> None:
         sid = rt.service_id

@@ -120,6 +120,9 @@ class ServiceRuntime:
     rng: random.Random = field(default_factory=random.Random)
     restored: bool = False               # resumed from a checkpoint instead of warmed up
     restart_until_step: int = -1         # alarms up to this manager step follow a pod restart
+    # wall-clock lifecycle events (quarantine opened, change observed, decision) for the dashboard's
+    # telemetry evidence chart, which plots Prometheus time series and so needs times, not steps
+    markers: deque = field(default_factory=lambda: deque(maxlen=200))
 
 
 def lifecycle_config() -> LifecycleConfig:

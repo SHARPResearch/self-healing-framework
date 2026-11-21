@@ -2,6 +2,7 @@
 routes.py — REST API under /api (contract documented in services/ml-backend/README.md).
 """
 
+import asyncio
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Literal, Optional
@@ -14,6 +15,7 @@ from app.api import views
 from app.bus import envelope
 from app.config import settings
 from app.logs import public as public_log
+from app.prom import FEATURES, OnlineBoutiqueTelemetry
 from app.runtime import runtime
 
 router = APIRouter(prefix="/api")
@@ -33,6 +35,7 @@ async def health() -> dict:
             "namespace": settings.k8s_namespace if runtime.live else None,
             "scrapeSeconds": settings.live_scrape_seconds if runtime.live else None,
             "lifecycleDayMinutes": settings.live_lifecycle_day_minutes if runtime.live else None,
+            "grafanaUrl": settings.grafana_url if runtime.live else None,
             "store": runtime.store.kind,
             "db": runtime.store.kind == "timescaledb" and getattr(runtime.store, "pool", None) is not None,
             "redis": runtime.bus.redis_ok, "services": len(runtime.fleet.services),
@@ -247,6 +250,41 @@ async def demo_speed(body: SpeedBody) -> dict:
     await runtime.bus.publish(envelope("demo_speed", None, {"eventsPerSec": runtime.events_per_sec,
                                                             "paused": runtime.paused}))
     return {"eventsPerSec": runtime.events_per_sec, "paused": runtime.paused}
+
+
+FEATURE_INFO = {          # app/prom.py FEATURES: label and unit for the dashboard
+    "cpu_rate": ("CPU", "cores"), "memory_used": ("Memory", "bytes"),
+    "network_rx": ("Network in", "bytes/s"), "network_tx": ("Network out", "bytes/s"),
+    "cpu_throttled": ("CPU throttled", "ratio"), "restarts": ("Restarts (5 min)", "count"),
+    "ready_ratio": ("Ready replicas", "ratio"), "probe_latency": ("Response time", "seconds"),
+}
+
+
+@router.get("/live/{service_id}/telemetry")
+async def live_telemetry(service_id: str, minutes: float = Query(30, ge=5, le=360)) -> dict:
+    """
+    The raw Prometheus features the detector scores for one service, with the lifecycle events
+    over the same window: the evidence behind a quarantine or a decision, unprocessed.
+    """
+    if not runtime.live:
+        raise HTTPException(409, "telemetry evidence needs TELEMETRY_MODE=prometheus")
+    rt = _service(service_id)
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(minutes=minutes)
+    step = max(settings.live_scrape_seconds, round(minutes * 60 / 360))     # at most ~360 points
+    # a private telemetry reader: the shared one forward-fills from the live scrape's last row
+    reader = OnlineBoutiqueTelemetry(runtime.fleet.telemetry.client, settings.k8s_namespace)
+    try:
+        rows = await asyncio.to_thread(reader.between, [service_id], start, end, step)
+    except Exception as exc:  # noqa: BLE001 - Prometheus down or slow
+        raise HTTPException(503, f"Prometheus unavailable: {exc}")
+    since = start.timestamp()
+    return {
+        "serviceId": service_id, "stepSeconds": step,
+        "features": [{"key": f, "label": FEATURE_INFO[f][0], "unit": FEATURE_INFO[f][1]} for f in FEATURES],
+        "points": [{"time": round(t), **{f: row.get(f) for f in FEATURES}} for t, row in rows.get(service_id, [])],
+        "markers": [m for m in rt.markers if m["time"] >= since],
+    }
 
 
 @router.post("/live/{service_id}/{action}")

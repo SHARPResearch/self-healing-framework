@@ -1,0 +1,15 @@
+# Server Machine Dataset for the tests (gitignored; about 470 MB raw). Cached by the download
+# script's hash, so it is fetched from the OmniAnomaly repository once.
+name: SMD dataset
+description: Restore or download datasets/smd/raw
+runs:
+  using: composite
+  steps:
+    - uses: actions/cache@v4
+      id: cache
+      with:
+        path: datasets/smd/raw
+        key: smd-raw-${{ hashFiles('datasets/smd/download.sh') }}
+    - if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: bash datasets/smd/download.sh

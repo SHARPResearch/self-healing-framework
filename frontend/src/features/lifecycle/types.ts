@@ -144,6 +144,8 @@ export interface BackendHealth {
   namespace?: string | null;
   scrapeSeconds?: number | null;
   lifecycleDayMinutes?: number | null;
+  /** Live mode: where the full Grafana dashboards are (up.ps1 forwards it to :3000). */
+  grafanaUrl?: string | null;
   store: "timescaledb" | "memory";
   db: boolean;
   redis: boolean;
@@ -152,6 +154,31 @@ export interface BackendHealth {
   eventsPerSec: number;
   paused: boolean;
   uptimeS: number;
+}
+
+/** GET /api/live/{service}/telemetry: the raw Prometheus features behind a live service's score. */
+export interface TelemetryFeature {
+  key: string;
+  label: string;
+  unit: "cores" | "bytes" | "bytes/s" | "ratio" | "count" | "seconds" | string;
+}
+
+export interface TelemetryMarker {
+  /** unix seconds */
+  time: number;
+  event: "quarantine_opened" | "change_observed" | "lifecycle_decision";
+  label: string;
+  action: LifecycleAction | null;
+  trigger: string | null;
+}
+
+export interface TelemetryEvidence {
+  serviceId: string;
+  stepSeconds: number;
+  features: TelemetryFeature[];
+  /** one row per step: unix seconds plus one value per feature key */
+  points: Array<{ time: number } & Record<string, number | null>>;
+  markers: TelemetryMarker[];
 }
 
 /** WebSocket envelope, GET /ws/events. */

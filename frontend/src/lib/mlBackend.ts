@@ -8,6 +8,7 @@ import type {
   OperatorQuery,
   QueryAnswer,
   ScorePoint,
+  TelemetryEvidence,
 } from "@/features/lifecycle/types";
 import type { ModelDetail, ModelRun } from "@/features/models/types";
 import type { LogHistogram, LogPage, LogServiceSummary } from "@/features/logs/types";
@@ -84,6 +85,8 @@ export const api = {
     post<ActionResult>(`/queries/${queryId}/answer`, { answer, operator }),
   inject: (serviceId: string, kind: InjectionKind) => post<Record<string, unknown>>(`/demo/${serviceId}/${kind}`),
   live: (serviceId: string, action: LiveAction) => post<Record<string, unknown>>(`/live/${serviceId}/${action}`),
+  telemetry: (serviceId: string, minutes = 30) =>
+    request<TelemetryEvidence>(`/live/${serviceId}/telemetry?minutes=${minutes}`),
   speed: (body: { eventsPerSec?: number; paused?: boolean }) =>
     post<{ eventsPerSec: number; paused: boolean }>("/demo/speed", body),
   reset: () => post<{ status: string }>("/demo/reset"),

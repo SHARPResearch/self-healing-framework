@@ -1,41 +1,201 @@
 # self-healing-framework
 
-A closed-loop, autonomous reliability system for Kubernetes-hosted microservices: it ingests
-operational telemetry, predicts imminent failures with online streaming ML (`river`
-Half-Space Trees + ADWIN drift detection), triggers graduated remediation through a
-policy-aware .NET decision engine, and surfaces all activity on a real-time React dashboard.
+A closed-loop reliability system for Kubernetes-hosted microservices. It ingests operational
+telemetry, detects anomalies with a per-service streaming ML model, keeps that model correct as the
+services change (CADAL, a change-aware model lifecycle with the operator in the loop), and shows all
+activity on a real-time React dashboard. Remediation is meant to go through a policy-aware decision
+engine and the Kubernetes API.
+
+## Architecture and DevOps
+
+Everything runs on one Windows laptop (Intel i7-1165G7, 4 cores, 16 GB). Nothing is deployed to a
+cloud. Docker Desktop hosts the databases and a minikube cluster, and the application services run
+as host processes.
+
+```mermaid
+flowchart TB
+    browser([Browser])
+
+    subgraph laptop["Windows laptop: i7-1165G7, 4 cores, 16 GB"]
+        subgraph host["Host processes (uv, pnpm)"]
+            fe["Frontend<br/>React + Vite :5173"]
+            mlb["ml-backend (FastAPI) :8002<br/>PCA detector + CADAL lifecycle"]
+            de["decision-engine (FastAPI) :8000"]
+        end
+
+        subgraph docker["Docker Desktop (Linux VM)"]
+            ts[("TimescaleDB :5433<br/>metrics, versions, logs")]
+            rd[("Redis :6380<br/>stream + pub/sub")]
+
+            subgraph mk["minikube node, profile sharp: 4 CPU, 7 GB, Kubernetes v1.33.1"]
+                subgraph nsmon["namespace monitoring (kube-prometheus-stack)"]
+                    gf["Grafana<br/>localhost:3000"]
+                    prom["Prometheus<br/>localhost:9090<br/>5 s scrape, 6 h retention"]
+                    ksm["kube-state-metrics<br/>node-exporter, cAdvisor"]
+                end
+                subgraph nsob["namespace online-boutique"]
+                    ob["Online Boutique microservices<br/>+ load generator"]
+                end
+                subgraph nschaos["namespace chaos-testing"]
+                    cm["Chaos Mesh"]
+                end
+                kapi["Kubernetes API"]
+            end
+        end
+    end
+
+    browser --> fe
+    browser -.->|view dashboards| gf
+    fe <-->|REST + WebSocket| mlb
+    mlb --> ts
+    mlb --> rd
+    rd -.->|planned consumer| de
+    mlb -->|PromQL, port-forward| prom
+    mlb -->|watch rollouts and restarts, run chaos| kapi
+    gf -->|PromQL| prom
+    ksm --> prom
+    ob -->|container metrics| prom
+    cm -->|CPU, pod-kill, network faults| ob
+    kapi -.-> cm
+```
+
+### What runs where
+
+| Component | Runs as | Port | Started by |
+|---|---|---|---|
+| TimescaleDB, Redis | Docker containers | 5433, 6380 | `infrastructure/local/docker-compose.demo.yml` |
+| minikube cluster (Prometheus, Grafana, Chaos Mesh, Online Boutique) | Docker container running containerd | 9090 and 3000 via port-forward | `infrastructure/online-boutique/up.ps1` |
+| ml-backend | host process (an image also exists, `services/ml-backend/Dockerfile`, non-root) | 8002 | `uv run uvicorn app.main:app --port 8002` |
+| Frontend | host process | 5173 | `pnpm dev` |
+| decision-engine | host process | 8000 | `uv run uvicorn app.main:app` |
+| llm-copilot | container (`services/llm-copilot/Dockerfile`) | 8004 | its own docker-compose |
+
+### Telemetry path
+
+1. Online Boutique pods run in minikube. cAdvisor and kube-state-metrics expose their CPU, memory,
+   network, throttling, restarts and readiness.
+2. Prometheus scrapes them every 5 s. ml-backend queries it with PromQL (`services/ml-backend/app/prom.py`):
+   seven metrics per service.
+3. The per-service detector turns the metrics into one anomaly score, and the CADAL lifecycle decides
+   when its model may change. Deployment rollouts and pod restarts reach it as change events from
+   the Kubernetes API.
+4. Scores, decisions and logs are stored in TimescaleDB, published on a Redis stream, and pushed to the
+   React dashboard over a WebSocket.
+5. Chaos Mesh injects real faults (CPU stress, pod kill, network delay) so detection can be measured
+   against ground truth (`services/ml-backend/scripts/chaos_campaign.py`).
+
+### DevOps skills shown in this repo
+
+- **Containers:** Docker Compose for the data stack with healthchecks, named volumes and an init
+  schema; a non-root Python image for ml-backend.
+- **Kubernetes:** minikube profile provisioned from code, namespaces, port-forwarding, rollout waits,
+  Kubernetes API watchers for deployments and pod restarts.
+- **Helm:** kube-prometheus-stack and Chaos Mesh installed with pinned chart versions and values files
+  (`infrastructure/online-boutique/*-values.yaml`).
+- **Observability:** Prometheus and PromQL, Grafana with a provisioned dashboard, retention policies
+  (6 h metrics, 7 days logs).
+- **Chaos engineering:** repeatable fault campaigns with recorded ground truth and an evaluation script.
+- **Automation:** idempotent PowerShell bring-up and tear-down (`up.ps1`, `down.ps1`) and a one-command
+  pre-demo health check (`services/ml-backend/scripts/demo_preflight.py`).
+- **Engineering practice:** Conventional Commits, pull requests, decision records in `docs/adr/`.
+
+### Current limits (what is not done yet)
+
+- No CI/CD: `.github/workflows/` is empty.
+- The Helm chart for our own services (`infrastructure/helm/self-healing-framework/`) has only
+  placeholder templates, and Terraform is empty. None of our own services is deployed to Kubernetes.
+- Not every service has a Dockerfile: the decision-engine one is empty and the frontend has none.
+- The services do not export Prometheus metrics of their own yet.
+- The Redis stream consumer in the decision engine is planned.
+
+## Seeing the Prometheus and Grafana dashboards
+
+Prerequisites: Docker Desktop (running), `minikube`, `kubectl`, `helm` 3, and PowerShell. The first run
+pulls about 3 GB of images and takes several minutes; later runs reuse them.
+
+```powershell
+# 1. Bring up the cluster: minikube, Prometheus + Grafana, Chaos Mesh, Online Boutique, port-forwards
+powershell -ExecutionPolicy Bypass -File infrastructure/online-boutique/up.ps1
+
+# 2. Check that everything is running
+kubectl -n monitoring get pods
+kubectl -n online-boutique get pods
+```
+
+**Prometheus** at http://localhost:9090
+
+- Status, then Targets: every target should be `UP`.
+- Graph tab, try:
+  - `sum by (pod) (rate(container_cpu_usage_seconds_total{namespace="online-boutique", container!=""}[1m]))`
+  - `kube_deployment_status_replicas_available{namespace="online-boutique"}`
+  - `increase(kube_pod_container_status_restarts_total{namespace="online-boutique"}[5m])`
+
+**Grafana** at http://localhost:3000, user `admin`. The password is generated by the chart:
+
+```powershell
+kubectl -n monitoring get secret kube-prom-grafana -o jsonpath="{.data.admin-password}" | % { [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($_)) }
+```
+
+- Dashboards, then **SHARP Online Boutique**: the seven per-service metrics that the detector consumes,
+  with a Service selector (`infrastructure/online-boutique/grafana-dashboard-sharp.yaml`).
+- Dashboards, then **Kubernetes / Compute Resources / Namespace (Pods)**, and choose `online-boutique`:
+  the stock dashboard that ships with kube-prometheus-stack.
+
+**See a real fault in the dashboards.** Start ml-backend in live mode, open the Model lifecycle page, and
+click **CPU** or **Kill pod** on a service card (see `services/ml-backend/README.md`, "Live mode"). Watch the
+CPU or restarts panel in Grafana react, and the anomaly score on the dashboard follow.
+
+If a port-forward has died (for example after a laptop sleep):
+
+```powershell
+kubectl --context sharp -n monitoring port-forward svc/kube-prom-grafana 3000:80
+kubectl --context sharp -n monitoring port-forward svc/kube-prom-kube-prometheus-prometheus 9090:9090
+```
+
+Open the demo shop itself with `minikube service frontend-external -n online-boutique -p sharp`.
+
+Stop everything (keeps images and data): `powershell -ExecutionPolicy Bypass -File infrastructure/online-boutique/down.ps1`.
+Remove it completely: `minikube delete -p sharp`.
+
+Grafana is limited to 300 MiB in a 7 GB cluster. If the laptop struggles, set `grafana.enabled: false` in
+`infrastructure/online-boutique/prometheus-values.yaml` and run `up.ps1` again.
 
 ## Layout
 
 | Path | What lives there |
 |---|---|
-| `services/ml-backend/` | FastAPI telemetry ingestion + streaming ML engine + MLflow client |
-| `services/decision-engine/` | .NET 8 Worker Service — policy evaluation, dependency graph, action dispatch |
-| `services/yarp-gateway/` | YARP reverse proxy — executes traffic-shifting recovery actions |
-| `services/llm-copilot/` | LangChain RCA + copilot service |
+| `services/ml-backend/` | FastAPI backend: telemetry (replay or Prometheus), PCA detector, CADAL lifecycle, REST + WebSocket |
+| `services/decision-engine/` | Decision engine (Python/FastAPI): policy evaluation and action dispatch |
+| `services/yarp-gateway/` | YARP traffic gateway (planned, README only) |
+| `services/llm-copilot/` | LangChain RCA and copilot service |
 | `services/shared/` | Cross-service shared code |
 | `services/target-services/` | Sample microservices for chaos-injection demos |
 | `frontend/` | React 18 + Vite + Tailwind observability dashboard |
-| `ml-pipeline/` | Standalone HST warm-up + drift-detection research pipeline |
-| `infrastructure/` | Helm charts, Kubernetes manifests, Terraform |
-| `datasets/` | Dataset download/preprocessing scripts (raw data itself is gitignored) |
-| `docs/` | Architecture, monorepo structure, execution guide, and per-topic docs |
+| `ml-pipeline/` | Research pipeline: detector, CADAL (dynamic model updating) and their evaluation, see `RESULTS.md` and `RESULTS_COMPONENT2.md` |
+| `infrastructure/` | Local compose files, the Online Boutique cluster setup, Helm and Kubernetes manifests |
+| `datasets/` | Dataset download scripts (raw data itself is gitignored) |
+| `docs/` | Architecture, decision records (`docs/adr/`), execution guide and per-topic docs |
 
 ## Getting started
 
-See `docs/Doc3_Execution_Guide.md` for the full phased build order (Phase 0 workstation setup
-through Phase 9 CI/CD). Short version:
+Quick start for the dynamic model updating demo (replay mode, no Kubernetes needed):
 
-```bash
-make dev          # starts local Redis + TimescaleDB via docker-compose
+```powershell
+docker compose -f infrastructure/local/docker-compose.demo.yml up -d          # TimescaleDB :5433, Redis :6380
+cd services/ml-backend ; uv run uvicorn app.main:app --port 8002              # backend
+cd frontend ; pnpm dev                                                         # http://localhost:5173
 ```
 
-Claude Code users: read `CLAUDE.md` first — it indexes which docs are authoritative and which
-are still empty scaffolding, plus the `local-dev-stack` and `scaffold-service` skills.
+The runbook is `docs/Component_2_Demo_Script.md`. For live Kubernetes mode and the full setup, see the
+monitoring section above and `services/ml-backend/README.md`.
+
+`make dev` starts the generic Redis and TimescaleDB stack from the root `docker-compose.yml` (ports 6379
+and 5432). `docs/Doc3_Execution_Guide.md` has the phased build plan.
 
 ## Docs
 
-- `docs/Doc1_Technical_Architecture.md` — architecture, data flow, ML config, decision policy
-- `docs/Doc2_GitHub_Monorepo_Structure.md` — the folder layout this repo follows
-- `docs/Doc3_Execution_Guide.md` — chronological build phases
-- `docs/Component_1_2_Technical_Guide.md` — the `ml-pipeline/` research prototype walkthrough
+- `docs/Doc1_Technical_Architecture.md`: architecture, data flow, ML config, decision policy
+- `docs/Doc2_GitHub_Monorepo_Structure.md`: the folder layout this repo follows
+- `docs/Doc3_Execution_Guide.md`: chronological build phases
+- `docs/Component_2_Dynamic_Model_Updating.md`: research positioning and design of CADAL
+- `docs/adr/`: decision records (detector choice, attribute before acting, early stop, restarts)

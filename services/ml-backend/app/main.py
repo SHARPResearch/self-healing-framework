@@ -8,9 +8,10 @@ Run:  uv run uvicorn app.main:app --port 8002
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 
+from app import metrics
 from app.api import routes, websocket
 from app.config import settings
 from app.runtime import runtime
@@ -30,3 +31,9 @@ app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_cr
                    allow_methods=["*"], allow_headers=["*"])
 app.include_router(routes.router)
 app.include_router(websocket.router)
+
+
+@app.get("/metrics", include_in_schema=False)
+def prometheus_metrics() -> Response:
+    """Prometheus exposition of app/metrics.py, scraped by the ServiceMonitor in the Helm chart."""
+    return Response(metrics.render(), media_type=metrics.CONTENT_TYPE_LATEST)

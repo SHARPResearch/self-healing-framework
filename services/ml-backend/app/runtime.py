@@ -23,6 +23,7 @@ import time
 from datetime import datetime, timezone
 from typing import Optional
 
+from app import metrics
 from app.bus import Bus, envelope
 from app.config import settings
 from app.fleet import ServiceFleet, ServiceRuntime
@@ -129,6 +130,8 @@ class Runtime:
         if self.live and backing_services:          # tests run live mode without a cluster
             self._start_live_integrations()
         self.ready = True
+        metrics.ready.set(1)
+        metrics.services.set(len(self.fleet.services))
         if replay:
             loop = self._live_loop() if self.live else self._loop()
             self._task = asyncio.create_task(loop, name="live" if self.live else "replay")
@@ -185,7 +188,9 @@ class Runtime:
             self.tick += 1
             now = datetime.now(timezone.utc)
             for rt in list(self.fleet.services.values()):
+                started = time.perf_counter()
                 x, res, display = self.fleet.process(rt)
+                metrics.score_seconds.observe(time.perf_counter() - started)
                 await self._after_step(rt, x, res, display, now)
 
     # -- live mode ---------------------------------------------------------------------------------
@@ -222,7 +227,8 @@ class Runtime:
     async def scrape_once(self) -> None:
         """One live step: every service gets the row of the latest Prometheus scrape."""
         names = list(self.fleet.services)
-        rows = await asyncio.to_thread(self.fleet.telemetry.latest, names)
+        with metrics.scrape_seconds.time():
+            rows = await asyncio.to_thread(self.fleet.telemetry.latest, names)
         async with self._step_lock:
             self.tick += 1
             now = datetime.now(timezone.utc)
@@ -230,7 +236,9 @@ class Runtime:
                 rt = self.fleet.services.get(sid)
                 if rt is None:
                     continue
+                started = time.perf_counter()
                 x, res, display = self.fleet.process_row(rt, x)
+                metrics.score_seconds.observe(time.perf_counter() - started)
                 await self._after_step(rt, x, res, display, now)
 
     async def _live_loop(self) -> None:
@@ -247,6 +255,7 @@ class Runtime:
                     failures = 0
                 except Exception as exc:  # noqa: BLE001 - keep serving; the next scrape may work
                     failures += 1
+                    metrics.scrape_failures.inc()
                     if failures in (1, 10) or failures % 60 == 0:
                         logger.warning("live: scrape failed (%s), %d in a row", exc, failures)
             await self.flush_logs()
@@ -275,6 +284,10 @@ class Runtime:
 
     async def _after_step(self, rt: ServiceRuntime, x: dict, res, display: float, now: datetime) -> None:
         after_restart = res.step <= rt.restart_until_step
+        progress = rt.manager.quarantine_progress()
+        metrics.observe_step(rt.service_id, score=display, alarming=bool(res.alarm),
+                             after_restart=after_restart, version=res.version, current_phase=res.phase,
+                             progress=(progress["seen"] / max(progress["length"], 1)) if progress else 0.0)
         if res.step % self.persist_every == 0 or res.alarm:
             self._pending_rows.append({
                 "time": now, "service_id": rt.service_id, "anomaly_score": display,
@@ -288,7 +301,7 @@ class Runtime:
                 "severity": self.fleet.severity(rt), "version": res.version,
                 "phase": res.phase, "threshold": 0.5,
                 "trigger": getattr(rt.manager, "_q_trigger", None) if res.phase != "stable" else None,
-                "quarantine": rt.manager.quarantine_progress(),
+                "quarantine": progress,
                 # alarms right after a pod restart are expected while it settles (docs/adr/0008)
                 "context": "after_restart" if after_restart else None,
             }))
@@ -388,6 +401,7 @@ class Runtime:
                             else f"v{payload['to_version']}") + f": {payload['reason']}",
                          "warn" if payload["transition"] == "rollback" else "info",
                          {"transition": payload["transition"], "to_version": payload["to_version"]})
+                metrics.transitions.labels(rt.service_id, str(payload["transition"])).inc()
                 await self.store.write_transition(payload)
                 await self.bus.publish(envelope("model_transition", rt.service_id, payload))
                 if payload["transition"] in ("promote", "rollback"):
@@ -399,6 +413,7 @@ class Runtime:
                 event = payload.get("event")
                 data = {k: v for k, v in payload.items() if k != "event"}
                 self._log_lifecycle(rt, event, data)
+                metrics.observe_lifecycle(rt.service_id, event, data)
                 if event == "lifecycle_decision":
                     await self.store.write_decision(data)
                     rt.drift_flag = data.get("action") in ("promote", "ask", "hold")

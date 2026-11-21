@@ -199,3 +199,16 @@ def test_a_live_start_waits_for_prometheus_and_reports_not_ready(prom, monkeypat
         response = c.get("/api/ready")
         assert response.status_code == 503 and response.json()["reason"] == "Prometheus unreachable"
     runtime.start_error = None
+
+
+def test_telemetry_evidence_returns_raw_features_and_lifecycle_markers(client, prom):
+    for _ in range(5):
+        client.portal.call(runtime.scrape_once)
+    assert client.post("/api/models/cartservice/validity-check").status_code == 200
+    client.portal.call(runtime.drain_all)
+    body = client.get("/api/live/cartservice/telemetry?minutes=10").json()
+    assert [f["key"] for f in body["features"]] == list(FEATURES)
+    assert body["points"] and set(FEATURES) <= set(body["points"][0])
+    assert any(m["event"] == "quarantine_opened" for m in body["markers"])
+    assert client.get("/api/live/nope/telemetry").status_code == 404
+    assert client.get("/api/health").json()["grafanaUrl"] == settings.grafana_url

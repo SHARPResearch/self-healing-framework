@@ -85,6 +85,8 @@ class Settings(BaseSettings):
     # days of it (60 min); below that the lifecycle runs without them (logged).
     live_warmup_minutes: float = 60.0
     live_min_warmup_minutes: float = 10.0
+    # Where the dashboard links to for the full Grafana dashboards (up.ps1 forwards it to :3000).
+    grafana_url: str = "http://localhost:3000"
 
     # Set false in tests to skip the replay loop and backing services.
     start_replay: bool = True

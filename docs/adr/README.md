@@ -17,6 +17,11 @@ the lifecycle pages of `frontend/`, and the Online Boutique deployment in `infra
 | [0006](0006-store-checkpoints-in-timescaledb.md) | Store checkpoints in TimescaleDB; on in live mode, off for the replay demo | Accepted |
 | [0007](0007-restarts-explain-but-never-license.md) | Restarts open a quarantine and explain a shift, but never license a repair | Accepted |
 | [0008](0008-label-alarms-after-a-restart.md) | Label alarms after a pod restart as expected; do not suppress them | Accepted |
+| [0009](0009-run-ml-backend-in-the-cluster-as-one-replica.md) | Run ml-backend in the cluster as one replica, Ready only after its warm-up | Accepted |
+| [0010](0010-probe-response-time-as-a-feature.md) | Probe each service's response time and score it as an eighth feature | Accepted |
+| [0011](0011-expose-backend-metrics.md) | Expose the backend's own metrics to Prometheus | Accepted |
+| [0012](0012-telemetry-evidence-instead-of-embedded-grafana.md) | Show the raw telemetry on the lifecycle page; link to Grafana instead of embedding it | Accepted |
+| [0013](0013-ci-scope.md) | CI tests the components that serve the model, and builds the image they deploy | Accepted |
 
 Template:
 

@@ -8,17 +8,20 @@ import { DemoControls } from "./components/DemoControls";
 import { LifecycleFeed } from "./components/LifecycleFeed";
 import { OperatorQueryCard } from "./components/OperatorQueryCard";
 import { ServiceLifecycleCard } from "./components/ServiceLifecycleCard";
+import { TelemetryEvidence } from "./components/TelemetryEvidence";
 
 /**
- * Component 2 live: CADAL (change-aware, drift-attributed lifecycle) running on a replay of real
- * SMD telemetry in services/ml-backend. Live only; there is deliberately no mock fallback here,
- * since a simulated lifecycle would misrepresent what the research component does.
+ * Component 2 live: CADAL (change-aware, drift-attributed lifecycle) running in services/ml-backend,
+ * on a replay of real SMD telemetry or on the live Online Boutique (then with its raw telemetry).
+ * Live only; there is deliberately no mock fallback here, since a simulated lifecycle would
+ * misrepresent what the research component does.
  */
 export function ModelLifecyclePage() {
   const ready = useLiveStore((s) => s.ready);
   const status = useLiveStore((s) => s.status);
   const services = useLiveStore(useShallow((s) => s.serviceOrder.map((id) => s.services[id]).filter(Boolean)));
   const queries = useLiveStore(useShallow(selectOpenQueries));
+  const live = useLiveStore((s) => s.health?.mode === "prometheus");
 
   return (
     <AppShell pageTitle="Model lifecycle">
@@ -41,7 +44,9 @@ export function ModelLifecyclePage() {
               This page shows the live lifecycle only. Start the stack with{" "}
               <span className="font-mono">docker compose -f infrastructure/local/docker-compose.demo.yml up -d</span>{" "}
               and <span className="font-mono">uv run uvicorn app.main:app --port 8002</span> in{" "}
-              <span className="font-mono">services/ml-backend</span>. It reconnects automatically.
+              <span className="font-mono">services/ml-backend</span>, or deploy it into the cluster with{" "}
+              <span className="font-mono">infrastructure/online-boutique/deploy-sharp.ps1</span>. It reconnects
+              automatically.
             </p>
           </div>
         ) : (
@@ -62,6 +67,8 @@ export function ModelLifecyclePage() {
                 <ServiceLifecycleCard key={s.serviceId} service={s} />
               ))}
             </div>
+
+            {live && <TelemetryEvidence />}
 
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-[2fr_3fr]">
               <LifecycleFeed />

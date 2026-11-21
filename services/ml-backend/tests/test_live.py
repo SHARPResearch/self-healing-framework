@@ -24,22 +24,25 @@ from app.store import MemoryStore  # noqa: E402
 
 SERVICES = ["cartservice", "paymentservice"]
 BASE = {"cpu_rate": 0.05, "memory_used": 6e7, "network_rx": 2e4, "network_tx": 3e4,
-        "cpu_throttled": 0.01, "restarts": 0.0, "ready_ratio": 1.0}
+        "cpu_throttled": 0.01, "restarts": 0.0, "ready_ratio": 1.0, "probe_latency": 0.004}
 
 
 class FakePrometheus:
-    """Answers the seven feature queries (and discovery) like Prometheus does."""
+    """Answers the eight feature queries (and discovery) like Prometheus does."""
 
     def __init__(self, seed=0):
         self.rng = random.Random(seed)
         self.queries = {q: f for f, q in feature_queries(settings.k8s_namespace).items()}
         self.spike = set()
+        self.delay = set()                          # services answering the probe 200 ms late
         self.t = 1_700_000_000.0
 
     def _value(self, feature, app):
         v = BASE[feature] * (1 + self.rng.gauss(0, 0.05)) if BASE[feature] else 0.0
         if app in self.spike and feature == "cpu_rate":
             v *= 20
+        if app in self.delay and feature == "probe_latency":
+            v += 0.2
         return v
 
     def query(self, promql):
@@ -117,6 +120,18 @@ def test_live_fleet_scores_scrapes_and_alarms_on_a_spike(client, prom):
     svc = {s["serviceId"]: s for s in client.get("/api/services").json()}
     assert svc["paymentservice"]["alarm"] and not svc["cartservice"]["alarm"]
     assert runtime.fleet.cfg.quarantine_silent == live_samples_per_day()
+
+
+def test_a_network_delay_alarms_through_the_probe_latency_alone(client, prom):
+    # Chaos Mesh network delay on Online Boutique: no resource metric moves, only the response time
+    # the blackbox exporter measures. Without probe_latency this fault went undetected (docs/adr/0010).
+    for _ in range(20):
+        client.portal.call(runtime.scrape_once)
+    prom.delay.add("cartservice")
+    for _ in range(5):
+        client.portal.call(runtime.scrape_once)
+    svc = {s["serviceId"]: s for s in client.get("/api/services").json()}
+    assert svc["cartservice"]["alarm"] and not svc["paymentservice"]["alarm"]
 
 
 def test_replay_controls_are_rejected_in_live_mode(client):

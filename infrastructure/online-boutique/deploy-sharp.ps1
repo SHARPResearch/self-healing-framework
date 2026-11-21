@@ -33,8 +33,10 @@ kubectl -n $namespace rollout restart deploy/ml-backend | Out-Null
 Write-Host "3/4 waiting for TimescaleDB, Redis and the ml-backend pod"
 kubectl -n $namespace rollout status statefulset/timescaledb --timeout=5m
 kubectl -n $namespace rollout status deploy/redis --timeout=3m
-# ml-backend turns Ready only after its warm-up on Prometheus history, so wait for Running only
-kubectl -n $namespace wait --for=jsonpath='{.status.phase}'=Running pod -l app.kubernetes.io/name=ml-backend --timeout=5m
+# Wait for the new pod, not the outgoing one (Recreate: a port-forward to a terminating pod dies).
+# Ready means warmed up on Prometheus history: seconds when it has an hour of it, longer on a fresh
+# cluster (the readiness probe waits; LIVE_MIN_WARMUP_MINUTES is 10).
+kubectl -n $namespace rollout status deploy/ml-backend --timeout=20m
 
 Write-Host "4/4 forwarding ml-backend to :8002 (stop any local uvicorn on 8002 first)"
 $existing = Get-CimInstance Win32_Process -Filter "Name='kubectl.exe'" |

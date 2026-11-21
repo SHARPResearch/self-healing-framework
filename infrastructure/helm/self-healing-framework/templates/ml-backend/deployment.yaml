@@ -30,6 +30,22 @@ spec:
         runAsNonRoot: true
         runAsUser: 10001
         seccompProfile: { type: RuntimeDefault }
+      {{- if .Values.timescaledb.enabled }}
+      # The store is chosen once at startup (app/store.py falls back to memory if the database is
+      # unreachable then), so wait until TimescaleDB accepts connections; on a fresh install its
+      # Service has no DNS record for the first seconds.
+      initContainers:
+        - name: wait-for-timescaledb
+          image: busybox:1.36
+          command: ["sh", "-c", "until nc -z -w 2 {{ include "sharp.timescaledb.name" . }} 5432; do echo waiting for timescaledb; sleep 2; done"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { cpu: 10m, memory: 8Mi }
+            limits: { memory: 16Mi }
+      {{- end }}
       containers:
         - name: ml-backend
           image: "{{ $v.image.repository }}:{{ $v.image.tag }}"

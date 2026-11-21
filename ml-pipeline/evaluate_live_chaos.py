@@ -44,7 +44,10 @@ from src.lifecycle_manager import DynamicModelManager, LifecycleConfig
 
 GRACE_S = 60
 RESTART_WINDOW_S = 600
-FEATURES = ("cpu_rate", "memory_used", "network_rx", "network_tx", "cpu_throttled", "restarts", "ready_ratio")
+# services/ml-backend/app/prom.py FEATURES. Runs recorded before the blackbox probe (docs/adr/0010)
+# have no probe_latency column and are evaluated on the first seven.
+ALL_FEATURES = ("cpu_rate", "memory_used", "network_rx", "network_tx", "cpu_throttled", "restarts",
+                "ready_ratio", "probe_latency")
 
 
 def lifecycle(policy: str, samples_per_day: int) -> LifecycleConfig:
@@ -80,6 +83,8 @@ def evaluate(run: Path) -> pd.DataFrame:
     meta = json.loads((run / "meta.json").read_text())
     windows = pd.read_csv(run / "windows.csv")
     tel = pd.read_parquet(run / "telemetry.parquet")
+    features = [f for f in ALL_FEATURES if f in tel.columns]
+    print(f"features: {', '.join(features)}")
     spd = int(round(30 * 60 / meta["scrape_seconds"]))           # live pacing: 30 min "day"
     quarantine_s = 30 * 60
     out = []
@@ -94,8 +99,8 @@ def evaluate(run: Path) -> pd.DataFrame:
         w = windows[windows.service == svc]
         labels = [int(any(s <= t <= e for s, e in zip(w.start, w.end))) for t in times]
         near = [any(s <= t <= e + GRACE_S for s, e in zip(w.start, w.end)) for t in times]
-        warm_rows = warm[list(FEATURES)].to_dict(orient="records")
-        live_rows = live[list(FEATURES)].to_dict(orient="records")
+        warm_rows = warm[features].to_dict(orient="records")
+        live_rows = live[features].to_dict(orient="records")
         restarts = restart_steps(live, w)
         after_restart = np.zeros(len(times), dtype=bool)
         for i in restarts:

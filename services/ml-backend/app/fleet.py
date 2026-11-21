@@ -40,7 +40,7 @@ DEMO_SERVICES = [
     # (service_id, display name, SMD entity it replays, first test row of its replay window)
     # Orders, Inventory and Payments are the quiet ones the demo injects into (no drift check of
     # their own for minutes); Auth, Shipping and Search have a drift check about every 3 minutes,
-    # which is realistic background activity. Chosen by tools in docs/Component_2_Demo_Script.md.
+    # which is realistic background activity. How they were chosen: services/ml-backend/README.md.
     ("service-a-auth", "Auth Service", "machine-3-8", 3000),
     ("service-b-orders", "Orders Service", "machine-3-10", 15000),
     ("service-c-inventory", "Inventory Service", "machine-1-2", 12000),

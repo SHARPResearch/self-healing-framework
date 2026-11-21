@@ -186,8 +186,7 @@ cd services/ml-backend ; uv run uvicorn app.main:app --port 8002              # 
 cd frontend ; pnpm dev                                                         # http://localhost:5173
 ```
 
-The runbook is `docs/Component_2_Demo_Script.md`. For live Kubernetes mode and the full setup, see the
-monitoring section above and `services/ml-backend/README.md`.
+`services/ml-backend/README.md` is the runbook for both modes: the replay demo and live Kubernetes.
 
 `make dev` starts the generic Redis and TimescaleDB stack from the root `docker-compose.yml` (ports 6379
 and 5432). `docs/Doc3_Execution_Guide.md` has the phased build plan.

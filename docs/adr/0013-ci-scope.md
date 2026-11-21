@@ -20,7 +20,8 @@ There was no CI: `.github/workflows/` was empty and every check ran on one lapto
 - **Deploy to a cluster from CI.** Rejected for now: there is no shared cluster, only minikube on a
   laptop. A pushed image and a chart that renders are what a deployment needs.
 - **Run the full evaluations in CI.** Rejected: they take an hour or more and need the RCAEval and
-  NAB data. They stay manual, and their outputs are committed.
+  NAB data. They stay manual, and their summary results are committed (`ml-pipeline/outputs` is
+  ignored, so result files are added with `git add -f`).
 
 ## Consequences
 CI covers the code paths CADAL and the detector run in, and the deployable artifact. The other

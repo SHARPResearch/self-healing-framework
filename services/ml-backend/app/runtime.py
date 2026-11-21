@@ -66,6 +66,9 @@ class Runtime:
         # the step would carry on against the half-built new fleet. Steps and reset take turns.
         self._step_lock = asyncio.Lock()
         self._dirty: set[str] = set()               # services whose lifecycle changed since the last checkpoint
+        self.ready = False                          # the fleet is built and scoring
+        self.start_error: Optional[str] = None      # why a live start is still waiting
+        self._starter: Optional[asyncio.Task] = None
         self._last_checkpoint = self._last_checkpoint_all = time.monotonic()
 
     @property
@@ -94,18 +97,49 @@ class Runtime:
             await self.bus.start(settings.redis_url)
         if self.checkpoints_enabled:
             self.fleet.checkpoints = await self.store.load_checkpoints()
+        if self.live and backing_services:
+            # In a cluster the API must come up even before Prometheus has an hour of history (or is
+            # reachable at all), otherwise the pod crash loops. Build in the background and retry.
+            self._starter = asyncio.create_task(self._start_live_when_ready(replay), name="live-start")
+            return
         await asyncio.to_thread(self.fleet.build)
+        await self._serve(backing_services, replay)
+
+    async def _start_live_when_ready(self, replay: bool) -> None:
+        attempt = 0
+        while True:
+            try:
+                await asyncio.to_thread(self.fleet.build)
+                break
+            except Exception as exc:  # noqa: BLE001 - Prometheus down, no history yet, no Deployments
+                attempt += 1
+                self.start_error = str(exc)
+                if attempt in (1, 2) or attempt % 10 == 0:
+                    logger.warning("live: not ready yet (%s); retrying every %ds, attempt %d",
+                                   exc, settings.live_start_retry_seconds, attempt)
+                await asyncio.sleep(settings.live_start_retry_seconds)
+        self.start_error = None
+        await self._serve(True, replay)
+
+    async def _serve(self, backing_services: bool, replay: bool) -> None:
         self._log_warm_up()
         await self.drain_all()                      # warm-up versions and transitions
         if backing_services and settings.follow_container_logs:
             self.hub.follow_containers(settings.log_containers, await self.store.latest_log_times())
         if self.live and backing_services:          # tests run live mode without a cluster
             self._start_live_integrations()
+        self.ready = True
         if replay:
             loop = self._live_loop() if self.live else self._loop()
             self._task = asyncio.create_task(loop, name="live" if self.live else "replay")
 
     async def stop(self) -> None:
+        if self._starter and not self._starter.done():
+            self._starter.cancel()
+            try:
+                await self._starter
+            except asyncio.CancelledError:
+                pass
         if self._task:
             self._task.cancel()
             try:

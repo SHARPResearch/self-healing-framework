@@ -153,3 +153,34 @@ def test_rollouts_are_routed_to_the_right_service_only(client):
     assert [e.service_id for e in routed] == ["cartservice"]
     assert runtime.fleet.services["cartservice"].changes.poll(0)
     assert not runtime.fleet.services["paymentservice"].changes.poll(0)
+
+
+def test_a_live_start_waits_for_prometheus_and_reports_not_ready(prom, monkeypatch):
+    monkeypatch.setattr(settings, "live_warmup_minutes", 40)
+    monkeypatch.setattr(settings, "live_min_warmup_minutes", 10)
+    monkeypatch.setattr(settings, "live_start_retry_seconds", 0)
+    # the retry path serves with backing services on: keep it off Docker and the Kubernetes API
+    monkeypatch.setattr(settings, "follow_container_logs", False)
+    monkeypatch.setattr(runtime, "_start_live_integrations", lambda: None)
+    fleet = LiveFleet(OnlineBoutiqueTelemetry(prom, settings.k8s_namespace))
+    runtime.fleet, runtime.store = fleet, MemoryStore()
+    with TestClient(app) as c:                     # the lifespan builds once, normally
+        real_build, failures = fleet.build, []
+
+        def flaky_build():
+            if len(failures) < 2:
+                failures.append(1)
+                raise RuntimeError("Prometheus unreachable")
+            real_build()
+
+        monkeypatch.setattr(fleet, "build", flaky_build)
+        runtime.ready = False
+        c.portal.call(runtime._start_live_when_ready, False)
+        assert len(failures) == 2 and runtime.ready and runtime.start_error is None
+        assert c.get("/api/ready").json() == {"ready": True}
+        assert len(runtime.fleet.services) == len(SERVICES)
+    with TestClient(app) as c:                     # its lifespan marks the runtime ready again
+        runtime.ready, runtime.start_error = False, "Prometheus unreachable"
+        response = c.get("/api/ready")
+        assert response.status_code == 503 and response.json()["reason"] == "Prometheus unreachable"
+    runtime.start_error = None

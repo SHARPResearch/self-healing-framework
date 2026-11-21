@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.api import views
@@ -36,7 +37,16 @@ async def health() -> dict:
             "db": runtime.store.kind == "timescaledb" and getattr(runtime.store, "pool", None) is not None,
             "redis": runtime.bus.redis_ok, "services": len(runtime.fleet.services),
             "tick": runtime.tick, "eventsPerSec": runtime.events_per_sec, "paused": runtime.paused,
-            "uptimeS": round(time.time() - runtime.started_at)}
+            "uptimeS": round(time.time() - runtime.started_at),
+            "ready": runtime.ready, "startError": runtime.start_error}
+
+
+@router.get("/ready")
+async def ready():
+    """Readiness for Kubernetes: 200 once the fleet is built and scoring, 503 while it waits."""
+    if runtime.ready:
+        return {"ready": True}
+    return JSONResponse({"ready": False, "reason": runtime.start_error or "starting"}, status_code=503)
 
 
 # -- anomaly detection --------------------------------------------------------------------------

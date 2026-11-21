@@ -37,12 +37,18 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from evaluate_dynamic import SimulatedOperator
 from src.change_events import ChangeEvent, ReplayChangeEventSource
 from src.dynamic_eval import stream_metrics
 from src.hst_model import detector_config
 from src.lifecycle_manager import DynamicModelManager, LifecycleConfig
 
 GRACE_S = 60
+# "deployed" is what ml-backend runs in the cluster (app/live.py live_lifecycle_config): CADAL with
+# early stop, restart events and operator queries, budget 3 per day, here with a simulated operator
+# who answers from the fault labels 60 scrapes (5 min) after a query opens.
+POLICIES = ("static", "cadal", "cadal_early", "cadal_restart", "deployed")
+OPERATOR_DELAY_SCRAPES = 60
 RESTART_WINDOW_S = 600
 # services/ml-backend/app/prom.py FEATURES. Runs recorded before the blackbox probe (docs/adr/0010)
 # have no probe_latency column and are evaluated on the first seven.
@@ -51,8 +57,11 @@ ALL_FEATURES = ("cpu_rate", "memory_used", "network_rx", "network_tx", "cpu_thro
 
 
 def lifecycle(policy: str, samples_per_day: int) -> LifecycleConfig:
-    early = policy in ("cadal_early", "cadal_restart")   # cadal with sequential early stop
+    early = policy in ("cadal_early", "cadal_restart", "deployed")   # cadal with sequential early stop
     base = LifecycleConfig(policy="cadal" if early else policy, threshold_method="pot", early_stop=early)
+    if policy == "deployed":
+        # as services/ml-backend/app/live.py live_lifecycle_config
+        return replace(replace(base, operator_queries=True).for_sampling(samples_per_day), query_budget=3)
     return replace(base.for_sampling(samples_per_day), operator_queries=False) if base.policy == "cadal" \
         else base.for_sampling(samples_per_day)
 
@@ -67,16 +76,22 @@ def restart_steps(live: pd.DataFrame, windows: pd.DataFrame) -> list[int]:
 
 
 def run_policy(policy: str, warm: list[dict], rows: list[dict], spd: int,
-               restarts: list[int] = ()) -> tuple[list[bool], list[dict]]:
-    events = [ChangeEvent("svc", "restart", step=i + 1) for i in restarts] if policy == "cadal_restart" else []
+               restarts: list[int] = (), labels: list[int] = ()) -> tuple[list[bool], list[dict], dict]:
+    with_restarts = policy in ("cadal_restart", "deployed")
+    events = [ChangeEvent("svc", "restart", step=i + 1) for i in restarts] if with_restarts else []
     mgr = DynamicModelManager("svc", lifecycle(policy, spd), detector_config("pca_s5"),
                               change_source=ReplayChangeEventSource(events))
     mgr.warm_up(warm)
+    operator = SimulatedOperator(list(labels), delay=OPERATOR_DELAY_SCRAPES) if policy == "deployed" else None
     alarms = []
     for x in rows:
         alarms.append(bool(mgr.process(x).alarm))
+        if operator is not None:
+            operator.step(mgr)
     mgr.wait_for_decision(timeout=120)
-    return alarms, list(mgr.decisions)
+    asked = {"queries": operator.asked if operator else 0,
+             "said_new_normal": operator.said_new_normal if operator else 0}
+    return alarms, list(mgr.decisions), asked
 
 
 def evaluate(run: Path) -> pd.DataFrame:
@@ -105,8 +120,8 @@ def evaluate(run: Path) -> pd.DataFrame:
         after_restart = np.zeros(len(times), dtype=bool)
         for i in restarts:
             after_restart |= (times >= times[i]) & (times < times[i] + RESTART_WINDOW_S)
-        for policy in ("static", "cadal", "cadal_early", "cadal_restart"):
-            alarms, decisions = run_policy(policy, warm_rows, live_rows, spd, restarts)
+        for policy in POLICIES:
+            alarms, decisions, asked = run_policy(policy, warm_rows, live_rows, spd, restarts, labels)
             m = stream_metrics(alarms, labels, None, 0.01)
             detected, delays = 0, []
             for s, e in zip(w.start, w.end):
@@ -130,6 +145,7 @@ def evaluate(run: Path) -> pd.DataFrame:
                 "mcc": m["mcc"], "event_recall": m["event_recall"],
                 "promotions": sum(d.get("action") == "promote" for d in decisions),
                 "incidents_learned": learned,
+                "operator_queries": asked["queries"], "answered_new_normal": asked["said_new_normal"],
                 "restarts": len(restarts),
                 "false_alarms_after_restart_share": (round(sum(outside_after_restart) / sum(outside), 3)
                                                      if sum(outside) else None),

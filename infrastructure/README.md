@@ -3,10 +3,22 @@
 Helm charts, Kubernetes manifests, and Terraform for the self-healing framework
 (docs/Doc2_GitHub_Monorepo_Structure.md layout).
 
-- `helm/self-healing-framework/` — chart covering ml-backend, decision-engine, yarp-gateway,
-  redis, mlflow, and monitoring (Prometheus/Grafana dashboards live under
-  `templates/monitoring/`, not as standalone folders).
-- `kubernetes/` — `namespaces.yaml`, RBAC, and network policies applied directly (not templated).
-- `terraform/` — optional cluster provisioning (EKS/GKE).
+- `helm/self-healing-framework/`: our own chart. It renders ml-backend (the anomaly detector and the
+  CADAL model lifecycle) with TimescaleDB, Redis, a Role on the monitored namespace, a
+  ServiceMonitor for its `/metrics` and a Grafana dashboard (`templates/monitoring/`). The
+  decision-engine, yarp-gateway and mlflow folders are placeholders for their owners.
+  `helm lint --strict` runs in CI.
+- `online-boutique/`: the live cluster on minikube.
+  - `up.ps1`: minikube, kube-prometheus-stack with Grafana, a blackbox exporter probing every
+    service, Chaos Mesh, Online Boutique v0.10.7 and the port-forwards.
+  - `deploy-sharp.ps1`: builds the ml-backend image, loads it into minikube and installs the chart
+    into `selfheal-system`.
+  - `down.ps1`: stops it all, keeping images and data.
+  - `*-values.yaml` and `grafana-dashboard-sharp.yaml`: the monitoring configuration.
+- `local/`: Docker Compose stacks: `docker-compose.demo.yml` (TimescaleDB, Redis) for the replay
+  demo on the laptop, and `docker-compose.render.yml`, which rehearses the Render deployment
+  (`render.yaml`, `docs/Deployment_Render.md`) with the same images on plain PostgreSQL.
+- `kubernetes/`: `namespaces.yaml`, RBAC and network policies applied directly (not templated).
+- `terraform/`: optional cluster provisioning (EKS/GKE), not written.
 
-See `CLAUDE.md` in this folder and `docs/Doc3_Execution_Guide.md` Phase 8 for what to build next.
+Decision records for the deployment: `docs/adr/0009` to `0013`.

@@ -3,6 +3,7 @@ import { ArrowRight } from "lucide-react";
 import { motion, useReducedMotion } from "framer-motion";
 import { StatsRow } from "./StatsRow";
 import Beams from "./Beams";
+import { ErrorBoundary } from "@/shared/components/ErrorBoundary";
 
 export function HeroSection() {
   const reduced = useReducedMotion();
@@ -14,16 +15,21 @@ export function HeroSection() {
           aria-hidden="true"
           className="pointer-events-none absolute inset-x-0 top-0 z-0 h-[700px] [mask-image:linear-gradient(to_bottom,black,black_55%,transparent)] [-webkit-mask-image:linear-gradient(to_bottom,black,black_55%,transparent)]"
         >
-          <Beams
-            beamWidth={3}
-            beamHeight={30}
-            beamNumber={20}
-            lightColor="#50C878"
-            speed={2}
-            noiseIntensity={1.75}
-            scale={0.2}
-            rotation={30}
-          />
+          {/* WebGL can fail for reasons outside our code (no GPU, hardware acceleration off,
+              driver issues) -- contain that to this decorative background instead of blanking
+              the whole page, since nothing else here depends on it rendering. */}
+          <ErrorBoundary name="Beams hero background">
+            <Beams
+              beamWidth={3}
+              beamHeight={30}
+              beamNumber={20}
+              lightColor="#50C878"
+              speed={2}
+              noiseIntensity={1.75}
+              scale={0.2}
+              rotation={30}
+            />
+          </ErrorBoundary>
         </div>
       )}
 

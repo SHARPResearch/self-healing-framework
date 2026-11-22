@@ -1,0 +1,41 @@
+# Architecture decision records: Component 2 (CADAL) and the anomaly detector
+
+One file per decision, numbered in the order it was made. Each says what was decided, why, what
+else was considered, and what it costs. A decision that is replaced is not deleted: its status says
+which record superseded it.
+
+Scope: `ml-pipeline/` (detector and lifecycle research code), `services/ml-backend/` (serving),
+`services/auth/` (accounts and tenancy), the lifecycle and account pages of `frontend/`, and the
+deployments in `infrastructure/` and `render.yaml`.
+
+| # | Decision | Status |
+|---|---|---|
+| [0001](0001-pca-detector-instead-of-half-space-trees.md) | Smoothed PCA with a POT threshold instead of Half-Space Trees | Accepted |
+| [0002](0002-attribute-before-acting.md) | Attribute a shift before acting, instead of rolling back on every drift | Accepted |
+| [0003](0003-sequential-early-stop.md) | End a quarantine early only when the evidence is conclusive | Accepted |
+| [0004](0004-staged-silent-demo.md) | Stage the silent-change demo so it is repeatable | Accepted (demo only) |
+| [0005](0005-checkpoint-lifecycle-state.md) | Persist each service's lifecycle state and restore it on restart | Accepted |
+| [0006](0006-store-checkpoints-in-timescaledb.md) | Store checkpoints in TimescaleDB; on in live mode, off for the replay demo | Accepted |
+| [0007](0007-restarts-explain-but-never-license.md) | Restarts open a quarantine and explain a shift, but never license a repair | Accepted |
+| [0008](0008-label-alarms-after-a-restart.md) | Label alarms after a pod restart as expected; do not suppress them | Accepted |
+| [0009](0009-run-ml-backend-in-the-cluster-as-one-replica.md) | Run ml-backend in the cluster as one replica, Ready only after its warm-up | Accepted |
+| [0010](0010-probe-response-time-as-a-feature.md) | Probe each service's response time and score it as an eighth feature | Accepted |
+| [0011](0011-expose-backend-metrics.md) | Expose the backend's own metrics to Prometheus | Accepted |
+| [0012](0012-telemetry-evidence-instead-of-embedded-grafana.md) | Show the raw telemetry on the lifecycle page; link to Grafana instead of embedding it | Accepted |
+| [0013](0013-ci-scope.md) | CI tests the components that serve the model, and builds the image they deploy | Accepted |
+| [0014](0014-better-auth-with-jwts-for-ml-backend.md) | Accounts with Better Auth; ml-backend verifies short-lived JWTs | Accepted |
+| [0015](0015-one-runtime-per-organization.md) | Tenancy: one runtime per organization, and the organization id on every row | Accepted |
+| [0016](0016-render-free-plan-deployment.md) | Hosted deployment on Render's free plan: one web origin, replay mode, optional TimescaleDB | Accepted |
+
+Template:
+
+```markdown
+# NNNN. Title
+
+Date: YYYY-MM-DD. Status: Proposed | Accepted | Superseded by NNNN.
+
+## Context
+## Decision
+## Alternatives considered
+## Consequences
+```

@@ -12,6 +12,8 @@ are replayed through two policies with the same detector (smoothed PCA, POT thre
   static   frozen model
   cadal    the lifecycle as served live (accelerated pacing: one "day" = 30 min of 5 s scrapes)
   cadal_early  the same with sequential early stop (decides before the full quarantine when conclusive)
+  cadal_restart  cadal_early told about pod restarts, as the Kubernetes pod watcher would report them
+               (recovered here from the pod-kill windows and from the restarts metric rising from 0)
 
 A row is labelled anomalous inside a fault window on that service. Reported per (policy, service):
   detected / faults          fault windows with at least one alarm inside (window + 60 s grace)
@@ -20,6 +22,7 @@ A row is labelled anomalous inside a fault window on that service. Reported per 
   MCC, event recall          point-wise, as in evaluate_dynamic (stream_metrics)
   incidents learned          promotions while a fault was active or within one quarantine after
                              it (a model learning the incident as normal): should be 0
+  restart share              of the false alarms, the share within RESTART_WINDOW_S after a restart
 
     uv run python evaluate_live_chaos.py outputs/live_chaos/<run>
 """
@@ -31,37 +34,82 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
+from evaluate_dynamic import SimulatedOperator
+from src.change_events import ChangeEvent, ReplayChangeEventSource
 from src.dynamic_eval import stream_metrics
 from src.hst_model import detector_config
 from src.lifecycle_manager import DynamicModelManager, LifecycleConfig
 
 GRACE_S = 60
-FEATURES = ("cpu_rate", "memory_used", "network_rx", "network_tx", "cpu_throttled", "restarts", "ready_ratio")
+# "deployed" is what ml-backend runs in the cluster (app/live.py live_lifecycle_config): CADAL with
+# early stop, restart events and operator queries, budget 3 per day, here with a simulated operator
+# who answers from the fault labels 60 scrapes (5 min) after a query opens.
+POLICIES = ("static", "cadal", "cadal_early", "cadal_restart", "deployed")
+OPERATOR_DELAY_SCRAPES = 60
+RESTART_WINDOW_S = 600
+# services/ml-backend/app/prom.py FEATURES. Runs recorded before the blackbox probe (docs/adr/0010)
+# have no probe_latency column and are evaluated on the first seven.
+ALL_FEATURES = ("cpu_rate", "memory_used", "network_rx", "network_tx", "cpu_throttled", "restarts",
+                "ready_ratio", "probe_latency")
 
 
 def lifecycle(policy: str, samples_per_day: int) -> LifecycleConfig:
-    early = policy == "cadal_early"             # cadal with sequential early stop
+    early = policy in ("cadal_early", "cadal_restart", "deployed")   # cadal with sequential early stop
     base = LifecycleConfig(policy="cadal" if early else policy, threshold_method="pot", early_stop=early)
+    if policy == "deployed":
+        # as services/ml-backend/app/live.py live_lifecycle_config
+        return replace(replace(base, operator_queries=True).for_sampling(samples_per_day), query_budget=3)
     return replace(base.for_sampling(samples_per_day), operator_queries=False) if base.policy == "cadal" \
         else base.for_sampling(samples_per_day)
 
 
-def run_policy(policy: str, warm: list[dict], rows: list[dict], spd: int) -> tuple[list[bool], list[dict]]:
-    mgr = DynamicModelManager("svc", lifecycle(policy, spd), detector_config("pca_s5"))
+def restart_steps(live: pd.DataFrame, windows: pd.DataFrame) -> list[int]:
+    """Row indices where a restart happened: pod kills, and the restarts metric rising from 0."""
+    times = live.time.to_numpy()
+    steps = {int(np.searchsorted(times, s)) for s in windows[windows.fault == "pod_kill"].start}
+    restarts = live.restarts.to_numpy()
+    steps |= {i for i in range(1, len(restarts)) if restarts[i] > 0 and restarts[i - 1] <= 0}
+    return sorted(s for s in steps if s < len(times))
+
+
+def run_policy(policy: str, warm: list[dict], rows: list[dict], spd: int,
+               restarts: list[int] = (), labels: list[int] = (),
+               deploys: list[int] = ()) -> tuple[list[bool], list[dict], dict]:
+    with_restarts = policy in ("cadal_restart", "deployed")
+    events = [ChangeEvent("svc", "restart", step=i + 1) for i in restarts] if with_restarts else []
+    # recorded rollouts reach every CADAL variant, as the Kubernetes watcher delivers them live
+    events += [ChangeEvent("svc", "deployment", step=i + 1) for i in deploys] if policy != "static" else []
+    events.sort(key=lambda e: e.step)
+    mgr = DynamicModelManager("svc", lifecycle(policy, spd), detector_config("pca_s5"),
+                              change_source=ReplayChangeEventSource(events))
     mgr.warm_up(warm)
+    operator = SimulatedOperator(list(labels), delay=OPERATOR_DELAY_SCRAPES) if policy == "deployed" else None
     alarms = []
     for x in rows:
         alarms.append(bool(mgr.process(x).alarm))
+        if operator is not None:
+            operator.step(mgr)
     mgr.wait_for_decision(timeout=120)
-    return alarms, list(mgr.decisions)
+    asked = {"queries": operator.asked if operator else 0,
+             "said_new_normal": operator.said_new_normal if operator else 0}
+    return alarms, list(mgr.decisions), asked
 
 
 def evaluate(run: Path) -> pd.DataFrame:
     meta = json.loads((run / "meta.json").read_text())
     windows = pd.read_csv(run / "windows.csv")
     tel = pd.read_parquet(run / "telemetry.parquet")
+    changes = pd.read_csv(run / "changes.csv") if (run / "changes.csv").exists() else \
+        pd.DataFrame(columns=["service", "kind", "time"])
+    gap_s = meta.get("fault_seconds", 180) + meta.get("recover_seconds", 420)
+    up = changes[changes.kind == "traffic_up"].time
+    reset = changes[changes.kind == "traffic_reset"].time
+    traffic = (float(up.iloc[0]), float(reset.iloc[0]) if len(reset) else float("inf")) if len(up) else None
+    features = [f for f in ALL_FEATURES if f in tel.columns]
+    print(f"features: {', '.join(features)}")
     spd = int(round(30 * 60 / meta["scrape_seconds"]))           # live pacing: 30 min "day"
     quarantine_s = 30 * 60
     out = []
@@ -76,10 +124,20 @@ def evaluate(run: Path) -> pd.DataFrame:
         w = windows[windows.service == svc]
         labels = [int(any(s <= t <= e for s, e in zip(w.start, w.end))) for t in times]
         near = [any(s <= t <= e + GRACE_S for s, e in zip(w.start, w.end)) for t in times]
-        warm_rows = warm[list(FEATURES)].to_dict(orient="records")
-        live_rows = live[list(FEATURES)].to_dict(orient="records")
-        for policy in ("static", "cadal", "cadal_early"):
-            alarms, decisions = run_policy(policy, warm_rows, live_rows, spd)
+        warm_rows = warm[features].to_dict(orient="records")
+        live_rows = live[features].to_dict(orient="records")
+        restarts = restart_steps(live, w)
+        after_restart = np.zeros(len(times), dtype=bool)
+        for i in restarts:
+            after_restart |= (times >= times[i]) & (times < times[i] + RESTART_WINDOW_S)
+        rollouts = changes[(changes.service == svc) & (changes.kind == "deployment")].time.to_numpy()
+        deploys = sorted({int(np.searchsorted(times, t)) for t in rollouts if t <= times[-1]})
+        in_rollout = np.zeros(len(times), dtype=bool)
+        for t in rollouts:
+            in_rollout |= (times >= t) & (times < t + gap_s)
+        in_traffic = (times >= traffic[0]) & (times < traffic[1]) if traffic else np.zeros(len(times), dtype=bool)
+        for policy in POLICIES:
+            alarms, decisions, asked = run_policy(policy, warm_rows, live_rows, spd, restarts, labels, deploys)
             m = stream_metrics(alarms, labels, None, 0.01)
             detected, delays = 0, []
             for s, e in zip(w.start, w.end):
@@ -88,20 +146,36 @@ def evaluate(run: Path) -> pd.DataFrame:
                     detected += 1
                     delays.append(hits[0] - s)
             outside = [a for a, n in zip(alarms, near) if not n]
+            outside_after_restart = [a for a, n, r in zip(alarms, near, after_restart) if not n and r]
             hours = len(outside) * meta["scrape_seconds"] / 3600
-            learned = 0
+            learned = benign_learned = 0
             for d in decisions:
                 if d.get("action") != "promote" or d.get("step") is None:
                     continue
                 t = times[min(int(d["step"]) - 1, len(times) - 1)]
-                learned += any(s <= t <= e + quarantine_s for s, e in zip(w.start, w.end))
+                if any(s <= t <= e + quarantine_s for s, e in zip(w.start, w.end)):
+                    learned += 1
+                else:
+                    benign_learned += 1
+
+            def fa_rate(mask):
+                n = int(mask.sum())
+                return round(float(np.asarray(alarms)[mask].sum()) / (n * meta["scrape_seconds"] / 3600), 2) if n else None
             out.append({
                 "service": svc, "policy": policy, "faults": len(w), "detected": detected,
                 "median_ttd_s": round(statistics.median(delays), 1) if delays else None,
                 "false_alarms_per_hour": round(sum(outside) / hours, 2) if hours else None,
                 "mcc": m["mcc"], "event_recall": m["event_recall"],
                 "promotions": sum(d.get("action") == "promote" for d in decisions),
-                "incidents_learned": learned,
+                "incidents_learned": learned, "benign_promotions": benign_learned,
+                "false_alarms_per_hour_after_rollout": fa_rate(in_rollout & ~np.asarray(near)),
+                "false_alarms_per_hour_traffic_x3": fa_rate(in_traffic & ~np.asarray(near)),
+                "operator_queries": asked["queries"], "answered_new_normal": asked["said_new_normal"],
+                "restarts": len(restarts),
+                "false_alarms_after_restart_share": (round(sum(outside_after_restart) / sum(outside), 3)
+                                                     if sum(outside) else None),
+                "decisions": " ".join(f"{d['verdict']}/{d['action']}" + ("*" if d.get("evidence", {}).get("early") else "")
+                                      for d in decisions),
             })
     return pd.DataFrame(out)
 
@@ -114,8 +188,11 @@ def main() -> int:
     res.to_csv(args.run / "results.csv", index=False)
     print(res.to_string(index=False))
     if not res.empty:
-        tot = res.groupby("policy")[["faults", "detected", "incidents_learned"]].sum()
-        print("\n" + tot.to_string())
+        tot = res.groupby("policy")[["faults", "detected", "incidents_learned", "benign_promotions",
+                                     "operator_queries"]].sum()
+        fa = res.groupby("policy")[["false_alarms_per_hour", "false_alarms_per_hour_after_rollout",
+                                    "false_alarms_per_hour_traffic_x3"]].mean().round(1)
+        print("\n" + tot.join(fa).to_string())
     return 0
 
 

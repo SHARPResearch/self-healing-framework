@@ -5,6 +5,8 @@ import {
   Bot,
   Cpu,
   Eye,
+  UserCheck,
+  Building2,
   GitBranch,
   GitCompareArrows,
   ScrollText,
@@ -13,7 +15,6 @@ import {
   Server,
   Settings,
   Sliders,
-  UserCheck,
   Zap,
 } from "lucide-react";
 
@@ -71,6 +72,9 @@ export const navGroups: NavGroup[] = [
   },
   {
     label: "Administration",
-    items: [{ label: "Settings", to: "/settings", icon: Settings }],
+    items: [
+      { label: "Organization", to: "/organization", icon: Building2 },
+      { label: "Settings", to: "/settings", icon: Settings },
+    ],
   },
 ];

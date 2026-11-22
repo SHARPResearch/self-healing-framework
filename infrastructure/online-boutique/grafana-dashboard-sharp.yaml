@@ -1,0 +1,97 @@
+# Grafana dashboard "SHARP Online Boutique": the eight per-service metrics ml-backend feeds to the
+# detector. The queries are the ones in services/ml-backend/app/prom.py (feature_queries), with an
+# app filter added. Loaded by the Grafana sidecar through the grafana_dashboard label
+# (see prometheus-values.yaml). Applied by up.ps1.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sharp-online-boutique-dashboard
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+data:
+  sharp-online-boutique.json: |
+    {
+      "uid": "sharp-online-boutique",
+      "title": "SHARP Online Boutique",
+      "tags": ["sharp", "online-boutique"],
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "10s",
+      "time": { "from": "now-30m", "to": "now" },
+      "templating": {
+        "list": [
+          {
+            "name": "app",
+            "label": "Service",
+            "type": "query",
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "query": { "query": "label_values(kube_deployment_spec_replicas{namespace=\"online-boutique\"}, deployment)", "refId": "app" },
+            "refresh": 2,
+            "includeAll": true,
+            "multi": true,
+            "current": { "text": "All", "value": "$__all" }
+          }
+        ]
+      },
+      "panels": [
+        {
+          "id": 1, "type": "timeseries", "title": "CPU (cores)", "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+          "targets": [ { "refId": "A", "legendFormat": "{{app}}",
+            "expr": "sum by (app) (label_replace(rate(container_cpu_usage_seconds_total{namespace=\"online-boutique\", container!=\"\", container!=\"POD\"}[1m]), \"app\", \"$1\", \"pod\", \"^(.+)-[a-z0-9]+-[a-z0-9]+$\")) and on (app) label_replace(kube_deployment_spec_replicas{namespace=\"online-boutique\", deployment=~\"$app\"}, \"app\", \"$1\", \"deployment\", \"(.*)\")" } ]
+        },
+        {
+          "id": 2, "type": "timeseries", "title": "Memory working set", "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+          "targets": [ { "refId": "A", "legendFormat": "{{app}}",
+            "expr": "sum by (app) (label_replace(container_memory_working_set_bytes{namespace=\"online-boutique\", container!=\"\", container!=\"POD\"}, \"app\", \"$1\", \"pod\", \"^(.+)-[a-z0-9]+-[a-z0-9]+$\")) and on (app) label_replace(kube_deployment_spec_replicas{namespace=\"online-boutique\", deployment=~\"$app\"}, \"app\", \"$1\", \"deployment\", \"(.*)\")" } ]
+        },
+        {
+          "id": 3, "type": "timeseries", "title": "Network received", "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "Bps" }, "overrides": [] },
+          "targets": [ { "refId": "A", "legendFormat": "{{app}}",
+            "expr": "sum by (app) (label_replace(rate(container_network_receive_bytes_total{namespace=\"online-boutique\", interface=\"eth0\"}[1m]), \"app\", \"$1\", \"pod\", \"^(.+)-[a-z0-9]+-[a-z0-9]+$\")) and on (app) label_replace(kube_deployment_spec_replicas{namespace=\"online-boutique\", deployment=~\"$app\"}, \"app\", \"$1\", \"deployment\", \"(.*)\")" } ]
+        },
+        {
+          "id": 4, "type": "timeseries", "title": "Network transmitted", "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "Bps" }, "overrides": [] },
+          "targets": [ { "refId": "A", "legendFormat": "{{app}}",
+            "expr": "sum by (app) (label_replace(rate(container_network_transmit_bytes_total{namespace=\"online-boutique\", interface=\"eth0\"}[1m]), \"app\", \"$1\", \"pod\", \"^(.+)-[a-z0-9]+-[a-z0-9]+$\")) and on (app) label_replace(kube_deployment_spec_replicas{namespace=\"online-boutique\", deployment=~\"$app\"}, \"app\", \"$1\", \"deployment\", \"(.*)\")" } ]
+        },
+        {
+          "id": 5, "type": "timeseries", "title": "CPU throttled (share of periods)", "gridPos": { "x": 0, "y": 16, "w": 8, "h": 8 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 }, "overrides": [] },
+          "targets": [ { "refId": "A", "legendFormat": "{{app}}",
+            "expr": "(sum by (app) (label_replace(rate(container_cpu_cfs_throttled_periods_total{namespace=\"online-boutique\", container!=\"\", container!=\"POD\"}[1m]), \"app\", \"$1\", \"pod\", \"^(.+)-[a-z0-9]+-[a-z0-9]+$\"))) / clamp_min(sum by (app) (label_replace(rate(container_cpu_cfs_periods_total{namespace=\"online-boutique\", container!=\"\", container!=\"POD\"}[1m]), \"app\", \"$1\", \"pod\", \"^(.+)-[a-z0-9]+-[a-z0-9]+$\")), 1e-9) and on (app) label_replace(kube_deployment_spec_replicas{namespace=\"online-boutique\", deployment=~\"$app\"}, \"app\", \"$1\", \"deployment\", \"(.*)\")" } ]
+        },
+        {
+          "id": 6, "type": "timeseries", "title": "Container restarts (5 min)", "gridPos": { "x": 8, "y": 16, "w": 8, "h": 8 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+          "targets": [ { "refId": "A", "legendFormat": "{{app}}",
+            "expr": "sum by (app) (label_replace(increase(kube_pod_container_status_restarts_total{namespace=\"online-boutique\"}[5m]), \"app\", \"$1\", \"pod\", \"^(.+)-[a-z0-9]+-[a-z0-9]+$\")) and on (app) label_replace(kube_deployment_spec_replicas{namespace=\"online-boutique\", deployment=~\"$app\"}, \"app\", \"$1\", \"deployment\", \"(.*)\")" } ]
+        },
+        {
+          "id": 7, "type": "timeseries", "title": "Ready ratio (available / desired replicas)", "gridPos": { "x": 16, "y": 16, "w": 8, "h": 8 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1.1 }, "overrides": [] },
+          "targets": [ { "refId": "A", "legendFormat": "{{app}}",
+            "expr": "sum by (app) (label_replace(kube_deployment_status_replicas_available{namespace=\"online-boutique\", deployment=~\"$app\"}, \"app\", \"$1\", \"deployment\", \"(.*)\")) / clamp_min(sum by (app) (label_replace(kube_deployment_spec_replicas{namespace=\"online-boutique\", deployment=~\"$app\"}, \"app\", \"$1\", \"deployment\", \"(.*)\")), 1)" } ]
+        },
+        {
+          "id": 8, "type": "timeseries", "title": "Response time (blackbox probe, 1 min mean)", "gridPos": { "x": 0, "y": 24, "w": 24, "h": 8 },
+          "description": "One real request per service every 5 s (gRPC health, HTTP /_healthz or TCP connect). The eighth feature: a network delay shows here and nowhere else.",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "s", "min": 0 }, "overrides": [] },
+          "targets": [ { "refId": "A", "legendFormat": "{{app}}",
+            "expr": "max by (app) (avg_over_time(probe_duration_seconds{probe_namespace=\"online-boutique\", app=~\"$app\"}[1m]))" } ]
+        }
+      ]
+    }

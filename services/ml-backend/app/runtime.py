@@ -23,6 +23,7 @@ import time
 from datetime import datetime, timezone
 from typing import Optional
 
+from app import metrics
 from app.bus import Bus, envelope
 from app.config import settings
 from app.fleet import ServiceFleet, ServiceRuntime
@@ -46,10 +47,19 @@ LIFECYCLE_TYPES = {"quarantine_opened", "quarantine_look", "change_observed", "l
 
 
 class Runtime:
-    def __init__(self, fleet: Optional[ServiceFleet] = None):
+    """
+    One tenant's fleet and everything it writes (docs/adr/0015). The platform runtime (tenant
+    "default", or PRIMARY_TENANT in live mode) also collects the backend's own logs and container
+    logs; a tenant runtime created on demand (app/tenancy.py) only has its own lifecycle.
+    """
+
+    def __init__(self, fleet: Optional[ServiceFleet] = None, tenant: str = "default",
+                 platform: bool = True):
+        self.tenant = tenant
+        self.platform = platform
         self.fleet = fleet or make_fleet()
-        self.store: MemoryStore = MemoryStore()
-        self.bus = Bus()
+        self.store: MemoryStore = MemoryStore(tenant=tenant)
+        self.bus = Bus(tenant)
         self.events_per_sec = settings.replay_events_per_sec
         self.paused = False
         self.tick = 0
@@ -57,7 +67,7 @@ class Runtime:
         self._task: Optional[asyncio.Task] = None
         self._pending_rows: list[dict] = []
         self._last_flush = time.monotonic()
-        self.hub = LogHub(http_access=settings.log_http_access)
+        self.hub = LogHub(http_access=settings.log_http_access, capture_app=platform)
         self.hub.install()                          # catch uvicorn's own startup lines too
         self._alarms: dict[str, AlarmLog] = {}
         self.changes = None                         # live: Kubernetes deployment watcher fan-out
@@ -65,6 +75,12 @@ class Runtime:
         # A step awaits between services, so reset() could swap the fleet in the middle of one and
         # the step would carry on against the half-built new fleet. Steps and reset take turns.
         self._step_lock = asyncio.Lock()
+        self._dirty: set[str] = set()               # services whose lifecycle changed since the last checkpoint
+        self.ready = False                          # the fleet is built and scoring
+        self.start_error: Optional[str] = None      # why a live start is still waiting
+        self._starter: Optional[asyncio.Task] = None
+        self._last_checkpoint = self._last_checkpoint_all = time.monotonic()
+        self._last_prune = time.monotonic()
 
     @property
     def live(self) -> bool:
@@ -79,24 +95,74 @@ class Runtime:
     def persist_every(self) -> int:
         return 1 if self.live else settings.persist_every
 
+    @property
+    def checkpoints_enabled(self) -> bool:
+        mode = settings.model_checkpoints
+        return mode == "on" or (mode == "auto" and self.live)
+
     # -- lifecycle ---------------------------------------------------------------------------------
-    async def start(self, backing_services: bool = True, replay: bool = True) -> None:
+    def set_tenant(self, tenant: str) -> None:
+        """Re-home the (not yet started) runtime, e.g. the live fleet onto PRIMARY_TENANT."""
+        self.tenant = tenant
+        self.store = MemoryStore(tenant=tenant)
+        self.bus = Bus(tenant)
+
+    async def start(self, backing_services: bool = True, replay: bool = True,
+                    store: Optional[MemoryStore] = None) -> None:
         self.hub.start()
+        if store is not None:
+            self.store = store                      # a tenant store on the shared pool
+        elif backing_services:
+            self.store = await make_store(settings.database_url, self.tenant)
         if backing_services:
-            self.store = await make_store(settings.database_url)
             await self.bus.start(settings.redis_url)
+        if self.checkpoints_enabled:
+            self.fleet.checkpoints = await self.store.load_checkpoints()
+        if self.live and backing_services:
+            # In a cluster the API must come up even before Prometheus has an hour of history (or is
+            # reachable at all), otherwise the pod crash loops. Build in the background and retry.
+            self._starter = asyncio.create_task(self._start_live_when_ready(replay), name="live-start")
+            return
         await asyncio.to_thread(self.fleet.build)
+        await self._serve(backing_services, replay)
+
+    async def _start_live_when_ready(self, replay: bool) -> None:
+        attempt = 0
+        while True:
+            try:
+                await asyncio.to_thread(self.fleet.build)
+                break
+            except Exception as exc:  # noqa: BLE001 - Prometheus down, no history yet, no Deployments
+                attempt += 1
+                self.start_error = str(exc)
+                if attempt in (1, 2) or attempt % 10 == 0:
+                    logger.warning("live: not ready yet (%s); retrying every %ds, attempt %d",
+                                   exc, settings.live_start_retry_seconds, attempt)
+                await asyncio.sleep(settings.live_start_retry_seconds)
+        self.start_error = None
+        await self._serve(True, replay)
+
+    async def _serve(self, backing_services: bool, replay: bool) -> None:
         self._log_warm_up()
         await self.drain_all()                      # warm-up versions and transitions
-        if backing_services and settings.follow_container_logs:
+        if backing_services and settings.follow_container_logs and self.platform:
             self.hub.follow_containers(settings.log_containers, await self.store.latest_log_times())
-        if self.live and backing_services:          # tests run live mode without a cluster
+        if self.live and backing_services and self.platform:   # tests run live mode without a cluster
             self._start_live_integrations()
+        self.ready = True
+        metrics.ready.set(1)
+        metrics.services.set(len(self.fleet.services))
         if replay:
             loop = self._live_loop() if self.live else self._loop()
             self._task = asyncio.create_task(loop, name="live" if self.live else "replay")
 
     async def stop(self) -> None:
+        if self._starter and not self._starter.done():
+            self._starter.cancel()
+            try:
+                await self._starter
+            except asyncio.CancelledError:
+                pass
         if self._task:
             self._task.cancel()
             try:
@@ -106,6 +172,7 @@ class Runtime:
         if self.changes is not None:
             self.changes.stop()
         self.hub.stop()
+        await self.save_checkpoints(every=True)
         await self.flush_logs()
         await self.flush_rows()
         await self.store.stop()
@@ -133,6 +200,7 @@ class Runtime:
             await self.flush_logs()
             if time.monotonic() - self._last_flush >= 1.0:
                 await self.flush_rows()
+            await self.maybe_checkpoint()
             await asyncio.sleep(TICK_S)
 
     async def step_all(self) -> None:
@@ -140,7 +208,9 @@ class Runtime:
             self.tick += 1
             now = datetime.now(timezone.utc)
             for rt in list(self.fleet.services.values()):
+                started = time.perf_counter()
                 x, res, display = self.fleet.process(rt)
+                metrics.score_seconds.observe(time.perf_counter() - started)
                 await self._after_step(rt, x, res, display, now)
 
     # -- live mode ---------------------------------------------------------------------------------
@@ -164,6 +234,12 @@ class Runtime:
         if self.changes is None:
             return
         for evt in self.changes.route(self.fleet):
+            if evt.kind == "restart":
+                d = evt.detail
+                self.log(evt.service_id, f"Kubernetes pod restart observed: {d.get('reason', '').replace('_', ' ')} "
+                         f"of {d.get('pod')}" + (f" ({d['exit_reason']})" if d.get("exit_reason") else ""),
+                         "info", {"change_event_id": evt.event_id, "kind": evt.kind, **d})
+                continue
             self.log(evt.service_id, f"Kubernetes rollout observed: {evt.kind} of {evt.service_id} "
                      f"({', '.join(i for i in evt.detail.get('images', []) if i)})", "info",
                      {"change_event_id": evt.event_id, "kind": evt.kind})
@@ -171,7 +247,8 @@ class Runtime:
     async def scrape_once(self) -> None:
         """One live step: every service gets the row of the latest Prometheus scrape."""
         names = list(self.fleet.services)
-        rows = await asyncio.to_thread(self.fleet.telemetry.latest, names)
+        with metrics.scrape_seconds.time():
+            rows = await asyncio.to_thread(self.fleet.telemetry.latest, names)
         async with self._step_lock:
             self.tick += 1
             now = datetime.now(timezone.utc)
@@ -179,7 +256,9 @@ class Runtime:
                 rt = self.fleet.services.get(sid)
                 if rt is None:
                     continue
+                started = time.perf_counter()
                 x, res, display = self.fleet.process_row(rt, x)
+                metrics.score_seconds.observe(time.perf_counter() - started)
                 await self._after_step(rt, x, res, display, now)
 
     async def _live_loop(self) -> None:
@@ -196,10 +275,12 @@ class Runtime:
                     failures = 0
                 except Exception as exc:  # noqa: BLE001 - keep serving; the next scrape may work
                     failures += 1
+                    metrics.scrape_failures.inc()
                     if failures in (1, 10) or failures % 60 == 0:
                         logger.warning("live: scrape failed (%s), %d in a row", exc, failures)
             await self.flush_logs()
             await self.flush_rows()
+            await self.maybe_checkpoint()
             await asyncio.sleep(max(0.0, interval - (time.monotonic() - started)))
 
     async def live_action(self, service_id: str, action: str) -> dict:
@@ -222,6 +303,11 @@ class Runtime:
         return info
 
     async def _after_step(self, rt: ServiceRuntime, x: dict, res, display: float, now: datetime) -> None:
+        after_restart = res.step <= rt.restart_until_step
+        progress = rt.manager.quarantine_progress()
+        metrics.observe_step(self.tenant, rt.service_id, score=display, alarming=bool(res.alarm),
+                             after_restart=after_restart, version=res.version, current_phase=res.phase,
+                             progress=(progress["seen"] / max(progress["length"], 1)) if progress else 0.0)
         if res.step % self.persist_every == 0 or res.alarm:
             self._pending_rows.append({
                 "time": now, "service_id": rt.service_id, "anomaly_score": display,
@@ -235,24 +321,68 @@ class Runtime:
                 "severity": self.fleet.severity(rt), "version": res.version,
                 "phase": res.phase, "threshold": 0.5,
                 "trigger": getattr(rt.manager, "_q_trigger", None) if res.phase != "stable" else None,
-                "quarantine": rt.manager.quarantine_progress(),
+                "quarantine": progress,
+                # alarms right after a pod restart are expected while it settles (docs/adr/0008)
+                "context": "after_restart" if after_restart else None,
             }))
         episode = self._alarms.setdefault(rt.service_id, AlarmLog()).update(
             res.step, bool(res.alarm), display)
         if episode:
             kind, attrs = episode
             if kind == "raised":
+                note = ", expected: a pod restarted moments ago" if after_restart else ""
                 self.log(rt.service_id, f"alarm raised: sustained since step {attrs['since_step']} "
-                         f"(peak score {attrs['score']}, model v{res.version})", "warn", attrs)
+                         f"(peak score {attrs['score']}, model v{res.version}{note})", "warn",
+                         {**attrs, "after_restart": after_restart})
             else:
                 self.log(rt.service_id, f"alarm cleared: steps {attrs['from_step']} to {attrs['to_step']}, "
                          f"peak score {attrs['peak']}, {attrs['alarming_events']} alarming events",
                          "info", attrs)
         await self.drain(rt)
 
+    # -- checkpoints (docs/adr/0006) -----------------------------------------------------------------
+    async def maybe_checkpoint(self) -> None:
+        now = time.monotonic()
+        if now - self._last_prune >= 600 and hasattr(self.store, "prune"):
+            self._last_prune = now
+            await self.store.prune()          # retention without TimescaleDB (docs/adr/0016)
+        if now - self._last_checkpoint_all >= settings.checkpoint_all_every_s:
+            self._last_checkpoint = self._last_checkpoint_all = now
+            await self.save_checkpoints(every=True)
+        elif self._dirty and now - self._last_checkpoint >= settings.checkpoint_every_s:
+            self._last_checkpoint = now
+            await self.save_checkpoints()
+
+    async def save_checkpoints(self, every: bool = False) -> int:
+        """Write the lifecycle checkpoint of every changed service (or of all of them)."""
+        if not self.checkpoints_enabled:
+            return 0
+        saved = 0
+        async with self._step_lock:                 # never between two services of one step
+            ids = list(self.fleet.services) if every else [s for s in self._dirty if s in self.fleet.services]
+            self._dirty.difference_update(ids)
+            for sid in ids:
+                rt = self.fleet.services[sid]
+                try:
+                    blob = rt.manager.export_state()
+                except Exception:  # noqa: BLE001 - one bad export must not stop the others
+                    logger.exception("checkpoint: could not export %s", sid)
+                    continue
+                await self.store.save_checkpoint({
+                    "service_id": sid, "source": rt.entity, "step": rt.manager.step,
+                    "production_version": rt.manager.registry.production_version, "blob": blob})
+                saved += 1
+        return saved
+
     # -- logs --------------------------------------------------------------------------------------
     def _log_warm_up(self) -> None:
         for rt in self.fleet.services.values():
+            if rt.restored:
+                self.log(rt.service_id, f"resumed from its checkpoint on {rt.entity}: step {rt.manager.step}, "
+                         f"model v{rt.manager.registry.production_version} serving, "
+                         f"{len(rt.manager.registry.versions)} versions, no warm-up needed",
+                         attrs={"entity": rt.entity, "restored": True})
+                continue
             self.log(rt.service_id, f"warm-up complete on {rt.entity}: {self.fleet.warm_up_rows} rows, "
                      f"model v{rt.manager.registry.production_version} serving, "
                      f"{settings.threshold_method.upper()} threshold {rt.manager.threshold:.4f}",
@@ -286,6 +416,7 @@ class Runtime:
     async def drain(self, rt: ServiceRuntime) -> None:
         while rt.outbox.events:
             kind, payload = rt.outbox.events.popleft()
+            self._dirty.add(rt.service_id)
             if kind == "transition":
                 moved = payload["from_version"] not in (None, payload["to_version"])
                 self.log(rt.service_id, f"model {payload['transition']} "
@@ -293,6 +424,7 @@ class Runtime:
                             else f"v{payload['to_version']}") + f": {payload['reason']}",
                          "warn" if payload["transition"] == "rollback" else "info",
                          {"transition": payload["transition"], "to_version": payload["to_version"]})
+                metrics.transitions.labels(self.tenant, rt.service_id, str(payload["transition"])).inc()
                 await self.store.write_transition(payload)
                 await self.bus.publish(envelope("model_transition", rt.service_id, payload))
                 if payload["transition"] in ("promote", "rollback"):
@@ -304,16 +436,31 @@ class Runtime:
                 event = payload.get("event")
                 data = {k: v for k, v in payload.items() if k != "event"}
                 self._log_lifecycle(rt, event, data)
+                metrics.observe_lifecycle(self.tenant, rt.service_id, event, data)
+                self._mark(rt, event, data)
                 if event == "lifecycle_decision":
                     await self.store.write_decision(data)
                     rt.drift_flag = data.get("action") in ("promote", "ask", "hold")
                 elif event in ("operator_query", "query_answered", "query_expired"):
                     await self.store.write_query({**data, "service_id": rt.service_id})
                 elif event == "change_observed":
-                    await self.store.write_change({"service_id": rt.service_id, "kind": "deployment",
-                                                   "detail": data})
+                    await self.store.write_change({"service_id": rt.service_id,
+                                                   "kind": data.get("kind") or "deployment", "detail": data})
                 if event in LIFECYCLE_TYPES:
                     await self.bus.publish(envelope(event, rt.service_id, data))
+
+    @staticmethod
+    def _mark(rt: ServiceRuntime, event: str, d: dict) -> None:
+        if event == "quarantine_opened":
+            label = f"quarantine ({d.get('trigger')})"
+        elif event == "change_observed":
+            label = f"{d.get('kind') or 'deployment'} observed"
+        elif event == "lifecycle_decision":
+            label = f"{d.get('verdict')} -> {d.get('action')}"
+        else:
+            return
+        rt.markers.append({"time": time.time(), "event": event, "label": label,
+                           "action": d.get("action"), "trigger": d.get("trigger")})
 
     def _log_lifecycle(self, rt: ServiceRuntime, event: str, d: dict) -> None:
         sid = rt.service_id
@@ -329,7 +476,11 @@ class Runtime:
                 self.log(sid, f"early look at {seen} of {length} events: not conclusive yet, "
                          "quarantine continues", "info", {"seen": seen, "length": length})
         elif event == "change_observed":
-            self.log(sid, f"change event {d.get('change_event_id')} reached the lifecycle", "info")
+            if d.get("kind") == "restart":
+                self.log(sid, f"restart {d.get('change_event_id')} reached the lifecycle: it explains a "
+                         "shift but licenses no new model", "info")
+            else:
+                self.log(sid, f"change event {d.get('change_event_id')} reached the lifecycle", "info")
         elif event == "lifecycle_decision":
             action = d.get("action")
             self.log(sid, f"decision: {d.get('verdict')} -> {action}: {d.get('reason')}",
@@ -357,6 +508,8 @@ class Runtime:
         self.paused = True
         try:
             async with self._step_lock:              # wait for a step in flight, then block new ones
+                await self.store.clear_checkpoints()    # a reset starts every service over
+                self._dirty.clear()
                 fleet = self.fleet.fresh()
                 await asyncio.to_thread(fleet.build)
                 self.fleet = fleet                   # only swap in a fully built fleet

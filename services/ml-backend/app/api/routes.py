@@ -1,24 +1,52 @@
 """
 routes.py — REST API under /api (contract documented in services/ml-backend/README.md).
+
+Every handler works on the caller's tenant only (docs/adr/0015): its `runtime` parameter is that
+organization's Runtime, resolved from the JWT, and the dependency also checks the role allows the
+call (read, operate or manage, app/auth.py). With AUTH_MODE=off it is the single default runtime.
 """
 
+import asyncio
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Literal, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.api import views
 from app.bus import envelope
 from app.config import settings
 from app.logs import public as public_log
-from app.runtime import runtime
+from app.auth import Principal, current_principal, principal_from_header, require
+from app.prom import FEATURES, OnlineBoutiqueTelemetry
+from app.runtime import Runtime
+from app.tenancy import tenants
 
 router = APIRouter(prefix="/api")
 
+_can = {perm: require(perm) for perm in ("read", "operate", "manage")}
 
-def _service(service_id: str):
+
+def _tenant_runtime(permission: str):
+    async def resolve(p: Principal = Depends(_can[permission])) -> Runtime:
+        return await tenants.get(p.tenant)
+    return resolve
+
+
+Read = Depends(_tenant_runtime("read"))
+Operate = Depends(_tenant_runtime("operate"))
+Manage = Depends(_tenant_runtime("manage"))
+Caller = Depends(current_principal)
+
+
+def _operator(p: Principal, claimed: str) -> str:
+    """Who to record on the audit trail: the signed-in user, never a name the client sent."""
+    return p.email if settings.auth_mode == "jwt" else claimed
+
+
+def _service(runtime: Runtime, service_id: str):
     rt = runtime.fleet.services.get(service_id)
     if rt is None:
         raise HTTPException(404, f"unknown service {service_id}")
@@ -26,33 +54,51 @@ def _service(service_id: str):
 
 
 @router.get("/health")
-async def health() -> dict:
-    return {"status": "ok", "mode": "prometheus" if runtime.live else "replay",
+async def health(request: Request) -> dict:
+    """Public (it is the liveness probe). Tenant fields are filled in for a signed-in caller."""
+    runtime = tenants.primary
+    if settings.auth_mode == "jwt":
+        try:
+            runtime = await tenants.get(principal_from_header(request.headers.get("authorization")).tenant)
+        except HTTPException:
+            return {"status": "ok", "auth": "jwt", "ready": tenants.ready(),
+                    "mode": "prometheus" if tenants.primary.live else "replay"}
+    return {"status": "ok", "auth": settings.auth_mode, "mode": "prometheus" if runtime.live else "replay",
             "watcher": runtime.changes is not None, "liveActions": runtime.actions is not None,
             "namespace": settings.k8s_namespace if runtime.live else None,
             "scrapeSeconds": settings.live_scrape_seconds if runtime.live else None,
             "lifecycleDayMinutes": settings.live_lifecycle_day_minutes if runtime.live else None,
+            "grafanaUrl": settings.grafana_url if runtime.live else None,
             "store": runtime.store.kind,
-            "db": runtime.store.kind == "timescaledb" and getattr(runtime.store, "pool", None) is not None,
+            "db": getattr(runtime.store, "pool", None) is not None,
             "redis": runtime.bus.redis_ok, "services": len(runtime.fleet.services),
             "tick": runtime.tick, "eventsPerSec": runtime.events_per_sec, "paused": runtime.paused,
-            "uptimeS": round(time.time() - runtime.started_at)}
+            "uptimeS": round(time.time() - runtime.started_at),
+            "ready": runtime.ready, "startError": runtime.start_error, "tenant": runtime.tenant}
+
+
+@router.get("/ready")
+async def ready():
+    """Readiness for Kubernetes: 200 once the fleet is built and scoring, 503 while it waits."""
+    if tenants.ready():
+        return {"ready": True}
+    return JSONResponse({"ready": False, "reason": tenants.primary.start_error or "starting"}, status_code=503)
 
 
 # -- anomaly detection --------------------------------------------------------------------------
 @router.get("/services")
-async def services() -> list[dict]:
+async def services(runtime: Runtime = Read) -> list[dict]:
     return [views.service_health(runtime.fleet, rt) for rt in runtime.fleet.services.values()]
 
 
 @router.get("/services/{service_id}/scores")
-async def scores(service_id: str, limit: int = Query(300, le=600)) -> list[dict]:
-    rt = _service(service_id)
+async def scores(service_id: str, limit: int = Query(300, le=600), runtime: Runtime = Read) -> list[dict]:
+    rt = _service(runtime, service_id)
     return [{"step": s, "score": v, "alarm": a, "threshold": 0.5} for s, v, a in list(rt.scores)[-limit:]]
 
 
 @router.get("/dashboard/summary")
-async def dashboard_summary() -> dict:
+async def dashboard_summary(runtime: Runtime = Read) -> dict:
     rts = list(runtime.fleet.services.values())
     trend = await runtime.store.score_trend(30)
     decisions_all = [d for rt in rts for d in rt.manager.decisions]
@@ -69,13 +115,13 @@ async def dashboard_summary() -> dict:
 
 # -- dynamic model updating ---------------------------------------------------------------------
 @router.get("/models")
-async def models() -> list[dict]:
+async def models(runtime: Runtime = Read) -> list[dict]:
     return [views.model_run(runtime.fleet, rt) for rt in runtime.fleet.services.values()]
 
 
 @router.get("/models/{service_id}")
-async def model_detail(service_id: str) -> dict:
-    return views.model_detail(runtime.fleet, _service(service_id))
+async def model_detail(service_id: str, runtime: Runtime = Read) -> dict:
+    return views.model_detail(runtime.fleet, _service(runtime, service_id))
 
 
 class VersionBody(BaseModel):
@@ -84,19 +130,19 @@ class VersionBody(BaseModel):
 
 
 @router.post("/models/{service_id}/promote")
-async def promote(service_id: str, body: VersionBody) -> dict:
-    rt = _service(service_id)
+async def promote(service_id: str, body: VersionBody, runtime: Runtime = Manage, p: Principal = Caller) -> dict:
+    rt = _service(runtime, service_id)
     version = body.version or max(v.version for v in rt.manager.registry.versions)
-    return await _manual(rt, version, "promote", body.operator)
+    return await _manual(runtime, rt, version, "promote", _operator(p, body.operator))
 
 
 @router.post("/models/{service_id}/rollback")
-async def rollback(service_id: str, body: VersionBody) -> dict:
-    rt = _service(service_id)
+async def rollback(service_id: str, body: VersionBody, runtime: Runtime = Manage, p: Principal = Caller) -> dict:
+    rt = _service(runtime, service_id)
     version = body.version or _before_last_promotion(rt)
     if version is None:
         raise HTTPException(409, "no earlier production version to roll back to")
-    return await _manual(rt, version, "rollback", body.operator)
+    return await _manual(runtime, rt, version, "rollback", _operator(p, body.operator))
 
 
 def _before_last_promotion(rt) -> Optional[int]:
@@ -110,7 +156,7 @@ def _before_last_promotion(rt) -> Optional[int]:
     return prev.version if prev else None
 
 
-async def _manual(rt, version: int, transition: str, operator: str) -> dict:
+async def _manual(runtime: Runtime, rt, version: int, transition: str, operator: str) -> dict:
     try:
         decision = rt.manager.manual_set_version(version, transition, operator=operator)
     except KeyError:
@@ -122,8 +168,8 @@ async def _manual(rt, version: int, transition: str, operator: str) -> dict:
 
 
 @router.post("/models/{service_id}/validity-check")
-async def validity_check(service_id: str) -> dict:
-    rt = _service(service_id)
+async def validity_check(service_id: str, runtime: Runtime = Operate) -> dict:
+    rt = _service(runtime, service_id)
     opened = rt.manager.request_validity_check()
     await runtime.drain(rt)
     if not opened:
@@ -132,15 +178,16 @@ async def validity_check(service_id: str) -> dict:
 
 
 @router.get("/lifecycle/decisions")
-async def lifecycle_decisions(service_id: Optional[str] = None, limit: int = Query(100, le=500)) -> list[dict]:
-    rts = [_service(service_id)] if service_id else list(runtime.fleet.services.values())
+async def lifecycle_decisions(service_id: Optional[str] = None, limit: int = Query(100, le=500),
+                              runtime: Runtime = Read) -> list[dict]:
+    rts = [_service(runtime, service_id)] if service_id else list(runtime.fleet.services.values())
     rows = [d for rt in rts for d in views.decisions(rt, limit)]
     return sorted(rows, key=lambda d: d["step"] or 0, reverse=True)[:limit]
 
 
 # -- operator in the loop -----------------------------------------------------------------------
 @router.get("/queries")
-async def list_queries(status: Optional[str] = None) -> list[dict]:
+async def list_queries(status: Optional[str] = None, runtime: Runtime = Read) -> list[dict]:
     return views.queries(runtime.fleet, status)
 
 
@@ -150,11 +197,11 @@ class AnswerBody(BaseModel):
 
 
 @router.post("/queries/{query_id}/answer")
-async def answer_query(query_id: str, body: AnswerBody) -> dict:
+async def answer_query(query_id: str, body: AnswerBody, runtime: Runtime = Operate, p: Principal = Caller) -> dict:
     for rt in runtime.fleet.services.values():
         if query_id in rt.manager.queries:
             try:
-                decision = rt.manager.answer_query(query_id, body.answer, operator=body.operator)
+                decision = rt.manager.answer_query(query_id, body.answer, operator=_operator(p, body.operator))
             except KeyError as exc:
                 raise HTTPException(409, str(exc))
             except RuntimeError as exc:
@@ -173,7 +220,8 @@ def _utc(value: Optional[datetime]) -> Optional[datetime]:
 
 @router.get("/logs")
 async def logs(q: str = "", since: Optional[datetime] = None, until: Optional[datetime] = None,
-               before: Optional[datetime] = None, limit: int = Query(500, ge=1, le=2000)) -> dict:
+               before: Optional[datetime] = None, limit: int = Query(500, ge=1, le=2000),
+               runtime: Runtime = Read) -> dict:
     """
     Log lines oldest first: the newest `limit` that match. `q` is the page's filter box (free text
     plus service:, level: and source: terms). Pass the oldest returned time as `before` to page
@@ -187,7 +235,7 @@ async def logs(q: str = "", since: Optional[datetime] = None, until: Optional[da
 
 @router.get("/logs/histogram")
 async def logs_histogram(q: str = "", since: Optional[datetime] = None,
-                         until: Optional[datetime] = None) -> dict:
+                         until: Optional[datetime] = None, runtime: Runtime = Read) -> dict:
     """Matching lines per time bucket and level, for the bar strip above the log table."""
     await runtime.flush_logs()
     end = _utc(until) or datetime.now(timezone.utc)
@@ -196,7 +244,7 @@ async def logs_histogram(q: str = "", since: Optional[datetime] = None,
 
 
 @router.get("/logs/services")
-async def logs_services() -> list[dict]:
+async def logs_services(runtime: Runtime = Read) -> list[dict]:
     """Every service that has logged, with its line count (the page's service filter)."""
     await runtime.flush_logs()
     return await runtime.store.log_services()
@@ -204,7 +252,7 @@ async def logs_services() -> list[dict]:
 
 # -- demo controls ------------------------------------------------------------------------------
 @router.get("/demo/state")
-async def demo_state() -> dict:
+async def demo_state(runtime: Runtime = Read) -> dict:
     return {"mode": "prometheus" if runtime.live else "replay",
             "eventsPerSec": runtime.events_per_sec, "paused": runtime.paused, "tick": runtime.tick,
             "services": [{"serviceId": rt.service_id, "displayName": rt.display_name,
@@ -214,8 +262,9 @@ async def demo_state() -> dict:
 
 
 @router.post("/demo/{service_id}/{kind}")
-async def demo_inject(service_id: str, kind: Literal["deploy", "silent_change", "incident", "restart"]) -> dict:
-    _service(service_id)
+async def demo_inject(service_id: str, kind: Literal["deploy", "silent_change", "incident", "restart"],
+                      runtime: Runtime = Operate) -> dict:
+    _service(runtime, service_id)
     if runtime.live:
         raise HTTPException(409, "synthetic injections are replay only; use POST /api/live/{service}/{action}")
     return await runtime.inject(service_id, kind)
@@ -227,7 +276,7 @@ class SpeedBody(BaseModel):
 
 
 @router.post("/demo/speed")
-async def demo_speed(body: SpeedBody) -> dict:
+async def demo_speed(body: SpeedBody, runtime: Runtime = Operate) -> dict:
     if body.eventsPerSec is not None and runtime.live:
         raise HTTPException(409, "live mode follows the Prometheus scrape interval; speed is replay only")
     if body.eventsPerSec is not None:
@@ -239,8 +288,44 @@ async def demo_speed(body: SpeedBody) -> dict:
     return {"eventsPerSec": runtime.events_per_sec, "paused": runtime.paused}
 
 
+FEATURE_INFO = {          # app/prom.py FEATURES: label and unit for the dashboard
+    "cpu_rate": ("CPU", "cores"), "memory_used": ("Memory", "bytes"),
+    "network_rx": ("Network in", "bytes/s"), "network_tx": ("Network out", "bytes/s"),
+    "cpu_throttled": ("CPU throttled", "ratio"), "restarts": ("Restarts (5 min)", "count"),
+    "ready_ratio": ("Ready replicas", "ratio"), "probe_latency": ("Response time", "seconds"),
+}
+
+
+@router.get("/live/{service_id}/telemetry")
+async def live_telemetry(service_id: str, minutes: float = Query(30, ge=5, le=360),
+                         runtime: Runtime = Read) -> dict:
+    """
+    The raw Prometheus features the detector scores for one service, with the lifecycle events
+    over the same window: the evidence behind a quarantine or a decision, unprocessed.
+    """
+    if not runtime.live:
+        raise HTTPException(409, "telemetry evidence needs TELEMETRY_MODE=prometheus")
+    rt = _service(runtime, service_id)
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(minutes=minutes)
+    step = max(settings.live_scrape_seconds, round(minutes * 60 / 360))     # at most ~360 points
+    # a private telemetry reader: the shared one forward-fills from the live scrape's last row
+    reader = OnlineBoutiqueTelemetry(runtime.fleet.telemetry.client, settings.k8s_namespace)
+    try:
+        rows = await asyncio.to_thread(reader.between, [service_id], start, end, step)
+    except Exception as exc:  # noqa: BLE001 - Prometheus down or slow
+        raise HTTPException(503, f"Prometheus unavailable: {exc}")
+    since = start.timestamp()
+    return {
+        "serviceId": service_id, "stepSeconds": step,
+        "features": [{"key": f, "label": FEATURE_INFO[f][0], "unit": FEATURE_INFO[f][1]} for f in FEATURES],
+        "points": [{"time": round(t), **{f: row.get(f) for f in FEATURES}} for t, row in rows.get(service_id, [])],
+        "markers": [m for m in rt.markers if m["time"] >= since],
+    }
+
+
 @router.post("/live/{service_id}/{action}")
-async def live_action(service_id: str, action: str) -> dict:
+async def live_action(service_id: str, action: str, runtime: Runtime = Operate) -> dict:
     """A real scenario on the live cluster: rollout, traffic_up/traffic_reset, or a Chaos Mesh fault."""
     from app.live_actions import ACTIONS
     if not runtime.live:
@@ -248,7 +333,7 @@ async def live_action(service_id: str, action: str) -> dict:
     if action not in ACTIONS:
         raise HTTPException(422, f"unknown action {action!r}; expected one of {list(ACTIONS)}")
     if not action.startswith("traffic"):
-        _service(service_id)
+        _service(runtime, service_id)
     try:
         return await runtime.live_action(service_id, action)
     except RuntimeError as exc:
@@ -256,6 +341,6 @@ async def live_action(service_id: str, action: str) -> dict:
 
 
 @router.post("/demo/reset")
-async def demo_reset() -> dict:
+async def demo_reset(runtime: Runtime = Manage) -> dict:
     await runtime.reset()
     return {"status": "reset"}

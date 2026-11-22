@@ -1,7 +1,7 @@
 """
 prom.py — live telemetry for Online Boutique on Kubernetes, read from Prometheus.
 
-Seven features per service, each fetched with ONE query for every service of the namespace:
+Eight features per service, each fetched with ONE query for every service of the namespace:
 
   cpu_rate       cores used                rate(container_cpu_usage_seconds_total)
   memory_used    bytes                     container_memory_working_set_bytes
@@ -12,10 +12,14 @@ Seven features per service, each fetched with ONE query for every service of the
   restarts       container restarts, 5 min increase(kube_pod_container_status_restarts_total)
   ready_ratio    available / desired       kube_deployment_status_replicas_available
                  replicas                    / kube_deployment_spec_replicas
+  probe_latency  seconds, 1 min mean       probe_duration_seconds of the blackbox exporter's request
+                                             to the service (infrastructure/online-boutique/
+                                             blackbox-values.yaml); the only end-to-end signal, so a
+                                             network delay is visible (docs/adr/0010). 0 when absent.
 
 The cAdvisor and kube-state-metrics series are labelled by pod, not by service, so every query
 maps the pod name "<deployment>-<replicaset hash>-<pod hash>" to an "app" label with label_replace
-and sums by it. The names of the first four match fleet.CANONICAL, so the metric rows persisted to
+and sums by it. The probe metrics already carry app (set by the exporter's ServiceMonitors). The names of the first four match fleet.CANONICAL, so the metric rows persisted to
 TimescaleDB keep the same feature keys as in replay mode.
 
 The client is blocking (httpx); the runtime calls it from a worker thread.
@@ -31,7 +35,8 @@ import httpx
 logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)   # one INFO line per scrape query otherwise
 
-FEATURES = ("cpu_rate", "memory_used", "network_rx", "network_tx", "cpu_throttled", "restarts", "ready_ratio")
+FEATURES = ("cpu_rate", "memory_used", "network_rx", "network_tx", "cpu_throttled", "restarts", "ready_ratio",
+            "probe_latency")
 POD_TO_APP = r'"app", "$1", "pod", "^(.+)-[a-z0-9]+-[a-z0-9]+$"'
 EXCLUDED = {"loadgenerator"}            # the traffic source, not a service under observation
 
@@ -56,6 +61,7 @@ def feature_queries(namespace: str) -> dict[str, str]:
         "ready_ratio": (
             f'sum by (app) (label_replace(kube_deployment_status_replicas_available{{{ns}}}, "app", "$1", "deployment", "(.*)"))'
             f' / clamp_min(sum by (app) (label_replace(kube_deployment_spec_replicas{{{ns}}}, "app", "$1", "deployment", "(.*)")), 1)'),
+        "probe_latency": f'max by (app) (avg_over_time(probe_duration_seconds{{probe_namespace="{namespace}"}}[1m]))',
     }
 
 

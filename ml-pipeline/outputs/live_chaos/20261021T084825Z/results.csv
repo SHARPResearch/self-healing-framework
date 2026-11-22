@@ -1,0 +1,16 @@
+service,policy,faults,detected,median_ttd_s,false_alarms_per_hour,mcc,event_recall,promotions,incidents_learned,benign_promotions,false_alarms_per_hour_after_rollout,false_alarms_per_hour_traffic_x3,operator_queries,answered_new_normal,restarts,false_alarms_after_restart_share,decisions
+cartservice,static,4,4,12.5,295.88,0.3053,1.0,0,0,0,,,0,0,2,0.167,
+cartservice,cadal,4,4,12.5,295.88,0.3053,1.0,0,0,0,,,0,0,2,0.167,incident/hold incident/hold
+cartservice,cadal_early,4,4,12.5,295.88,0.3053,1.0,0,0,0,,,0,0,2,0.167,incident/hold incident/hold
+cartservice,cadal_restart,4,4,12.5,295.88,0.3053,1.0,0,0,0,,,0,0,2,0.167,restart/hold
+cartservice,deployed,4,4,12.5,295.88,0.3053,1.0,0,0,0,,,0,0,2,0.167,restart/hold
+paymentservice,static,4,4,10.0,199.41,0.3784,1.0,0,0,0,,,0,0,2,0.127,
+paymentservice,cadal,4,4,10.0,199.41,0.3784,1.0,0,0,0,,,0,0,2,0.127,incident/hold incident/hold
+paymentservice,cadal_early,4,4,10.0,199.41,0.3784,1.0,0,0,0,,,0,0,2,0.127,incident/hold incident/hold
+paymentservice,cadal_restart,4,4,10.0,199.41,0.3784,1.0,0,0,0,,,0,0,2,0.127,no_change/resume* restart/hold
+paymentservice,deployed,4,4,10.0,199.41,0.3784,1.0,0,0,0,,,0,0,2,0.127,no_change/resume* restart/hold
+productcatalogservice,static,4,3,15.0,48.82,0.3888,0.75,0,0,0,,,0,0,2,0.313,
+productcatalogservice,cadal,4,3,15.0,48.82,0.3888,0.75,0,0,0,,,0,0,2,0.313,incident/hold no_change/resume
+productcatalogservice,cadal_early,4,3,15.0,48.82,0.3888,0.75,0,0,0,,,0,0,2,0.313,no_change/resume* no_change/resume*
+productcatalogservice,cadal_restart,4,3,15.0,48.82,0.3888,0.75,0,0,0,,,0,0,2,0.313,no_change/resume* no_change/resume*
+productcatalogservice,deployed,4,3,15.0,48.82,0.3888,0.75,0,0,0,,,0,0,2,0.313,no_change/resume* no_change/resume*

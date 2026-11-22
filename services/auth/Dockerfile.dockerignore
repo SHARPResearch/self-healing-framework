@@ -1,0 +1,13 @@
+# Context for services/auth/Dockerfile (built from the repository root).
+**
+!frontend/package.json
+!frontend/pnpm-lock.yaml
+!frontend/index.html
+!frontend/vite.config.ts
+!frontend/tsconfig*.json
+!frontend/components.json
+!frontend/public/**
+!frontend/src/**
+!services/auth/package.json
+!services/auth/package-lock.json
+!services/auth/src/**

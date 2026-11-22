@@ -52,7 +52,18 @@ class Settings(BaseSettings):
     # Length of the demo "restart" blip: a rollout restart (deployment event) that disturbs the
     # service for a few minutes and then returns to its old normal (~4 s on stage).
     demo_restart_events: int = 240
+    # Alarms within this long after a pod restart are labelled expected (context "after_restart") in
+    # the score stream and the Logs, so the decision engine does not remediate a pod that is still
+    # settling. They are not suppressed: a restart caused by a real fault must still alarm.
+    restart_label_seconds: float = 600.0
     score_push_every: int = 10            # push one anomaly_score message every N events per service
+    # Lifecycle checkpoints (docs/adr/0006): "auto" keeps them in live mode only (a replay demo should
+    # start from its warm-up every time), "on" and "off" force it. Dirty services are saved every
+    # CHECKPOINT_EVERY_S seconds, every service every CHECKPOINT_ALL_EVERY_S, and all on shutdown.
+    model_checkpoints: str = "auto"
+    live_start_retry_seconds: int = 30    # live start: retry the fleet build until Prometheus has history
+    checkpoint_every_s: float = 30.0
+    checkpoint_all_every_s: float = 300.0
 
     # Logs page: follow these containers' output (service name shown on the page -> container).
     follow_container_logs: bool = True
@@ -74,6 +85,21 @@ class Settings(BaseSettings):
     # days of it (60 min); below that the lifecycle runs without them (logged).
     live_warmup_minutes: float = 60.0
     live_min_warmup_minutes: float = 10.0
+    # Where the dashboard links to for the full Grafana dashboards (up.ps1 forwards it to :3000).
+    grafana_url: str = "http://localhost:3000"
+
+    # Authentication and tenancy (docs/adr/0014, 0015). "off": no login, one implicit tenant
+    # "default" (the laptop demo and the tests). "jwt": every request carries a JWT from the auth
+    # service (services/auth); its `org` claim is the tenant and its `role` what the caller may do.
+    auth_mode: str = "off"
+    auth_jwks_url: str = "http://localhost:8010/api/auth/jwks"
+    auth_issuer: str = "http://localhost:5173"
+    auth_audience: str = "sharp-ml-backend"
+    # The organization that owns the monitored cluster in live mode (its Better Auth organization
+    # id); only that tenant sees the live fleet. Unset in replay mode: every organization gets its
+    # own demo fleet, started on first use, at most MAX_TENANTS of them (memory bound).
+    primary_tenant: str = ""
+    max_tenants: int = 3
 
     # Set false in tests to skip the replay loop and backing services.
     start_replay: bool = True

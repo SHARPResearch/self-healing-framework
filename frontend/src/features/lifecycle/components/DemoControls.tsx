@@ -1,3 +1,4 @@
+import { AUTH_ENABLED, useSession } from "@/lib/auth";
 import { useState } from "react";
 import { Pause, Play, RotateCcw, TrendingDown, TrendingUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -93,15 +94,26 @@ export function DemoControls() {
           ? `Online Boutique (${health?.namespace}) · scrape every ${health?.scrapeSeconds}s · one lifecycle day = ${health?.lifecycleDayMinutes} min${traffic ? ` · ${traffic}` : ""}`
           : `One lifecycle day = 1440 events ≈ ${health ? Math.round(1440 / Math.max(health.eventsPerSec, 1)) : 24}s`}
       </span>
-      <label className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
-        Operator
-        <Input
-          value={operator}
-          onChange={(e) => setOperator(e.target.value)}
-          className="h-7 w-32 text-xs"
-          aria-label="Operator name recorded in the audit trail"
-        />
-      </label>
+      {AUTH_ENABLED ? (
+        // with accounts on, ml-backend records the signed-in user, never a typed name
+        <ActingAs />
+      ) : (
+        <label className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
+          Operator
+          <Input
+            value={operator}
+            onChange={(e) => setOperator(e.target.value)}
+            className="h-7 w-32 text-xs"
+            aria-label="Operator name recorded in the audit trail"
+          />
+        </label>
+      )}
     </div>
   );
+}
+
+/** With accounts on: whose name the audit trail records for actions taken here. */
+function ActingAs() {
+  const email = useSession().data?.user.email;
+  return <span className="ml-auto text-xs text-muted-foreground">Acting as {email ?? "…"}</span>;
 }

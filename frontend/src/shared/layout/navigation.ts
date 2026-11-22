@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   Bell,
   Bot,
+  Building2,
   GitBranch,
   GitCompareArrows,
   ScrollText,
@@ -65,6 +66,9 @@ export const navGroups: NavGroup[] = [
   },
   {
     label: "Administration",
-    items: [{ label: "Settings", to: "/settings", icon: Settings }],
+    items: [
+      { label: "Organization", to: "/organization", icon: Building2 },
+      { label: "Settings", to: "/settings", icon: Settings },
+    ],
   },
 ];

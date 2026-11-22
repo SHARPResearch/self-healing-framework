@@ -105,7 +105,10 @@ class ServiceRuntime:
     manager: DynamicModelManager
     changes: QueueChangeEventSource
     outbox: Outbox
-    test_rows: list
+    # the replay window as one float array (a list of row dicts cost ~15 MB per service; this is
+    # ~2 MB); next_row builds the dict for the current row only
+    test_values: np.ndarray
+    test_columns: list
     test_df: pd.DataFrame
     medians: dict
     cursor: int = 0
@@ -182,7 +185,8 @@ class ServiceFleet:
             mgr.warm_up(train.tail(self.warm_up_rows).to_dict(orient="records"))
         rt = ServiceRuntime(service_id=service_id, display_name=name, entity=entity, manager=mgr,
                             changes=changes, outbox=outbox,
-                            test_rows=test.to_dict(orient="records"), test_df=test, window_start=start,
+                            test_values=test.to_numpy(dtype=float), test_columns=list(test.columns),
+                            test_df=test, window_start=start,
                             medians=train.median().to_dict())
         rt.rng.seed(service_id)
         rt.restored = restored
@@ -214,9 +218,9 @@ class ServiceFleet:
     def next_row(self, rt: ServiceRuntime) -> dict:
         # Ping-pong through the replay window (forward, then backward) so an endless replay has
         # no wrap-around jump that would itself look like a regime change.
-        n = len(rt.test_rows)
+        n = len(rt.test_values)
         i = rt.cursor % max(1, 2 * n - 2)
-        x = dict(rt.test_rows[i if i < n else 2 * n - 2 - i])
+        x = dict(zip(rt.test_columns, rt.test_values[i if i < n else 2 * n - 2 - i].tolist()))
         rt.cursor += 1
         step = rt.manager.step + 1
         rt.injections = [i for i in rt.injections if i.until_step is None or step <= i.until_step]

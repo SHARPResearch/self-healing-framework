@@ -16,6 +16,7 @@ from dataclasses import replace
 from typing import Optional
 
 import app.core.pipeline_path  # noqa: F401
+import numpy as np
 import pandas as pd
 from src.change_events import QueueChangeEventSource
 from src.lifecycle_manager import DynamicModelManager, LifecycleConfig
@@ -103,7 +104,7 @@ class LiveFleet(ServiceFleet):
             mgr.warm_up(rows)
         rt = ServiceRuntime(service_id=name, display_name=display_name(name),
                             entity=f"{settings.k8s_namespace}/{name}", manager=mgr,
-                            changes=changes, outbox=outbox, test_rows=[], test_df=pd.DataFrame(),
+                            changes=changes, outbox=outbox, test_values=np.empty((0, 0)), test_columns=[], test_df=pd.DataFrame(),
                             medians={})
         rt.rng.seed(name)
         rt.restored = rows is None

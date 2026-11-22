@@ -146,7 +146,10 @@ export interface BackendHealth {
   lifecycleDayMinutes?: number | null;
   /** Live mode: where the full Grafana dashboards are (up.ps1 forwards it to :3000). */
   grafanaUrl?: string | null;
-  store: "timescaledb" | "memory";
+  store: "timescaledb" | "postgres" | "memory";
+  /** "jwt" when accounts are on (docs/adr/0014); tenant is the caller's organization id. */
+  auth?: "off" | "jwt";
+  tenant?: string;
   db: boolean;
   redis: boolean;
   services: number;

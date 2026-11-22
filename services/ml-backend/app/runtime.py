@@ -47,10 +47,19 @@ LIFECYCLE_TYPES = {"quarantine_opened", "quarantine_look", "change_observed", "l
 
 
 class Runtime:
-    def __init__(self, fleet: Optional[ServiceFleet] = None):
+    """
+    One tenant's fleet and everything it writes (docs/adr/0015). The platform runtime (tenant
+    "default", or PRIMARY_TENANT in live mode) also collects the backend's own logs and container
+    logs; a tenant runtime created on demand (app/tenancy.py) only has its own lifecycle.
+    """
+
+    def __init__(self, fleet: Optional[ServiceFleet] = None, tenant: str = "default",
+                 platform: bool = True):
+        self.tenant = tenant
+        self.platform = platform
         self.fleet = fleet or make_fleet()
-        self.store: MemoryStore = MemoryStore()
-        self.bus = Bus()
+        self.store: MemoryStore = MemoryStore(tenant=tenant)
+        self.bus = Bus(tenant)
         self.events_per_sec = settings.replay_events_per_sec
         self.paused = False
         self.tick = 0
@@ -58,7 +67,7 @@ class Runtime:
         self._task: Optional[asyncio.Task] = None
         self._pending_rows: list[dict] = []
         self._last_flush = time.monotonic()
-        self.hub = LogHub(http_access=settings.log_http_access)
+        self.hub = LogHub(http_access=settings.log_http_access, capture_app=platform)
         self.hub.install()                          # catch uvicorn's own startup lines too
         self._alarms: dict[str, AlarmLog] = {}
         self.changes = None                         # live: Kubernetes deployment watcher fan-out
@@ -92,10 +101,20 @@ class Runtime:
         return mode == "on" or (mode == "auto" and self.live)
 
     # -- lifecycle ---------------------------------------------------------------------------------
-    async def start(self, backing_services: bool = True, replay: bool = True) -> None:
+    def set_tenant(self, tenant: str) -> None:
+        """Re-home the (not yet started) runtime, e.g. the live fleet onto PRIMARY_TENANT."""
+        self.tenant = tenant
+        self.store = MemoryStore(tenant=tenant)
+        self.bus = Bus(tenant)
+
+    async def start(self, backing_services: bool = True, replay: bool = True,
+                    store: Optional[MemoryStore] = None) -> None:
         self.hub.start()
+        if store is not None:
+            self.store = store                      # a tenant store on the shared pool
+        elif backing_services:
+            self.store = await make_store(settings.database_url, self.tenant)
         if backing_services:
-            self.store = await make_store(settings.database_url)
             await self.bus.start(settings.redis_url)
         if self.checkpoints_enabled:
             self.fleet.checkpoints = await self.store.load_checkpoints()
@@ -126,9 +145,9 @@ class Runtime:
     async def _serve(self, backing_services: bool, replay: bool) -> None:
         self._log_warm_up()
         await self.drain_all()                      # warm-up versions and transitions
-        if backing_services and settings.follow_container_logs:
+        if backing_services and settings.follow_container_logs and self.platform:
             self.hub.follow_containers(settings.log_containers, await self.store.latest_log_times())
-        if self.live and backing_services:          # tests run live mode without a cluster
+        if self.live and backing_services and self.platform:   # tests run live mode without a cluster
             self._start_live_integrations()
         self.ready = True
         metrics.ready.set(1)
@@ -286,7 +305,7 @@ class Runtime:
     async def _after_step(self, rt: ServiceRuntime, x: dict, res, display: float, now: datetime) -> None:
         after_restart = res.step <= rt.restart_until_step
         progress = rt.manager.quarantine_progress()
-        metrics.observe_step(rt.service_id, score=display, alarming=bool(res.alarm),
+        metrics.observe_step(self.tenant, rt.service_id, score=display, alarming=bool(res.alarm),
                              after_restart=after_restart, version=res.version, current_phase=res.phase,
                              progress=(progress["seen"] / max(progress["length"], 1)) if progress else 0.0)
         if res.step % self.persist_every == 0 or res.alarm:
@@ -405,7 +424,7 @@ class Runtime:
                             else f"v{payload['to_version']}") + f": {payload['reason']}",
                          "warn" if payload["transition"] == "rollback" else "info",
                          {"transition": payload["transition"], "to_version": payload["to_version"]})
-                metrics.transitions.labels(rt.service_id, str(payload["transition"])).inc()
+                metrics.transitions.labels(self.tenant, rt.service_id, str(payload["transition"])).inc()
                 await self.store.write_transition(payload)
                 await self.bus.publish(envelope("model_transition", rt.service_id, payload))
                 if payload["transition"] in ("promote", "rollback"):
@@ -417,7 +436,7 @@ class Runtime:
                 event = payload.get("event")
                 data = {k: v for k, v in payload.items() if k != "event"}
                 self._log_lifecycle(rt, event, data)
-                metrics.observe_lifecycle(rt.service_id, event, data)
+                metrics.observe_lifecycle(self.tenant, rt.service_id, event, data)
                 self._mark(rt, event, data)
                 if event == "lifecycle_decision":
                     await self.store.write_decision(data)

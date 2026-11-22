@@ -271,5 +271,5 @@ def test_metrics_endpoint_exposes_scoring_and_lifecycle_counters(client):
                  "sharp_model_version", "sharp_lifecycle_phase", "sharp_ready 1.0"):
         assert name in text, name
     scored = [line for line in text.splitlines()
-              if line.startswith(f'sharp_events_scored_total{{service="{SERVICE}"}}')]
+              if line.startswith(f'sharp_events_scored_total{{service="{SERVICE}",tenant="default"}}')]
     assert scored and float(scored[0].split()[-1]) >= 50

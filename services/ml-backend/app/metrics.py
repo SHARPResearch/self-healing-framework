@@ -8,7 +8,8 @@ Two audiences:
   as sharp_model_transitions_total. The lifecycle outcomes (promote, hold, ask, resume) are
   sharp_lifecycle_decisions_total.
 
-Labels are bounded: `service` is one of the monitored Deployments (about ten), the verdict,
+Labels are bounded: `tenant` is an organization (at most MAX_TENANTS fleets), `service` one of
+its monitored services (about ten), the verdict,
 action, transition, trigger and change kind come from fixed vocabularies in ml-pipeline.
 The registry is a private one, so test runs and module reloads never collide on metric names.
 """
@@ -21,39 +22,39 @@ REGISTRY = CollectorRegistry(auto_describe=True)
 PHASES = ("stable", "quarantine", "deciding")
 
 events_scored = Counter(
-    "sharp_events_scored", "Telemetry events scored by the serving model", ["service"], registry=REGISTRY)
+    "sharp_events_scored", "Telemetry events scored by the serving model", ["tenant", "service"], registry=REGISTRY)
 alarm_events = Counter(
-    "sharp_alarm_events", "Scored events at or above the serving model's threshold", ["service"],
+    "sharp_alarm_events", "Scored events at or above the serving model's threshold", ["tenant", "service"],
     registry=REGISTRY)
 anomaly_score = Gauge(
     "sharp_anomaly_score", "Latest anomaly score, normalised so 0.5 is the calibrated threshold",
-    ["service"], registry=REGISTRY)
-alarm = Gauge("sharp_alarm", "1 while the latest event alarms", ["service"], registry=REGISTRY)
+    ["tenant", "service"], registry=REGISTRY)
+alarm = Gauge("sharp_alarm", "1 while the latest event alarms", ["tenant", "service"], registry=REGISTRY)
 expected_alarm = Gauge(
     "sharp_alarm_after_restart", "1 while the service is inside its post-restart settling window "
-    "(alarms there are labelled expected, docs/adr/0008)", ["service"], registry=REGISTRY)
+    "(alarms there are labelled expected, docs/adr/0008)", ["tenant", "service"], registry=REGISTRY)
 model_version = Gauge(
-    "sharp_model_version", "Production model version serving the service", ["service"], registry=REGISTRY)
+    "sharp_model_version", "Production model version serving the service", ["tenant", "service"], registry=REGISTRY)
 phase = Gauge(
-    "sharp_lifecycle_phase", "1 for the lifecycle phase the service is in", ["service", "phase"],
+    "sharp_lifecycle_phase", "1 for the lifecycle phase the service is in", ["tenant", "service", "phase"],
     registry=REGISTRY)
 quarantine_progress = Gauge(
     "sharp_quarantine_progress_ratio", "Share of the open quarantine's evidence collected (0 when none)",
-    ["service"], registry=REGISTRY)
+    ["tenant", "service"], registry=REGISTRY)
 decisions = Counter(
     "sharp_lifecycle_decisions", "Closed quarantines by attributed verdict and action",
-    ["service", "verdict", "action"], registry=REGISTRY)
+    ["tenant", "service", "verdict", "action"], registry=REGISTRY)
 quarantines = Counter(
-    "sharp_quarantines_opened", "Quarantines opened, by trigger", ["service", "trigger"], registry=REGISTRY)
+    "sharp_quarantines_opened", "Quarantines opened, by trigger", ["tenant", "service", "trigger"], registry=REGISTRY)
 transitions = Counter(
     "sharp_model_transitions", "Model registry transitions (register, promote, rollback, checkpoint)",
-    ["service", "transition"], registry=REGISTRY)
+    ["tenant", "service", "transition"], registry=REGISTRY)
 changes = Counter(
-    "sharp_change_events", "Change events that reached the lifecycle, by kind", ["service", "kind"],
+    "sharp_change_events", "Change events that reached the lifecycle, by kind", ["tenant", "service", "kind"],
     registry=REGISTRY)
 queries = Counter(
     "sharp_operator_queries", "Operator queries by outcome (asked, new_normal, incident, expired)",
-    ["service", "outcome"], registry=REGISTRY)
+    ["tenant", "service", "outcome"], registry=REGISTRY)
 
 # Scoring one event is ~0.03 ms (p50) in the benchmark; the buckets resolve that and the 5 ms bound.
 score_seconds = Histogram(
@@ -68,33 +69,33 @@ ready = Gauge("sharp_ready", "1 once the fleet is built and scoring", registry=R
 services = Gauge("sharp_services", "Monitored services", registry=REGISTRY)
 
 
-def observe_step(service: str, *, score: float, alarming: bool, after_restart: bool, version: int,
+def observe_step(tenant: str, service: str, *, score: float, alarming: bool, after_restart: bool, version: int,
                  current_phase: str, progress: float) -> None:
-    events_scored.labels(service).inc()
+    events_scored.labels(tenant, service).inc()
     if alarming:
-        alarm_events.labels(service).inc()
-    anomaly_score.labels(service).set(score)
-    alarm.labels(service).set(1 if alarming else 0)
-    expected_alarm.labels(service).set(1 if after_restart else 0)
-    model_version.labels(service).set(version)
+        alarm_events.labels(tenant, service).inc()
+    anomaly_score.labels(tenant, service).set(score)
+    alarm.labels(tenant, service).set(1 if alarming else 0)
+    expected_alarm.labels(tenant, service).set(1 if after_restart else 0)
+    model_version.labels(tenant, service).set(version)
     for p in PHASES:
-        phase.labels(service, p).set(1 if p == current_phase else 0)
-    quarantine_progress.labels(service).set(progress)
+        phase.labels(tenant, service, p).set(1 if p == current_phase else 0)
+    quarantine_progress.labels(tenant, service).set(progress)
 
 
-def observe_lifecycle(service: str, event: str, data: dict) -> None:
+def observe_lifecycle(tenant: str, service: str, event: str, data: dict) -> None:
     if event == "quarantine_opened":
-        quarantines.labels(service, str(data.get("trigger") or "unknown")).inc()
+        quarantines.labels(tenant, service, str(data.get("trigger") or "unknown")).inc()
     elif event == "lifecycle_decision":
-        decisions.labels(service, str(data.get("verdict")), str(data.get("action"))).inc()
+        decisions.labels(tenant, service, str(data.get("verdict")), str(data.get("action"))).inc()
     elif event == "change_observed":
-        changes.labels(service, str(data.get("kind") or "deployment")).inc()
+        changes.labels(tenant, service, str(data.get("kind") or "deployment")).inc()
     elif event == "operator_query":
-        queries.labels(service, "asked").inc()
+        queries.labels(tenant, service, "asked").inc()
     elif event == "query_answered":
-        queries.labels(service, str(data.get("answer") or "answered")).inc()
+        queries.labels(tenant, service, str(data.get("answer") or "answered")).inc()
     elif event == "query_expired":
-        queries.labels(service, "expired").inc()
+        queries.labels(tenant, service, "expired").inc()
 
 
 def render() -> bytes:

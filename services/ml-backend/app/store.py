@@ -7,6 +7,10 @@ in-process lists: the fallback when the database is unreachable, and what the te
 
 Writes are queued by the replay loop and flushed in batches once a second, so scoring never waits
 on the database.
+
+Tenancy (docs/adr/0015): a store object belongs to one tenant (an organization). Every row it
+writes carries that `tenant_id` and every query it runs filters on it, so a tenant's runtime can
+only ever see its own data. Tenants share one connection pool (PgStore.for_tenant).
 """
 
 import json
@@ -45,10 +49,16 @@ def _bucket_seconds(start: datetime, end: datetime, buckets: int = 60) -> int:
     return max(1, int(round(span / buckets)))
 
 
+DEFAULT_TENANT = "default"
+METRIC_RETENTION_HOURS = 6        # without TimescaleDB, PgStore.prune enforces these itself
+LOG_RETENTION_DAYS = 7
+
+
 class MemoryStore:
     kind = "memory"
 
-    def __init__(self, limit: int = 50000):
+    def __init__(self, limit: int = 50000, tenant: str = DEFAULT_TENANT):
+        self.tenant = tenant
         self.metric_events: deque = deque(maxlen=limit)
         self.decisions: deque = deque(maxlen=5000)
         self.transitions: deque = deque(maxlen=5000)
@@ -185,19 +195,32 @@ class PgStore(MemoryStore):
 
     kind = "timescaledb"
 
-    def __init__(self, dsn: str):
-        super().__init__()
+    def __init__(self, dsn: str, tenant: str = DEFAULT_TENANT):
+        super().__init__(tenant=tenant)
         self.dsn = dsn
         self.pool = None
+        self.timescale = False
+        self.owns_pool = True
+
+    def for_tenant(self, tenant: str) -> "PgStore":
+        """A store for another tenant on this store's connection pool."""
+        other = PgStore(self.dsn, tenant)
+        other.pool, other.timescale, other.owns_pool = self.pool, self.timescale, False
+        other.kind = self.kind
+        return other
 
     async def start(self) -> bool:
         import asyncpg
 
         try:
-            self.pool = await asyncpg.create_pool(self.dsn, min_size=1, max_size=4, timeout=3)
+            # Render's managed Postgres needs TLS (sslmode=require in its URL); asyncpg reads it there
+            self.pool = await asyncpg.create_pool(self.dsn, min_size=1, max_size=6, timeout=5)
             async with self.pool.acquire() as conn:
                 await conn.execute(SCHEMA_SQL.read_text(encoding="utf-8"))
-            logger.info("store: TimescaleDB ready")
+                self.timescale = bool(await conn.fetchval(
+                    "SELECT 1 FROM pg_extension WHERE extname = 'timescaledb'"))
+            self.kind = "timescaledb" if self.timescale else "postgres"
+            logger.info("store: %s ready", "TimescaleDB" if self.timescale else "PostgreSQL (no TimescaleDB)")
             return True
         except Exception as exc:  # noqa: BLE001
             logger.warning("store: database unavailable (%s), using in-memory store", exc)
@@ -205,8 +228,21 @@ class PgStore(MemoryStore):
             return False
 
     async def stop(self) -> None:
-        if self.pool is not None:
+        if self.pool is not None and self.owns_pool:
             await self.pool.close()
+
+    async def prune(self) -> None:
+        """Retention on plain PostgreSQL, where no TimescaleDB policy drops old chunks."""
+        if self.pool is None or self.timescale or not self.owns_pool:
+            return
+        try:
+            async with self.pool.acquire() as conn:
+                await conn.execute("DELETE FROM metric_events WHERE time < now() - make_interval(hours => $1)",
+                                   METRIC_RETENTION_HOURS)
+                await conn.execute("DELETE FROM service_logs WHERE time < now() - make_interval(days => $1)",
+                                   LOG_RETENTION_DAYS)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("store: prune failed (%s)", exc)
 
     async def _exec_many(self, sql: str, args: list[tuple]) -> None:
         if self.pool is None or not args:
@@ -220,48 +256,49 @@ class PgStore(MemoryStore):
     async def write_metric_events(self, rows: list[dict]) -> None:
         await super().write_metric_events(rows)
         await self._exec_many(
-            "INSERT INTO metric_events (time, service_id, anomaly_score, severity, drift_detected,"
+            "INSERT INTO metric_events (tenant_id, time, service_id, anomaly_score, severity, drift_detected,"
             " features, alarm, threshold, model_version, phase)"
-            " VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10)",
+            " VALUES ($11,$1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10)",
             [(r["time"], r["service_id"], r["anomaly_score"], r["severity"], r["drift_detected"],
-              json.dumps(r["features"]), r["alarm"], r["threshold"], r["model_version"], r["phase"])
-             for r in rows])
+              json.dumps(r["features"]), r["alarm"], r["threshold"], r["model_version"], r["phase"],
+              self.tenant) for r in rows])
 
     async def write_decision(self, d: dict) -> None:
         await super().write_decision(d)
         await self._exec_many(
-            "INSERT INTO lifecycle_decisions (time, service_id, step, action, verdict, trigger,"
-            " reason, evidence, query_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9)",
+            "INSERT INTO lifecycle_decisions (tenant_id, time, service_id, step, action, verdict, trigger,"
+            " reason, evidence, query_id) VALUES ($10,$1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9)",
             [(_now(), d["service_id"], d.get("step"), d.get("action"), d.get("verdict"),
               d.get("trigger"), d.get("reason"), json.dumps(d.get("evidence") or {}, default=str),
-              d.get("query_id"))])
+              d.get("query_id"), self.tenant)])
 
     async def write_transition(self, t: dict) -> None:
         await super().write_transition(t)
         await self._exec_many(
-            "INSERT INTO lifecycle_transitions (service_id, seq, time, transition, from_version,"
-            " to_version, reason, evidence) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb)"
-            " ON CONFLICT (service_id, seq) DO NOTHING",
+            "INSERT INTO lifecycle_transitions (tenant_id, service_id, seq, time, transition, from_version,"
+            " to_version, reason, evidence) VALUES ($9,$1,$2,$3,$4,$5,$6,$7,$8::jsonb)"
+            " ON CONFLICT (tenant_id, service_id, seq) DO NOTHING",
             [(t["service_id"], t["seq"], _now(), t["transition"], t["from_version"],
-              t["to_version"], t["reason"], json.dumps(t["evidence"], default=str))])
+              t["to_version"], t["reason"], json.dumps(t["evidence"], default=str), self.tenant)])
 
     async def write_version(self, v: dict) -> None:
         await super().write_version(v)
         await self._exec_many(
-            "INSERT INTO model_versions (service_id, version, status, threshold, kind, verdict,"
-            " reason, tags) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb)"
-            " ON CONFLICT (service_id, version) DO UPDATE SET status = EXCLUDED.status",
+            "INSERT INTO model_versions (tenant_id, service_id, version, status, threshold, kind, verdict,"
+            " reason, tags) VALUES ($9,$1,$2,$3,$4,$5,$6,$7,$8::jsonb)"
+            " ON CONFLICT (tenant_id, service_id, version) DO UPDATE SET status = EXCLUDED.status",
             [(v["service_id"], v["version"], v["status"], v["threshold"], v.get("kind"),
-              v.get("verdict"), v.get("reason"), json.dumps(v.get("tags") or {}, default=str))])
+              v.get("verdict"), v.get("reason"), json.dumps(v.get("tags") or {}, default=str),
+              self.tenant)])
 
     async def save_checkpoint(self, c: dict) -> None:
         await super().save_checkpoint(c)
         await self._exec_many(
-            "INSERT INTO model_checkpoints (service_id, source, saved_at, step, production_version, blob)"
-            " VALUES ($1,$2,now(),$3,$4,$5) ON CONFLICT (service_id) DO UPDATE SET source = EXCLUDED.source,"
-            " saved_at = EXCLUDED.saved_at, step = EXCLUDED.step,"
+            "INSERT INTO model_checkpoints (tenant_id, service_id, source, saved_at, step, production_version, blob)"
+            " VALUES ($6,$1,$2,now(),$3,$4,$5) ON CONFLICT (tenant_id, service_id) DO UPDATE SET"
+            " source = EXCLUDED.source, saved_at = EXCLUDED.saved_at, step = EXCLUDED.step,"
             " production_version = EXCLUDED.production_version, blob = EXCLUDED.blob",
-            [(c["service_id"], c["source"], c["step"], c["production_version"], c["blob"])])
+            [(c["service_id"], c["source"], c["step"], c["production_version"], c["blob"], self.tenant)])
 
     async def load_checkpoints(self) -> dict[str, dict]:
         if self.pool is None:
@@ -269,7 +306,8 @@ class PgStore(MemoryStore):
         try:
             async with self.pool.acquire() as conn:
                 rows = await conn.fetch(
-                    "SELECT service_id, source, step, production_version, blob FROM model_checkpoints")
+                    "SELECT service_id, source, step, production_version, blob FROM model_checkpoints"
+                    " WHERE tenant_id = $1", self.tenant)
         except Exception as exc:  # noqa: BLE001 - no checkpoints just means warming up
             logger.warning("store: could not read checkpoints (%s); warming up", exc)
             return {}
@@ -281,31 +319,30 @@ class PgStore(MemoryStore):
             return
         try:
             async with self.pool.acquire() as conn:
-                await conn.execute("DELETE FROM model_checkpoints")
+                await conn.execute("DELETE FROM model_checkpoints WHERE tenant_id = $1", self.tenant)
         except Exception as exc:  # noqa: BLE001
             logger.warning("store: could not clear checkpoints (%s)", exc)
 
     async def write_query(self, q: dict) -> None:
         await super().write_query(q)
         await self._exec_many(
-            "INSERT INTO operator_queries (query_id, service_id, status, answer, operator,"
-            " answered_at, reason, evidence) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb)"
-            " ON CONFLICT (query_id) DO UPDATE SET status = EXCLUDED.status,"
+            "INSERT INTO operator_queries (tenant_id, query_id, service_id, status, answer, operator,"
+            " answered_at, reason, evidence) VALUES ($9,$1,$2,$3,$4,$5,$6,$7,$8::jsonb)"
+            " ON CONFLICT (tenant_id, query_id) DO UPDATE SET status = EXCLUDED.status,"
             " answer = EXCLUDED.answer, operator = EXCLUDED.operator,"
             " answered_at = EXCLUDED.answered_at",
             [(q["query_id"], q["service_id"], q["status"], q.get("answer"), q.get("operator"),
               _now() if q["status"] == "answered" else None, q.get("reason"),
-              json.dumps(q.get("evidence") or {}, default=str))])
+              json.dumps(q.get("evidence") or {}, default=str), self.tenant)])
 
     async def write_change(self, c: dict) -> None:
         await super().write_change(c)
         await self._exec_many(
-            "INSERT INTO change_events (time, service_id, kind, detail) VALUES ($1,$2,$3,$4::jsonb)",
-            [(_now(), c["service_id"], c["kind"], json.dumps(c.get("detail") or {}, default=str))])
+            "INSERT INTO change_events (tenant_id, time, service_id, kind, detail) VALUES ($5,$1,$2,$3,$4::jsonb)",
+            [(_now(), c["service_id"], c["kind"], json.dumps(c.get("detail") or {}, default=str), self.tenant)])
 
     # -- logs ------------------------------------------------------------------------------------
-    @staticmethod
-    def _log_where(f: dict, args: list, since=None, until=None, before=None) -> str:
+    def _log_where(self, f: dict, args: list, since=None, until=None, before=None) -> str:
         clauses: list[str] = []
 
         def add(sql: str, *values) -> None:
@@ -313,6 +350,7 @@ class PgStore(MemoryStore):
             args.extend(values)
             clauses.append(sql.format(*[f"${base + i + 1}" for i in range(len(values))]))
 
+        add("tenant_id = {}", self.tenant)
         if since is not None:
             add("time >= {}", since)
         if until is not None:
@@ -328,7 +366,7 @@ class PgStore(MemoryStore):
             add("source = ANY({})", f["source"])
         for t in f["text"]:
             add("(message ILIKE {} OR service ILIKE {})", f"%{t}%", f"%{t}%")
-        return (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        return " WHERE " + " AND ".join(clauses)
 
     async def write_logs(self, lines: list[dict]) -> None:
         await super().write_logs(lines)
@@ -337,11 +375,11 @@ class PgStore(MemoryStore):
         try:                                  # debug only: a warning here would itself be a log line
             async with self.pool.acquire() as conn:
                 await conn.executemany(
-                    "INSERT INTO service_logs (time, id, service, service_id, source, level, message,"
-                    " attrs) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb) ON CONFLICT DO NOTHING",
+                    "INSERT INTO service_logs (tenant_id, time, id, service, service_id, source, level, message,"
+                    " attrs) VALUES ($9,$1,$2,$3,$4,$5,$6,$7,$8::jsonb) ON CONFLICT DO NOTHING",
                     [(ln["time"], ln["id"], ln["service"], ln.get("service_id"), ln["source"],
-                      ln["level"], ln["message"], json.dumps(ln.get("attrs") or {}, default=str))
-                     for ln in lines])
+                      ln["level"], ln["message"], json.dumps(ln.get("attrs") or {}, default=str),
+                      self.tenant) for ln in lines])
         except Exception as exc:  # noqa: BLE001
             logger.debug("store: log write failed (%s)", exc)
 
@@ -351,7 +389,8 @@ class PgStore(MemoryStore):
             return
         try:
             async with self.pool.acquire() as conn:
-                await conn.execute("DELETE FROM service_logs WHERE source = $1", source)
+                await conn.execute("DELETE FROM service_logs WHERE tenant_id = $1 AND source = $2",
+                                   self.tenant, source)
         except Exception as exc:  # noqa: BLE001
             logger.debug("store: clearing logs failed (%s)", exc)
 
@@ -405,7 +444,7 @@ class PgStore(MemoryStore):
             async with self.pool.acquire() as conn:
                 rows = await conn.fetch(
                     "SELECT service, min(source) AS source, count(*) AS count FROM service_logs"
-                    " GROUP BY service ORDER BY service")
+                    " WHERE tenant_id = $1 GROUP BY service ORDER BY service", self.tenant)
             return [{"service": r["service"], "source": r["source"], "count": r["count"]} for r in rows]
         except Exception as exc:  # noqa: BLE001
             logger.warning("store: log services failed (%s)", exc)
@@ -416,7 +455,8 @@ class PgStore(MemoryStore):
             return await super().latest_log_times()
         try:
             async with self.pool.acquire() as conn:
-                rows = await conn.fetch("SELECT service, max(time) AS t FROM service_logs GROUP BY service")
+                rows = await conn.fetch("SELECT service, max(time) AS t FROM service_logs"
+                                        " WHERE tenant_id = $1 GROUP BY service", self.tenant)
             return {r["service"]: r["t"] for r in rows}
         except Exception:  # noqa: BLE001
             return await super().latest_log_times()
@@ -426,10 +466,10 @@ class PgStore(MemoryStore):
             return await super().score_trend(minutes)
         try:
             async with self.pool.acquire() as conn:
-                rows = await conn.fetch(
-                    "SELECT time_bucket('1 minute', time) AS bucket, avg(anomaly_score) AS score"
-                    " FROM metric_events WHERE time > now() - make_interval(mins => $1)"
-                    " GROUP BY bucket ORDER BY bucket", minutes)
+                rows = await conn.fetch(        # date_trunc, not time_bucket: works without TimescaleDB
+                    "SELECT date_trunc('minute', time) AS bucket, avg(anomaly_score) AS score"
+                    " FROM metric_events WHERE tenant_id = $2 AND time > now() - make_interval(mins => $1)"
+                    " GROUP BY bucket ORDER BY bucket", minutes, self.tenant)
             return [{"bucket": r["bucket"].isoformat(), "score": float(r["score"])} for r in rows]
         except Exception as exc:  # noqa: BLE001
             logger.warning("store: trend query failed (%s)", exc)
@@ -443,15 +483,16 @@ class PgStore(MemoryStore):
                 out = {}
                 for table in ("metric_events", "lifecycle_decisions", "lifecycle_transitions",
                               "operator_queries", "model_versions", "service_logs"):
-                    out[table] = await conn.fetchval(f"SELECT count(*) FROM {table}")
+                    out[table] = await conn.fetchval(f"SELECT count(*) FROM {table} WHERE tenant_id = $1",
+                                                     self.tenant)
                 return out
         except Exception:  # noqa: BLE001
             return await super().counts()
 
 
-async def make_store(dsn: Optional[str]) -> MemoryStore:
+async def make_store(dsn: Optional[str], tenant: str = DEFAULT_TENANT) -> MemoryStore:
     if dsn:
-        store = PgStore(dsn)
+        store = PgStore(dsn, tenant)
         if await store.start():
             return store
-    return MemoryStore()
+    return MemoryStore(tenant=tenant)

@@ -37,7 +37,7 @@ async def health() -> dict:
             "lifecycleDayMinutes": settings.live_lifecycle_day_minutes if runtime.live else None,
             "grafanaUrl": settings.grafana_url if runtime.live else None,
             "store": runtime.store.kind,
-            "db": runtime.store.kind == "timescaledb" and getattr(runtime.store, "pool", None) is not None,
+            "db": getattr(runtime.store, "pool", None) is not None,
             "redis": runtime.bus.redis_ok, "services": len(runtime.fleet.services),
             "tick": runtime.tick, "eventsPerSec": runtime.events_per_sec, "paused": runtime.paused,
             "uptimeS": round(time.time() - runtime.started_at),

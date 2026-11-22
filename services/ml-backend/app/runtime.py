@@ -71,6 +71,7 @@ class Runtime:
         self.start_error: Optional[str] = None      # why a live start is still waiting
         self._starter: Optional[asyncio.Task] = None
         self._last_checkpoint = self._last_checkpoint_all = time.monotonic()
+        self._last_prune = time.monotonic()
 
     @property
     def live(self) -> bool:
@@ -323,6 +324,9 @@ class Runtime:
     # -- checkpoints (docs/adr/0006) -----------------------------------------------------------------
     async def maybe_checkpoint(self) -> None:
         now = time.monotonic()
+        if now - self._last_prune >= 600 and hasattr(self.store, "prune"):
+            self._last_prune = now
+            await self.store.prune()          # retention without TimescaleDB (docs/adr/0016)
         if now - self._last_checkpoint_all >= settings.checkpoint_all_every_s:
             self._last_checkpoint = self._last_checkpoint_all = now
             await self.save_checkpoints(every=True)

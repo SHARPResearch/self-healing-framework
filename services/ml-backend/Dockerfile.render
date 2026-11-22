@@ -1,0 +1,57 @@
+# ml-backend for Render: the SMD replay demo with accounts on (docs/Deployment_Render.md).
+#
+# Render has no Kubernetes, so the live Online Boutique mode is not available there; this image
+# replays the three SMD machines the demo services use, baked in at build time (the dataset is
+# not in git). Everything else is the cluster image (Dockerfile): same code, same non-root user.
+#
+#   docker build -f services/ml-backend/Dockerfile.render -t sharp/ml-backend:render .
+
+# -- the demo's SMD windows: machine-1-2, machine-3-8 and machine-3-10, train and test ----------
+FROM alpine/git:v2.47.2 AS smd
+WORKDIR /smd
+RUN git clone --depth 1 --filter=blob:none --sparse https://github.com/NetManAIOps/OmniAnomaly.git repo \
+ && cd repo \
+ && git sparse-checkout set --no-cone \
+      ServerMachineDataset/train/machine-1-2.txt ServerMachineDataset/test/machine-1-2.txt \
+      ServerMachineDataset/train/machine-3-8.txt ServerMachineDataset/test/machine-3-8.txt \
+      ServerMachineDataset/train/machine-3-10.txt ServerMachineDataset/test/machine-3-10.txt \
+ && mkdir -p /smd/raw && cp -r ServerMachineDataset/train ServerMachineDataset/test /smd/raw/
+
+FROM ghcr.io/astral-sh/uv:0.11.24 AS uv
+
+FROM python:3.11-slim-bookworm
+COPY --from=uv /uv /bin/uv
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never
+
+WORKDIR /srv/sharp/services/ml-backend
+
+COPY services/ml-backend/pyproject.toml services/ml-backend/uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
+
+COPY ml-pipeline/src /srv/sharp/ml-pipeline/src
+COPY datasets/smd/preprocess.py /srv/sharp/datasets/smd/preprocess.py
+COPY --from=smd /smd/raw /srv/sharp/datasets/smd/raw
+COPY infrastructure/local/init.sql /srv/sharp/infrastructure/local/init.sql
+COPY services/ml-backend/app ./app
+
+ENV PATH=/srv/sharp/services/ml-backend/.venv/bin:$PATH
+# Parquet once at build time, so a cold start only reads it
+RUN cd /srv/sharp/datasets/smd && python -c "from preprocess import preprocess_entity as p; \
+[p(e, s) for e in ('machine-1-2', 'machine-3-8', 'machine-3-10') for s in ('train', 'test')]"
+
+ENV TELEMETRY_MODE=replay \
+    AUTH_MODE=jwt \
+    FOLLOW_CONTAINER_LOGS=false \
+    MAX_TENANTS=3
+
+RUN useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin sharp
+USER 10001
+
+# Render routes to $PORT
+EXPOSE 10000
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000} --proxy-headers --forwarded-allow-ips='*'"]

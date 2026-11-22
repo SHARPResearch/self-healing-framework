@@ -21,10 +21,11 @@ import { createAccessControl } from "better-auth/plugins/access";
 import { adminAc, defaultStatements, ownerAc } from "better-auth/plugins/organization/access";
 import pg from "pg";
 
-export const PUBLIC_URL = process.env.BETTER_AUTH_URL ?? "http://localhost:5173";
+// The browser's origin. Render sets RENDER_EXTERNAL_URL (https://<service>.onrender.com) itself.
+export const PUBLIC_URL = process.env.BETTER_AUTH_URL ?? process.env.RENDER_EXTERNAL_URL ?? "http://localhost:5173";
 export const JWT_AUDIENCE = process.env.JWT_AUDIENCE ?? "sharp-ml-backend";
-const TRUSTED = (process.env.TRUSTED_ORIGINS ?? "http://localhost:5173,http://127.0.0.1:5173")
-  .split(",").map((s) => s.trim()).filter(Boolean);
+const TRUSTED = [PUBLIC_URL, ...(process.env.TRUSTED_ORIGINS ?? "http://localhost:5173,http://127.0.0.1:5173")
+  .split(",").map((s) => s.trim()).filter(Boolean)];
 
 export const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL ?? "postgresql://postgres:selfheal@localhost:5433/selfheal",

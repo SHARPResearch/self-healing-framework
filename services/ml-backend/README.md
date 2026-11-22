@@ -133,6 +133,26 @@ uv run python evaluate_live_chaos.py outputs/live_chaos/<run>   # detection, tim
 ```
 Stop the cluster with `infrastructure/online-boutique/down.ps1`. Nothing is deleted.
 
+## Accounts and tenancy
+
+With `AUTH_MODE=jwt` every request needs a JWT from the auth service (`services/auth`, Better
+Auth), verified against its JWKS (`app/auth.py`): `Authorization: Bearer <token>` on REST, and
+`{"type": "auth", "token": ...}` as the first WebSocket message (closed with 4401 otherwise).
+The token's `org` is the tenant and its `role` decides what the caller may do:
+
+| Permission | Roles | Endpoints |
+|---|---|---|
+| read | viewer, operator, admin, owner | every GET, and the WebSocket |
+| operate | operator, admin, owner | `POST /queries/{id}/answer`, `/models/{id}/validity-check`, `/demo/{id}/{kind}`, `/demo/speed`, `/live/{id}/{action}` |
+| manage | admin, owner | `POST /models/{id}/promote`, `/models/{id}/rollback`, `/demo/reset` |
+
+Each organization has its own Runtime (`app/tenancy.py`, docs/adr/0015): fleet, store rows
+tagged with its `tenant_id`, Redis channel and metric labels. In replay mode every organization
+gets a demo fleet on its first request (at most `MAX_TENANTS`); in live mode only
+`PRIMARY_TENANT` (the organization that owns the cluster) has one. `/api/health` and `/api/ready`
+stay public for probes. Answered queries and manual transitions record the token's email as the
+operator. `AUTH_MODE=off` (the default) is the laptop demo: one tenant, `default`, no login.
+
 ## Configuration (env or `.env`)
 
 | Variable | Default |
@@ -150,6 +170,9 @@ Stop the cluster with `infrastructure/online-boutique/down.ps1`. Nothing is dele
 | `LIVE_WARMUP_MINUTES` / `LIVE_MIN_WARMUP_MINUTES` | `60` / `10` |
 | `LIVE_START_RETRY_SECONDS` | `30` (live start: retry until Prometheus has enough history) |
 | `GRAFANA_URL` | `http://localhost:3000` (the dashboard's link to Grafana) |
+| `AUTH_MODE` | `off` (or `jwt`: accounts and tenancy, see above) |
+| `AUTH_JWKS_URL` / `AUTH_ISSUER` / `AUTH_AUDIENCE` | `http://localhost:8010/api/auth/jwks` / `http://localhost:5173` / `sharp-ml-backend` |
+| `PRIMARY_TENANT` / `MAX_TENANTS` | unset / `3` (the organization owning the live cluster; replay fleets per instance) |
 | `START_REPLAY` / `USE_BACKING_SERVICES` | `true` / `true` (tests set both false) |
 | `MODEL_CHECKPOINTS` | `auto` (live only), `on`, `off` |
 | `CHECKPOINT_EVERY_S` / `CHECKPOINT_ALL_EVERY_S` | `30` / `300` |

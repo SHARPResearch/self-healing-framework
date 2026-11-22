@@ -15,7 +15,9 @@ Helm charts, Kubernetes manifests, and Terraform for the self-healing framework
     into `selfheal-system`.
   - `down.ps1`: stops it all, keeping images and data.
   - `*-values.yaml` and `grafana-dashboard-sharp.yaml`: the monitoring configuration.
-- `local/`: the Docker Compose stack (TimescaleDB, Redis) for the replay demo on the laptop.
+- `local/`: Docker Compose stacks: `docker-compose.demo.yml` (TimescaleDB, Redis) for the replay
+  demo on the laptop, and `docker-compose.render.yml`, which rehearses the Render deployment
+  (`render.yaml`, `docs/Deployment_Render.md`) with the same images on plain PostgreSQL.
 - `kubernetes/`: `namespaces.yaml`, RBAC and network policies applied directly (not templated).
 - `terraform/`: optional cluster provisioning (EKS/GKE), not written.
 

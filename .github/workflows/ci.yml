@@ -1,5 +1,5 @@
-# CI for SHARP's detection and model lifecycle components (ml-pipeline, ml-backend), the dashboard
-# they feed, and the Helm chart that deploys them. On main, the ml-backend image is also pushed to
+# CI for SHARP's detection and model lifecycle components (ml-pipeline, ml-backend), the auth
+# service, the dashboard they feed, the Helm chart and the Render images. On main, the ml-backend image is also pushed to
 # GitHub Container Registry, tagged with the commit SHA (the tag the Helm chart takes).
 name: ci
 
@@ -87,6 +87,44 @@ jobs:
             --api-versions monitoring.coreos.com/v1 > rendered.yaml
           grep -q "kind: ServiceMonitor" rendered.yaml
           grep -q "kind: StatefulSet" rendered.yaml
+
+  auth:
+    name: auth service
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: services/auth/package-lock.json
+      - working-directory: services/auth
+        run: npm ci
+      - name: syntax and imports load
+        working-directory: services/auth
+        run: node --check src/auth.js && node --check src/server.js
+
+  render-images:
+    name: Render images build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        image:
+          - { name: sharp-web, file: services/auth/Dockerfile }
+          - { name: sharp-ml-backend-render, file: services/ml-backend/Dockerfile.render }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.image.file }}
+          push: false
+          tags: ${{ matrix.image.name }}:ci
+          cache-from: type=gha,scope=${{ matrix.image.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}
 
   image:
     name: ml-backend image

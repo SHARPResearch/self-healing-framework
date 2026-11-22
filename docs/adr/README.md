@@ -5,8 +5,8 @@ else was considered, and what it costs. A decision that is replaced is not delet
 which record superseded it.
 
 Scope: `ml-pipeline/` (detector and lifecycle research code), `services/ml-backend/` (serving),
-`services/auth/` (accounts and tenancy),
-the lifecycle pages of `frontend/`, and the Online Boutique deployment in `infrastructure/`.
+`services/auth/` (accounts and tenancy), the lifecycle and account pages of `frontend/`, and the
+deployments in `infrastructure/` and `render.yaml`.
 
 | # | Decision | Status |
 |---|---|---|

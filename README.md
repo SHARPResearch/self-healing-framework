@@ -188,6 +188,7 @@ Grafana is limited to 300 MiB in a 7 GB cluster. If the laptop struggles, set `g
 | Path | What lives there |
 |---|---|
 | `services/ml-backend/` | FastAPI backend: telemetry (replay or Prometheus), PCA detector, CADAL lifecycle, REST + WebSocket |
+| `services/auth/` | Accounts, organizations and roles (Better Auth); in production also serves the dashboard |
 | `services/decision-engine/` | Decision engine (Python/FastAPI): policy evaluation and action dispatch |
 | `services/yarp-gateway/` | YARP traffic gateway (planned, README only) |
 | `services/llm-copilot/` | LangChain RCA and copilot service |
@@ -198,6 +199,19 @@ Grafana is limited to 300 MiB in a 7 GB cluster. If the laptop struggles, set `g
 | `infrastructure/` | Local compose files, the Online Boutique cluster setup, Helm and Kubernetes manifests |
 | `datasets/` | Dataset download scripts (raw data itself is gitignored) |
 | `docs/` | Architecture, decision records (`docs/adr/`), execution guide and per-topic docs |
+
+## Accounts, organizations and hosting
+
+SHARP has accounts and multi-tenancy: people sign up, create an organization (a tenant) and invite
+teammates as viewer, operator, admin or owner. Each organization gets its own fleet, models,
+decisions and logs, and cannot see another's. Accounts run on Better Auth (`services/auth`, free
+and self-hosted); ml-backend checks a short-lived JWT on every request. Decisions in
+`docs/adr/0014` to `0016`.
+
+The whole application deploys to Render's free plan from `render.yaml`: the dashboard and accounts
+in one web service, ml-backend replaying the SMD demo, PostgreSQL and Key Value. Step by step,
+with the free plan's limits: [`docs/Deployment_Render.md`](docs/Deployment_Render.md). The live
+Online Boutique mode needs Kubernetes and stays on minikube.
 
 ## Getting started
 
@@ -220,4 +234,6 @@ and 5432). `docs/Doc3_Execution_Guide.md` has the phased build plan.
 - `docs/Doc2_GitHub_Monorepo_Structure.md`: the folder layout this repo follows
 - `docs/Doc3_Execution_Guide.md`: chronological build phases
 - `docs/Component_2_Dynamic_Model_Updating.md`: research positioning and design of CADAL
-- `docs/adr/`: decision records (detector choice, attribute before acting, early stop, restarts)
+- `docs/adr/`: decision records (detector choice, attribute before acting, early stop, restarts,
+  deployment, accounts and tenancy)
+- `docs/Deployment_Render.md`: deploying the application to Render's free plan

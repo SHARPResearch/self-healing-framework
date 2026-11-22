@@ -12,6 +12,7 @@ import type {
 } from "@/features/lifecycle/types";
 import type { ModelDetail, ModelRun } from "@/features/models/types";
 import type { LogHistogram, LogPage, LogServiceSummary } from "@/features/logs/types";
+import { AUTH_ENABLED, clearAccessToken, getAccessToken } from "@/lib/auth";
 
 /**
  * Typed client for services/ml-backend. Same origin by default (Vite proxies /api and /ws to
@@ -29,11 +30,24 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}/api${path}`, {
+async function send(path: string, init?: RequestInit): Promise<Response> {
+  const token = await getAccessToken();
+  return fetch(`${API_BASE}/api${path}`, {
     ...init,
-    headers: { "content-type": "application/json", ...init?.headers },
+    headers: {
+      "content-type": "application/json",
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+      ...init?.headers,
+    },
   });
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  let res = await send(path, init);
+  if (res.status === 401 && AUTH_ENABLED) {
+    clearAccessToken();                       // expired or for another organization: fetch a new one
+    res = await send(path, init);
+  }
   if (!res.ok) {
     let detail = res.statusText;
     try {

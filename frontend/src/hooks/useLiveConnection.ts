@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { api, wsUrl } from "@/lib/mlBackend";
+import { AUTH_ENABLED, clearAccessToken, getAccessToken } from "@/lib/auth";
 import type { LiveMessage } from "@/features/lifecycle/types";
 import { toDecision, useLiveStore } from "@/shared/store/liveStore";
 import { useNotificationStore } from "@/shared/store/notificationStore";
@@ -107,7 +108,16 @@ function connect(): void {
     scheduleReconnect();
     return;
   }
-  ws.onopen = () => {
+  ws.onopen = async () => {
+    if (AUTH_ENABLED) {
+      // ml-backend sends nothing until the first message proves who we are (docs/adr/0014)
+      const token = await getAccessToken();
+      if (!token) {
+        ws.close();
+        return;
+      }
+      ws.send(JSON.stringify({ type: "auth", token }));
+    }
     backoff = 1000;
     useLiveStore.getState().setStatus("live");
     bootstrap().catch(() => undefined);
@@ -124,7 +134,15 @@ function connect(): void {
     }
   };
   ws.onerror = () => ws.close();
-  ws.onclose = () => scheduleReconnect();
+  ws.onclose = (event) => {
+    if (event.code === 4401) clearAccessToken();      // expired token: fetch a fresh one on retry
+    if (event.code === 4404) {
+      // this organization has no fleet on this instance; retrying will not change that
+      useLiveStore.getState().setStatus("offline");
+      return;
+    }
+    scheduleReconnect();
+  };
 }
 
 function scheduleReconnect(): void {

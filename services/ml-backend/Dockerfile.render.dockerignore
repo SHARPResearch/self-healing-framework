@@ -1,0 +1,10 @@
+# Context for services/ml-backend/Dockerfile.render (built from the repository root). Only what
+# the image copies is let through; the SMD data comes from its own build stage.
+**
+!services/ml-backend/pyproject.toml
+!services/ml-backend/uv.lock
+!services/ml-backend/app/**
+!ml-pipeline/src/**
+!datasets/smd/preprocess.py
+!infrastructure/local/init.sql
+**/__pycache__

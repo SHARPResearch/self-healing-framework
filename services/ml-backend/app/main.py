@@ -14,16 +14,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import metrics
 from app.api import routes, websocket
 from app.config import settings
-from app.runtime import runtime
+from app.tenancy import tenants
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await runtime.start(backing_services=settings.use_backing_services, replay=settings.start_replay)
+    await tenants.start(backing_services=settings.use_backing_services, replay=settings.start_replay)
     yield
-    await runtime.stop()
+    await tenants.stop()
 
 
 app = FastAPI(title="self-healing ml-backend", version="0.1.0", lifespan=lifespan)

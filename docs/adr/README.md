@@ -5,6 +5,7 @@ else was considered, and what it costs. A decision that is replaced is not delet
 which record superseded it.
 
 Scope: `ml-pipeline/` (detector and lifecycle research code), `services/ml-backend/` (serving),
+`services/auth/` (accounts and tenancy),
 the lifecycle pages of `frontend/`, and the Online Boutique deployment in `infrastructure/`.
 
 | # | Decision | Status |
@@ -22,6 +23,9 @@ the lifecycle pages of `frontend/`, and the Online Boutique deployment in `infra
 | [0011](0011-expose-backend-metrics.md) | Expose the backend's own metrics to Prometheus | Accepted |
 | [0012](0012-telemetry-evidence-instead-of-embedded-grafana.md) | Show the raw telemetry on the lifecycle page; link to Grafana instead of embedding it | Accepted |
 | [0013](0013-ci-scope.md) | CI tests the components that serve the model, and builds the image they deploy | Accepted |
+| [0014](0014-better-auth-with-jwts-for-ml-backend.md) | Accounts with Better Auth; ml-backend verifies short-lived JWTs | Accepted |
+| [0015](0015-one-runtime-per-organization.md) | Tenancy: one runtime per organization, and the organization id on every row | Accepted |
+| [0016](0016-render-free-plan-deployment.md) | Hosted deployment on Render's free plan: one web origin, replay mode, optional TimescaleDB | Accepted |
 
 Template:
 

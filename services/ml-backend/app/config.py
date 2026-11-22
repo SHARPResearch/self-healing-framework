@@ -88,6 +88,19 @@ class Settings(BaseSettings):
     # Where the dashboard links to for the full Grafana dashboards (up.ps1 forwards it to :3000).
     grafana_url: str = "http://localhost:3000"
 
+    # Authentication and tenancy (docs/adr/0014, 0015). "off": no login, one implicit tenant
+    # "default" (the laptop demo and the tests). "jwt": every request carries a JWT from the auth
+    # service (services/auth); its `org` claim is the tenant and its `role` what the caller may do.
+    auth_mode: str = "off"
+    auth_jwks_url: str = "http://localhost:8010/api/auth/jwks"
+    auth_issuer: str = "http://localhost:5173"
+    auth_audience: str = "sharp-ml-backend"
+    # The organization that owns the monitored cluster in live mode (its Better Auth organization
+    # id); only that tenant sees the live fleet. Unset in replay mode: every organization gets its
+    # own demo fleet, started on first use, at most MAX_TENANTS of them (memory bound).
+    primary_tenant: str = ""
+    max_tenants: int = 3
+
     # Set false in tests to skip the replay loop and backing services.
     start_replay: bool = True
     use_backing_services: bool = True

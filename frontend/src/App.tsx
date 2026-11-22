@@ -1,5 +1,10 @@
 import { Suspense, lazy } from "react";
 import { Route, Routes } from "react-router-dom";
+import { RequireAuth } from "@/shared/components/RequireAuth";
+import { ResetPasswordPage } from "@/features/auth/ResetPasswordPage";
+import { OnboardingPage } from "@/features/organization/OnboardingPage";
+import { AcceptInvitationPage } from "@/features/organization/AcceptInvitationPage";
+import { OrganizationPage } from "@/features/organization/OrganizationPage";
 import { LoginPage } from "@/features/auth/LoginPage";
 import { SignupPage } from "@/features/auth/SignupPage";
 import { ForgotPasswordPage } from "@/features/auth/ForgotPasswordPage";
@@ -54,6 +59,11 @@ function App() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/signup" element={<SignupPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
+        <Route path="/onboarding" element={<OnboardingPage />} />
+        <Route path="/accept-invitation/:id" element={<AcceptInvitationPage />} />
+        {/* every page below shows one organization's data: signed in, with an organization */}
+        <Route element={<RequireAuth />}>
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/services" element={<ServicesPage />} />
         <Route path="/dependency-graph" element={<DependencyGraphPage />} />
@@ -74,6 +84,8 @@ function App() {
         <Route path="/notifications" element={<NotificationsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/profile" element={<ProfilePage />} />
+        <Route path="/organization" element={<OrganizationPage />} />
+        </Route>
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
     </Suspense>

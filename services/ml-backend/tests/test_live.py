@@ -115,10 +115,16 @@ def test_live_fleet_scores_scrapes_and_alarms_on_a_spike(client, prom):
         client.portal.call(runtime.scrape_once)
     assert all(not s["alarm"] for s in client.get("/api/services").json())
     prom.spike.add("paymentservice")
-    for _ in range(5):
+    # The score is EWMA smoothed (span 5), so the alarm comes a few scrapes into the spike; exactly
+    # how many depends on the warm-up's threshold. Allow up to a minute of scrapes, as a live
+    # detection delay of 10 to 15 s would (Component 2 results, section 10).
+    alarmed_payment = alarmed_cart = False
+    for _ in range(12):
         client.portal.call(runtime.scrape_once)
-    svc = {s["serviceId"]: s for s in client.get("/api/services").json()}
-    assert svc["paymentservice"]["alarm"] and not svc["cartservice"]["alarm"]
+        svc = {s["serviceId"]: s for s in client.get("/api/services").json()}
+        alarmed_payment |= svc["paymentservice"]["alarm"]
+        alarmed_cart |= svc["cartservice"]["alarm"]
+    assert alarmed_payment and not alarmed_cart
     assert runtime.fleet.cfg.quarantine_silent == live_samples_per_day()
 
 
@@ -128,10 +134,13 @@ def test_a_network_delay_alarms_through_the_probe_latency_alone(client, prom):
     for _ in range(20):
         client.portal.call(runtime.scrape_once)
     prom.delay.add("cartservice")
-    for _ in range(5):
+    alarmed_cart = alarmed_payment = False
+    for _ in range(12):                      # see the spike test: a few smoothed scrapes to alarm
         client.portal.call(runtime.scrape_once)
-    svc = {s["serviceId"]: s for s in client.get("/api/services").json()}
-    assert svc["cartservice"]["alarm"] and not svc["paymentservice"]["alarm"]
+        svc = {s["serviceId"]: s for s in client.get("/api/services").json()}
+        alarmed_cart |= svc["cartservice"]["alarm"]
+        alarmed_payment |= svc["paymentservice"]["alarm"]
+    assert alarmed_cart and not alarmed_payment
 
 
 def test_replay_controls_are_rejected_in_live_mode(client):

@@ -14,6 +14,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
+import { rateLimit } from "express-rate-limit";
 import { createProxyMiddleware } from "http-proxy-middleware";
 import { toNodeHandler } from "better-auth/node";
 import { getMigrations } from "better-auth/db/migration";
@@ -35,6 +36,16 @@ async function migrate() {
 const app = express();
 app.disable("x-powered-by");
 app.set("trust proxy", 1);                       // Render terminates TLS in front of us
+
+// Per client IP (behind Render's proxy, from X-Forwarded-For). Generous for a dashboard, which
+// polls a few endpoints every few seconds, and tight enough to blunt scripted abuse of every route.
+// Better Auth also limits its own sign-in and sign-up endpoints much more strictly.
+app.use(rateLimit({
+  windowMs: 60_000,
+  limit: Number(process.env.RATE_LIMIT_PER_MINUTE ?? 600),
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+}));
 
 app.get("/healthz", async (_req, res) => {
   try {

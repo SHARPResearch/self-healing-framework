@@ -301,13 +301,14 @@ ML_BACKEND_URL=http://localhost:8002
 
 Make a random secret with: `-join ((48..57)+(65..90)+(97..122) | Get-Random -Count 40 | % {[char]$_})`
 
-**Dashboard switches.** Vite (the dashboard's dev server) reads these from the terminal, not from
-`.env`, so set them in the same PowerShell window before `pnpm dev`:
+**Dashboard switches.** `VITE_AUTH` can go in `frontend/.env` (copied from its `.env.example`) or be
+set in the terminal. The two addresses below it are only read from the terminal: set them in the
+same PowerShell window before `pnpm dev`, if you need to change them at all.
 
 | Setting | Meaning |
 |---|---|
-| `$env:VITE_AUTH = "on"` | show the real sign in pages and use accounts (Way B). Leave unset for Way A |
-| `$env:ML_BACKEND_URL = "http://localhost:8002"` | where the dashboard finds ml-backend (this is the default) |
+| `VITE_AUTH=on` (or `$env:VITE_AUTH = "on"`) | show the real sign in pages and use accounts (Way B). Leave empty for Way A |
+| `$env:ML_BACKEND_URL = "http://localhost:8002"` | where the dashboard's dev server finds ml-backend (this is the default) |
 | `$env:AUTH_URL = "http://localhost:8010"` | where it finds the auth service (this is the default) |
 
 ### Way A. Quick demo (no login)

@@ -1,4 +1,8 @@
 # app/core/graph_store.py
+from logging import log
+
+from cmath import log
+
 import networkx as nx
 from threading import RLock
 from app.core.models import ServiceNode, DependencyEdge, DependencyGraph
@@ -32,20 +36,50 @@ class GraphStore:
             if self._g.has_node(node_id):
                 self._g.remove_node(node_id)
 
+    def clear(self) -> None:
+        """Drop every node and edge, for a wholesale topology reload."""
+        with self._lock:
+            self._g.clear()
+
     # --- Reads -------------------------------------------------------
     def snapshot(self) -> DependencyGraph:
         with self._lock:
-            nodes = [ServiceNode(**d) for _, d in self._g.nodes(data=True)]
-            edges = [
-                DependencyEdge(
-                    source=u, target=v,
-                    strength=d.get("strength", 1.0),
-                    protocol=d.get("protocol", "http"),
-                )
-                for u, v, d in self._g.edges(data=True)
-            ]
+            nodes = []
+            for node_id, data in self._g.nodes(data=True):
+                # A node can end up in the graph with no attributes if some
+                # other code path called add_node(id) bare. Backfill the two
+                # required fields from the graph key so pydantic never sees {}.
+                payload = dict(data) if data else {}
+                payload.setdefault("id", node_id)
+                payload.setdefault("name", node_id)
+                try:
+                    nodes.append(ServiceNode(**payload))
+                except Exception as exc:  # noqa: BLE001
+                    log.warning(
+                        "graph_store: dropping unparseable node %r: %s",
+                        node_id,
+                        exc,
+                    )
+            edges = []
+            for u, v, d in self._g.edges(data=True):
+                try:
+                    edges.append(
+                        DependencyEdge(
+                            source=u,
+                            target=v,
+                            strength=d.get("strength", 1.0),
+                            protocol=d.get("protocol", "http"),
+                        )
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    log.warning(
+                        "graph_store: dropping unparseable edge %r->%r: %s",
+                        u,
+                        v,
+                        exc,
+                    )
         return DependencyGraph(nodes=nodes, edges=edges)
-
+    
     def graph(self) -> nx.DiGraph:
         """Expose read-only; callers must not mutate."""
         return self._g

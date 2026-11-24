@@ -44,6 +44,11 @@ class Settings:
     # ── Internal telemetry source (mock endpoints on our own app) ──
     TELEMETRY_SOURCE_URL: str = os.getenv("TELEMETRY_SOURCE_URL", "http://localhost:8000")
 
+    # ── Component 1 (ml-backend: anomaly detector + dynamic model updating) ──
+    # Read-only. Anomaly signals and model state are pulled from here; when it is
+    # unreachable the engine falls back to its local sources instead of stalling.
+    COMPONENT1_URL: str = os.getenv("COMPONENT1_URL", "http://localhost:8002")
+
     # ── Developer convenience ──────────────────────────────────────
     # Auto-open the Swagger UI in the default browser when the server
     # boots. Set OPEN_DOCS=0 to disable (e.g. in prod/CI).

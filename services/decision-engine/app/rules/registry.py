@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from app.rules.models import Rule, RuleStatus
 from app.rules.repository import rule_repository
 from app.rules.seeds import SEED_RULES, SEED_TEMPLATES
+from app.rules.generic_rules import GENERIC_RULES
 
 log = logging.getLogger(__name__)
 
@@ -94,21 +95,23 @@ class RuleRegistry:
         existing = await rule_repository.list_ids()
         missing = [
             raw
-            for raw in [*SEED_RULES, *SEED_TEMPLATES]
+            for raw in [*SEED_RULES, *GENERIC_RULES, *SEED_TEMPLATES]
             if raw.get("id") not in existing
         ]
         if not missing:
             log.info(
-                "All %d default rules + %d templates already present; nothing to seed",
+                "All %d default rules + %d generic rules + %d templates already present; nothing to seed",
                 len(SEED_RULES),
+                len(GENERIC_RULES),
                 len(SEED_TEMPLATES),
             )
             return 0
 
         log.info(
-            "Seeding %d missing rule(s) (%d defaults + %d templates defined)",
+            "Seeding %d missing rule(s) (%d defaults + %d generic + %d templates defined)",
             len(missing),
             len(SEED_RULES),
+            len(GENERIC_RULES),
             len(SEED_TEMPLATES),
         )
         for raw in missing:

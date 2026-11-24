@@ -14,7 +14,8 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
-from app.api.routes.mock_data import _anomaly, _app, _infra, SERVICES
+from app.api.routes.mock_data import _anomaly, SERVICES
+from app.integration.telemetry import build_telemetry
 from app.decision.log import (
     build_decision,
     persist_decision,
@@ -66,10 +67,11 @@ async def evaluate_anomaly(anomaly_id: str, save: bool = True):
     # 3. Build context (with recent anomalies so neighbor counting works)
     builder = ContextBuilder()
     builder.set_services_catalog(SERVICES)
+    infra, app_data, telemetry_source = await build_telemetry(str(anomaly.get("id")), sid)
     ctx = builder.build(
         anomaly,
-        infra=_infra(sid),
-        app=_app(sid),
+        infra=infra,
+        app=app_data,
         recent_anomalies=recent,
     )
     classify(ctx)
@@ -87,6 +89,7 @@ async def evaluate_anomaly(anomaly_id: str, save: bool = True):
             "decision": None,
             "reason": "no rule matched this anomaly",
             "context": ctx.to_dict(),
+            "telemetry_source": telemetry_source,
         }
 
     # 5. Save
@@ -100,6 +103,7 @@ async def evaluate_anomaly(anomaly_id: str, save: bool = True):
         "saved": saved,
         "decision": row_to_decision(decision.to_log_row()),
         "context": ctx.to_dict(),
+        "telemetry_source": telemetry_source,
     }
 
 

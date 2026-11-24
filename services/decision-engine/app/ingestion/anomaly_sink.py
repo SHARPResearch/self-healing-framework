@@ -1,3 +1,4 @@
+# services\decision-engine\app\ingestion\anomaly_sink.py
 """
 Anomaly ingestion.
 
@@ -17,6 +18,12 @@ from app.ingestion.ring_buffer import ring_buffer
 from app.persistence.postgres import postgres_store
 from app.persistence.timescale import timescale_store
 from app.api.routes.mock_data import _anomaly, SERVICES, _health
+from app.integration.component1 import (
+    anomaly_from_state,
+    by_service,
+    fetch_services,
+    is_unhealthy,
+)
 
 log = logging.getLogger(__name__)
 
@@ -79,13 +86,35 @@ async def poll_anomalies(scheduler: AsyncIOScheduler):
     of how many polls happen during that incident.
     """
     try:
-        for sid in SERVICES:
-            current_health = _health(sid)          # live health (mock for now)
+        # Component 1 owns detection. Poll its per-service state once per cycle;
+        # if it is down, fall back to the local health table so the pipeline keeps
+        # running (and logs that it is running on degraded input).
+        component1 = by_service(await fetch_services())
+        use_component1 = bool(component1)
+        if not use_component1:
+            log.warning(
+                "Component 1 unavailable — anomaly polling falls back to local mock health"
+            )
+
+        # Component 1's fleet is the source of truth in live mode; the local
+        # catalog is still polled so replay/demo scenarios keep working.
+        for sid in sorted(set(SERVICES) | set(component1)):
+            c1 = component1.get(sid)
+            if use_component1:
+                if c1 is None:
+                    # Component 1 does not track this service; nothing to detect.
+                    continue
+                current_health = str(c1.get("status") or "healthy")
+                unhealthy = is_unhealthy(c1)
+            else:
+                current_health = _health(sid)  # local fallback
+                unhealthy = current_health != "healthy"
+
             state = await postgres_store.get_incident_state(sid)
             incident_open = bool(state and state.get("incident_start"))
 
             # ── HEALTHY ─────────────────────────────────────────
-            if current_health == "healthy":
+            if not unhealthy:
                 if incident_open:
                     await postgres_store.close_incident(sid)
                     log.info(
@@ -98,13 +127,18 @@ async def poll_anomalies(scheduler: AsyncIOScheduler):
             if not incident_open:
                 detected_at = datetime.now(timezone.utc)
 
-                # Build anomaly signal from mock (real component 1 later)
-                a = _anomaly(sid)
+                # Anomaly signal: Component 1 when available, local mock otherwise.
+                if use_component1 and c1 is not None:
+                    a = anomaly_from_state(
+                        c1, make_incident_id(sid, detected_at), detected_at
+                    )
+                else:
+                    a = _anomaly(sid)
                 if a is None:
-                    # Service says unhealthy but mock returns no anomaly —
+                    # Service says unhealthy but no anomaly signal was built —
                     # should not happen, but be defensive
                     log.warning(
-                        "Health=%s but _anomaly()=None for %s",
+                        "Health=%s but no anomaly signal for %s",
                         current_health, sid,
                     )
                     continue
@@ -187,33 +221,175 @@ def make_incident_id(service_id: str, incident_start: datetime) -> str:
 # ─────────────────────────────────────────────────────────────────
 # Phase 1 — BEFORE window (immediate)
 # ─────────────────────────────────────────────────────────────────
+# async def _capture_phase1(anomaly_id: str, service_id: str, detected_at: datetime):
+#     w_from = detected_at - timedelta(seconds=settings.SNAPSHOT_BEFORE_SEC)
+#     w_to = detected_at
+
+#     try:
+#         infra_pts = ring_buffer.slice_infra(service_id, w_from, w_to)
+#         app_pts = ring_buffer.slice_app(service_id, w_from, w_to)
+
+#         for p in infra_pts:
+#             await timescale_store.insert_infra_snapshot(
+#                 anomaly_id=anomaly_id,
+#                 time_=p["time"],
+#                 service_id=service_id,
+#                 payload=p["data"],
+#             )
+#         for p in app_pts:
+#             await timescale_store.insert_app_snapshot(
+#                 anomaly_id=anomaly_id,
+#                 time_=p["time"],
+#                 service_id=service_id,
+#                 payload=p["data"],
+#             )
+
+#         log.info(
+#             "Phase 1 for %s: %d infra + %d app points (%s .. %s)",
+#             anomaly_id, len(infra_pts), len(app_pts), w_from, w_to,
+#         )
+#     except Exception:
+#         log.exception("Phase 1 failed for %s", anomaly_id)
+# ─────────────────────────────────────────────────────────────────────
+# Phase 1 — BEFORE window (immediate)
+# ─────────────────────────────────────────────────────────────────────
 async def _capture_phase1(anomaly_id: str, service_id: str, detected_at: datetime):
+    """
+    Capture the BEFORE window [T - SNAPSHOT_BEFORE_SEC, T] into Timescale.
+
+    Defensive guarantees:
+      * All datetimes coerced to timezone-aware UTC before any comparison.
+      * If the ring buffer has no entries for `service_id` under the exact key,
+        try common normalizations (- / _ / space). If still nothing, try a
+        prefix match. If still nothing, log the full key set at ERROR — that
+        is the "you're slicing the wrong fleet" signal and must never be
+        silent again.
+      * If the window start predates the oldest buffered point, clamp forward
+        to the oldest point and log a WARNING. A fresh boot otherwise silently
+        captures 0 rows.
+      * If the window end is before the oldest buffered point, abort with a
+        WARNING — the window is entirely in the past.
+      * Per-point insert failures are logged individually; one bad row does
+        not abort the capture.
+      * The final log line reports buffer size, per-side sliced counts, and
+        per-side written counts, so "0 points" is diagnosable from one line.
+    """
+    detected_at = _as_utc(detected_at)
     w_from = detected_at - timedelta(seconds=settings.SNAPSHOT_BEFORE_SEC)
     w_to = detected_at
 
+    # ── Resolve the service key against what the buffer actually holds ──
+    resolved = _resolve_buffer_key(service_id)
+    if resolved is None:
+        log.error(
+            "Phase 1 for %s: service_id %r not in ring buffer and no "
+            "normalization matched. buffer_keys=%s",
+            anomaly_id, service_id, sorted(ring_buffer.infra.keys()),
+        )
+        return
+
+    if resolved != service_id:
+        log.warning(
+            "Phase 1 for %s: service_id %r resolved to buffer key %r",
+            anomaly_id, service_id, resolved,
+        )
+        service_id = resolved
+
+    # ── Inspect the buffer BEFORE slicing so we can clamp and log ──────
+    infra_buf = ring_buffer.infra.get(service_id) or []
+    app_buf = ring_buffer.app.get(service_id) or []
+
+    if not infra_buf and not app_buf:
+        log.error(
+            "Phase 1 for %s: ring buffer key %r exists but is EMPTY — "
+            "nothing to capture (window %s .. %s)",
+            anomaly_id, service_id, w_from.isoformat(), w_to.isoformat(),
+        )
+        return
+
+    # Oldest buffered point across both deques
+    oldest_candidates = []
+    if infra_buf:
+        oldest_candidates.append(_as_utc(infra_buf[0]["time"]))
+    if app_buf:
+        oldest_candidates.append(_as_utc(app_buf[0]["time"]))
+    oldest = min(oldest_candidates)
+
+    if w_to < oldest:
+        log.warning(
+            "Phase 1 for %s: window END %s is BEFORE buffer oldest %s — "
+            "nothing to capture",
+            anomaly_id, w_to.isoformat(), oldest.isoformat(),
+        )
+        return
+
+    if w_from < oldest:
+        log.warning(
+            "Phase 1 for %s: window START %s predates buffer oldest %s — "
+            "clamping to oldest. buffer=%d infra / %d app points",
+            anomaly_id, w_from.isoformat(), oldest.isoformat(),
+            len(infra_buf), len(app_buf),
+        )
+        w_from = oldest
+
+    # ── Slice and write ────────────────────────────────────────────────
     try:
         infra_pts = ring_buffer.slice_infra(service_id, w_from, w_to)
         app_pts = ring_buffer.slice_app(service_id, w_from, w_to)
 
+        infra_written = 0
         for p in infra_pts:
-            await timescale_store.insert_infra_snapshot(
-                anomaly_id=anomaly_id,
-                time_=p["time"],
-                service_id=service_id,
-                payload=p["data"],
-            )
+            try:
+                await timescale_store.insert_infra_snapshot(
+                    anomaly_id=anomaly_id,
+                    time_=_as_utc(p["time"]),
+                    service_id=service_id,
+                    payload=p["data"],
+                )
+                infra_written += 1
+            except Exception:
+                log.exception(
+                    "Phase 1 for %s: failed to insert infra point at %s",
+                    anomaly_id, p["time"],
+                )
+
+        app_written = 0
         for p in app_pts:
-            await timescale_store.insert_app_snapshot(
-                anomaly_id=anomaly_id,
-                time_=p["time"],
-                service_id=service_id,
-                payload=p["data"],
-            )
+            try:
+                await timescale_store.insert_app_snapshot(
+                    anomaly_id=anomaly_id,
+                    time_=_as_utc(p["time"]),
+                    service_id=service_id,
+                    payload=p["data"],
+                )
+                app_written += 1
+            except Exception:
+                log.exception(
+                    "Phase 1 for %s: failed to insert app point at %s",
+                    anomaly_id, p["time"],
+                )
 
         log.info(
-            "Phase 1 for %s: %d infra + %d app points (%s .. %s)",
-            anomaly_id, len(infra_pts), len(app_pts), w_from, w_to,
+            "Phase 1 for %s: sliced %d infra + %d app, wrote %d infra + %d app "
+            "(buffer=%d/%d, window %s .. %s)",
+            anomaly_id,
+            len(infra_pts), len(app_pts),
+            infra_written, app_written,
+            len(infra_buf), len(app_buf),
+            w_from.isoformat(), w_to.isoformat(),
         )
+
+        if infra_written == 0 and app_written == 0:
+            log.error(
+                "Phase 1 for %s: sliced 0 rows despite non-empty buffer — "
+                "window=[%s .. %s], buffer_oldest=%s buffer_newest_infra=%s "
+                "buffer_newest_app=%s",
+                anomaly_id,
+                w_from.isoformat(), w_to.isoformat(),
+                oldest.isoformat(),
+                _as_utc(infra_buf[-1]["time"]).isoformat() if infra_buf else "empty",
+                _as_utc(app_buf[-1]["time"]).isoformat() if app_buf else "empty",
+            )
     except Exception:
         log.exception("Phase 1 failed for %s", anomaly_id)
 

@@ -51,6 +51,40 @@ async def scores(service_id: str, limit: int = Query(300, le=600)) -> list[dict]
     return [{"step": s, "score": v, "alarm": a, "threshold": 0.5} for s, v, a in list(rt.scores)[-limit:]]
 
 
+# -- dependency topology (consumed by Component 2) -----------------------------------------------
+@router.get("/topology")
+async def topology() -> dict:
+    """
+    The service dependency graph. Component 2's dependency-graph manager loads
+    this instead of reading a private seed file, which is what makes the rule
+    engine's context genuinely dependency-aware.
+
+    Live mode serves the Online Boutique call graph filtered to the deployments
+    actually running; replay mode serves the synthetic SMD fleet.
+
+    `source -> target` means "source calls target", so the reverse-reachable set
+    from a service is exactly the blast radius of acting on it.
+    """
+    live = runtime.fleet.services
+    health = {sid: runtime.fleet.severity(rt) for sid, rt in live.items()}
+
+    if runtime.live:
+        from app import topology_ob
+
+        data = topology_ob.snapshot(live=set(live), health=health)
+    else:
+        from app import topology as topo
+
+        data = topo.snapshot()
+        data["nodes"] = [
+            {**n, "health": health.get(n["id"], n.get("health", "healthy"))}
+            for n in data["nodes"]
+        ]
+        data["mode"] = "replay"
+
+    return {**data, "fleetServices": sorted(live)}
+
+
 @router.get("/dashboard/summary")
 async def dashboard_summary() -> dict:
     rts = list(runtime.fleet.services.values())

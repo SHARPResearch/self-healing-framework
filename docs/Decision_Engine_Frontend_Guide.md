@@ -557,3 +557,108 @@ Then:
 `lib/api.ts` talks to `localhost:8000` directly (`VITE_API_BASE` overrides it) —
 the Vite proxy on `/api` points at ml-backend on `:8002`, which is a different
 service, so the decision-engine pages call port 8000 cross-origin (CORS is `*`).
+
+---
+
+## 11. Component 1 integration (anomaly detector + dynamic model updating)
+
+Component 2 consumes Component 1 (`services/ml-backend`, Member 2). The
+integration is **read-only and lives entirely in this repository's
+decision-engine** — nothing in `ml-backend` was changed.
+
+### 11.1 What Component 1 supplies
+
+`GET {COMPONENT1_URL}/api/services` returns one row per service:
+
+| Field | Used for |
+|---|---|
+| `serviceId`, `displayName` | linking to the local service catalog |
+| `status` | severity band (`watch` / `warn` / `degrade` / `critical`) |
+| `anomalyScore` | the anomaly score stored on `anomaly_events` |
+| `alarm` | authoritative "the detector fired" flag |
+| `modelVersion` | which detector model produced the score |
+| `phase`, `driftDetected`, `quarantineTrigger`, `quarantine` | the dynamic-model-updating state |
+| `openQueries` | operator questions the model lifecycle is waiting on |
+| `smdEntity` | telemetry source (replay entity vs live namespace) |
+
+Component 1 exposes **no raw infra/app metric values** — it carries scores and
+model lifecycle state. Infra/app numbers therefore come from the snapshots this
+engine captures (see 11.3).
+
+### 11.2 Anomaly signals now originate from Component 1
+
+`app/ingestion/anomaly_sink.py::poll_anomalies` polls Component 1 once per cycle
+and treats a service as unhealthy when `alarm` is set or `anomalyScore >= 0.5`
+(the shared threshold). It builds the `anomaly_events` row from Component 1's
+state via `app/integration/component1.py::anomaly_from_state`:
+
+| `anomaly_events` column | From Component 1 |
+|---|---|
+| `anomaly_score`, `confidence` | `anomalyScore` |
+| `severity` | `status` mapped: `warn → low`, `degrade → medium`, `critical → high` |
+| `metric` | `"anomaly_score"` (the detector is multivariate, not per-metric) |
+| `model_version` | `modelVersion` |
+| `features` | the whole model-lifecycle state block |
+
+Incident deduplication is unchanged: one `anomaly_events` row per incident, via
+`incident_state`, so repeated polls inside one incident do not create duplicates.
+
+### 11.3 Infra / app telemetry: real snapshots, mock only as fallback
+
+`app/integration/telemetry.py::build_telemetry(anomaly_id, service_id)` reads
+`infra_snapshots` / `app_snapshots` from Timescale and parses their `raw` column
+— the exact payload the puller received at capture time. `job.py` and the manual
+`POST /api/decisions/evaluate` route both use it instead of the mock generators.
+
+```
+snapshots present → source = {"infra": "snapshot", "app": "snapshot"}
+snapshots absent  → source = {"infra": "mock",     "app": "mock"}
+```
+
+That `source` is stored on the decision, so the UI states which numbers the
+decision was actually made on. The real path is driven by
+`TELEMETRY_SOURCE_URL`: point it at the live scrape and severity, blast radius
+and the rule conditions all run on real measurements without code changes.
+
+### 11.4 Model state travels with the decision
+
+Each decision persists a `component1` block inside `decision_log.context`:
+
+```json
+"component1": {
+  "model_version": 7, "phase": "quarantine", "drift_detected": true,
+  "quarantine_trigger": "drift", "open_queries": 1, "status": "degrade",
+  "anomaly_score": 0.783, "smd_entity": "orders-service",
+  "telemetry_source": {"infra": "snapshot", "app": "snapshot"}
+}
+```
+
+Exposed by `row_to_decision()` and rendered on the run graph's **Anomaly
+received** node (inspector rows + a `C1 vN` badge), so any decision can be traced
+back to the exact detector model and drift phase behind it.
+
+### 11.5 Configuration
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `COMPONENT1_URL` | `http://localhost:8002` | Component 1 base URL |
+
+### 11.6 Degradation
+
+Every call is best-effort: `fetch_services` returns `[]` after a 3 s timeout and
+logs a warning, at which point the poller falls back to the local health table
+and the context falls back to generated telemetry. The pipeline never stalls
+because Component 1 is down — it records that it ran on degraded input.
+
+### 11.7 Known gaps
+
+1. **Polling, not WebSocket.** `ws://:8002/ws/events` is not consumed; the 10 s
+   poll is the only channel. Latency to anomaly creation is therefore up to one
+   poll interval plus the anomaly-sink interval.
+2. **Service catalog must agree.** Component 1 services absent from the local
+   `SERVICES` catalog are skipped by the decision pipeline.
+3. **No write-back.** Component 2 never calls Component 1's promote/rollback/
+   validity-check endpoints; model changes stay inside Component 1.
+4. **Model state is copied, not linked.** The decision stores a snapshot of the
+   model state at decision time; it does not re-query Component 1 later, which is
+   deliberate (the audit record must not change retroactively).

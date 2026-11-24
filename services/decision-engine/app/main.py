@@ -85,8 +85,14 @@ async def lifespan(app: FastAPI):
     #   the first job registration uses the operator's values, not env defaults.
     await runtime_settings.load()
 
-    # Load seed topology into memory
-    load_static_topology("seeds/topology.yaml")
+    # Dependency graph: Component 1 is the authority (GET /api/topology); the
+    # seeded graph is only a fallback for when it is not up yet. The refresh
+    # job below upgrades to Component 1's graph as soon as it answers, so boot
+    # order does not matter.
+    from app.integration.topology import load_topology, start_topology_refresh
+
+    topology_source = await load_topology()
+    log.info("Dependency topology loaded from %s", topology_source)
 
     # ★ BATCH 1 — seed rules (first boot only) then load into memory
     inserted = await rule_registry.seed_if_empty()
@@ -126,6 +132,7 @@ async def lifespan(app: FastAPI):
 
 
     scheduler.start()
+    start_topology_refresh(scheduler)
     start_telemetry_puller(scheduler)
     start_anomaly_sink(scheduler)
     start_decision_pipeline(scheduler)

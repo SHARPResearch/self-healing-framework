@@ -276,6 +276,14 @@ export function buildDecisionRun(src: RunSources): DecisionRun {
     d.selection?.selected as { guardrails?: Record<string, unknown> } | undefined
   )?.guardrails;
 
+  // Component 1 provenance: the detector's model version, drift phase and the
+  // provenance of the telemetry that fed the context. Absent on older rows.
+  const c1 = (d.component1 ?? {}) as Record<string, unknown>;
+  const telemetrySource = (c1.telemetry_source ?? null) as {
+    infra?: string;
+    app?: string;
+  } | null;
+
   const execStat = exec?.status ?? "";
   const escStat = esc?.status ?? "";
   const finished =
@@ -374,7 +382,52 @@ export function buildDecisionRun(src: RunSources): DecisionRun {
           mono: true,
           tone: anomaly?.snapshot_status === "failed" ? "bad" : "default",
         },
+        // ── Component 1 (anomaly detector + dynamic model updating) ──
+        ...(c1.model_version !== undefined && c1.model_version !== null
+          ? [
+              {
+                label: "Detector model",
+                value: `v${String(c1.model_version)}`,
+                mono: true,
+              },
+            ]
+          : []),
+        ...(c1.phase
+          ? [{ label: "Model phase", value: String(c1.phase), mono: true }]
+          : []),
+        ...(c1.drift_detected
+          ? [
+              {
+                label: "Drift",
+                value: c1.quarantine_trigger
+                  ? `detected (${String(c1.quarantine_trigger)})`
+                  : "detected",
+                tone: "warn" as const,
+              },
+            ]
+          : []),
+        ...(typeof c1.open_queries === "number"
+          ? [
+              {
+                label: "Open operator queries",
+                value: String(c1.open_queries),
+                mono: true,
+              },
+            ]
+          : []),
+        ...(telemetrySource
+          ? [
+              {
+                label: "Telemetry used",
+                value: `infra ${telemetrySource.infra} · app ${telemetrySource.app}`,
+              },
+            ]
+          : []),
       ],
+      badges:
+        c1.model_version !== undefined && c1.model_version !== null
+          ? [{ label: `C1 v${String(c1.model_version)}`, tone: "accent" as const }]
+          : [],
     }),
     mkNode({
       id: "context",

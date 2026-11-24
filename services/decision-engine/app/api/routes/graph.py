@@ -27,5 +27,29 @@ def get_blast_radius(service_id: str):
 
 @router.post("/refresh")
 async def refresh_topology():
-    # trigger Topology Updater -> GraphStore -> Neo4j
-    ...
+    """Re-read the topology from Component 1 (falls back to the seed)."""
+    from app.integration import topology as topology_integration
+
+    source = await topology_integration.refresh_topology()
+    snapshot = store.snapshot()
+    return {
+        "ok": True,
+        "source": source,
+        "version": topology_integration.TOPOLOGY_VERSION,
+        "nodes": len(snapshot.nodes),
+        "edges": len(snapshot.edges),
+    }
+
+
+@router.get("/source")
+def get_source():
+    """Where the graph came from: Component 1 or the local seed."""
+    from app.integration import topology as topology_integration
+
+    snapshot = store.snapshot()
+    return {
+        "source": topology_integration.TOPOLOGY_SOURCE,
+        "version": topology_integration.TOPOLOGY_VERSION,
+        "nodes": len(snapshot.nodes),
+        "edges": len(snapshot.edges),
+    }

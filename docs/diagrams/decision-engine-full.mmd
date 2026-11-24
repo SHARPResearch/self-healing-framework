@@ -1,0 +1,285 @@
+%% Component 2 — Context-Aware & Dependency-Driven Rule-Based Decision Engine
+%% Implementation-accurate diagram (matches services/decision-engine as built).
+%% Renders in GitHub, VS Code (Markdown Preview Mermaid), and mermaid.live.
+flowchart TD
+
+%% ─────────────────────────────────────────────────────────────
+%% COMPONENT 1 — the detector and the graph owner
+%% ─────────────────────────────────────────────────────────────
+subgraph C1BOX["COMPONENT 1 — ml-backend :8002"]
+  direction TB
+  C1DET["Detector per service<br/>PCA / HST · ADWIN drift<br/>score · status · alarm"]
+  C1MODEL["Dynamic model updating<br/>versioned · quarantine · rollback"]
+  C1TOPO["Topology provider<br/>GET /api/topology<br/>nodes · edges · version hash"]
+  C1API["GET /api/services<br/>score · status · modelVersion<br/>phase · drift · openQueries"]
+  C1LIVE["Live faults (Chaos Mesh)<br/>POST /api/live/{svc}/{action}"]
+  C1DET --> C1API
+  C1MODEL --> C1API
+  C1LIVE --> C1DET
+end
+
+%% ─────────────────────────────────────────────────────────────
+%% INGESTION
+%% ─────────────────────────────────────────────────────────────
+subgraph ING["1 · INGESTION — every 5 s"]
+  direction TB
+  POLL["anomaly_sink.poll_anomalies<br/>poll Component 1"]
+  HEALTH{"unhealthy?<br/>alarm OR score ≥ 0.5"}
+  DEDUPE{"incident already<br/>open for service?"}
+  ANOM["Insert anomaly_events<br/>ANM-{service}-{utc}<br/>score · severity · model_version<br/>features = C1 model state"]
+  SNAP["Capture evidence window<br/>PHASE 1  T−3 min … T<br/>PHASE 2  T … T+3 min<br/>into Timescale"]
+  MAILA["Email: anomaly detected"]
+  CLOSE["Close incident<br/>service healthy"]
+  POLL --> HEALTH
+  HEALTH -->|"yes"| DEDUPE
+  HEALTH -->|"no"| CLOSE
+  DEDUPE -->|"no"| ANOM
+  DEDUPE -->|"yes"| POLL
+  ANOM --> SNAP
+  ANOM --> MAILA
+end
+
+C1API --> POLL
+C1TOPO --> TOPOLOAD
+
+%% ─────────────────────────────────────────────────────────────
+%% DEPENDENCY GRAPH MANAGER
+%% ─────────────────────────────────────────────────────────────
+subgraph DGM["2 · DEPENDENCY GRAPH MANAGER"]
+  direction TB
+  TOPOLOAD["integration/topology.load_topology<br/>Component 1 first · seed as fallback"]
+  GSTORE[("GraphStore<br/>in-memory DiGraph<br/>nodes · edges · strength")]
+  CENT["CentralityCalculator<br/>0.7 × in-degree + 0.3 × betweenness<br/>normalised to 1.0 – 2.0"]
+  BLAST["BlastRadiusAnalyzer<br/>reverse-reachable set<br/>factor 1.0 – 1.5"]
+  TOPOLOAD --> GSTORE
+  GSTORE --> CENT
+  GSTORE --> BLAST
+end
+
+%% ─────────────────────────────────────────────────────────────
+%% CONTEXT + RULES
+%% ─────────────────────────────────────────────────────────────
+subgraph PIPE["3 · CONTEXT AND RULES — every 10 s"]
+  direction TB
+  PICK["get_anomalies_without_decisions"]
+  TELE["integration/telemetry.build_telemetry<br/>snapshots from Timescale<br/>fallback: local generator"]
+  CTX["ContextBuilder.build<br/>anomaly + telemetry + graph<br/>service metadata + neighbours"]
+  CLASS["classify<br/>ISOLATED · UPSTREAM<br/>CASCADING · NORMAL"]
+  RC["Root cause localiser<br/>timing + topology"]
+  RULES["Rule engine<br/>priority, then confidence<br/>rejected candidates kept"]
+  PICK --> TELE
+  TELE --> CTX
+  CTX --> CLASS
+  CLASS --> RC
+  RC --> RULES
+end
+
+ANOM --> PICK
+GSTORE --> CTX
+CENT --> CTX
+BLAST --> CTX
+
+%% ─────────────────────────────────────────────────────────────
+%% SEVERITY AND ACTION
+%% ─────────────────────────────────────────────────────────────
+subgraph SA["4 · SEVERITY AND ACTION"]
+  direction TB
+  SEV["Severity<br/>base × centrality × blast<br/>max 2.7 · normalised"]
+  ACT["Action selector<br/>winner + rejected<br/>wrapped as RecoveryAction"]
+  BANAL["Blast-radius view for risk<br/>LOW / MEDIUM / HIGH"]
+  SEV --> ACT
+  BANAL --> ACT
+end
+
+RULES --> SEV
+GSTORE --> BANAL
+
+%% ─────────────────────────────────────────────────────────────
+%% VALIDATION
+%% ─────────────────────────────────────────────────────────────
+subgraph VAL["5 · TRUST AND SAFETY — VALIDATION LAYER"]
+  direction TB
+  CONF["Confidence scorer<br/>0.6 detection + 0.4 rule<br/>× graph certainty"]
+  RISK["Risk classifier<br/>max(base risk, blast risk)<br/>repeat failure ≥ 2 → HIGH"]
+  CONFLICT["Conflict detector<br/>in-flight · neighbour · repeat"]
+  MATRIX{"Decision policy matrix"}
+  CONF --> MATRIX
+  RISK --> MATRIX
+  CONFLICT --> MATRIX
+end
+
+ACT --> CONF
+ACT --> RISK
+ACT --> CONFLICT
+
+%% ─────────────────────────────────────────────────────────────
+%% FOUR OUTCOMES
+%% ─────────────────────────────────────────────────────────────
+AUTO["AUTO_EXECUTE<br/>conf ≥ 0.85 AND risk LOW<br/>AND no conflict"]
+SHADOW["SHADOW_MODE<br/>0.60 ≤ conf < 0.85<br/>simulate only"]
+BLOCK["BLOCK<br/>conf < 0.60 OR conflict<br/>OR guardrail veto"]
+HUMAN["HUMAN_LOOP<br/>risk HIGH OR repeat ≥ 2"]
+
+MATRIX -->|"high confidence + low risk"| AUTO
+MATRIX -->|"medium confidence"| SHADOW
+MATRIX -->|"low confidence / conflict"| BLOCK
+MATRIX -->|"high risk / repeat failure"| HUMAN
+
+%% ─────────────────────────────────────────────────────────────
+%% GUARDRAILS
+%% ─────────────────────────────────────────────────────────────
+subgraph GRD["6 · SAFETY GUARDRAILS — AUTO only"]
+  direction TB
+  GD["Cooldown<br/>per service · rule-defined seconds"]
+  GC["Action counter<br/>max per hour from action_history"]
+  GI["Idempotency<br/>service + action + anomaly key"]
+  GD --> GC
+  GC --> GI
+  GI --> GOK{"all passed?"}
+end
+
+AUTO --> GD
+GOK -->|"no"| BLOCK
+
+%% ─────────────────────────────────────────────────────────────
+%% EXECUTION
+%% ─────────────────────────────────────────────────────────────
+subgraph EXEC["7 · EXECUTION AND AUTH"]
+  direction TB
+  EXSEL["get_executor<br/>dry run → Noop<br/>otherwise Kubernetes"]
+  K8S["Kubernetes client<br/>ServiceAccount + namespace Role<br/>least privilege"]
+  YARP["YARP gateway<br/>traffic shift / circuit"]
+  RES["ExecutionResult<br/>SUCCESS · FAILED · DRY_RUN<br/>NOT_IMPLEMENTED"]
+  EXSEL --> K8S
+  EXSEL --> YARP
+  K8S --> RES
+  YARP --> RES
+end
+
+GOK -->|"yes"| EXSEL
+
+%% ─────────────────────────────────────────────────────────────
+%% SHADOW
+%% ─────────────────────────────────────────────────────────────
+subgraph SHW["8 · SHADOW MODE OBSERVER — every 60 s"]
+  direction TB
+  SIM["Record counterfactual<br/>candidate action · confidence · risk<br/>expected anomaly drop / recovery"]
+  OBS["Observe the real system<br/>no action executed"]
+  VERD{"anomaly resolved?"}
+  VHELP["ACTION_WOULD_HAVE_HELPED"]
+  VUNNEC["ACTION_WOULD_HAVE_BEEN_UNNECESSARY"]
+  VSTILL["ANOMALY_STILL_ACTIVE"]
+  SIM --> OBS
+  OBS --> VERD
+  VERD -->|"resolved slowly"| VHELP
+  VERD -->|"resolved naturally"| VUNNEC
+  VERD -->|"budget exhausted"| VSTILL
+end
+
+SHADOW --> SIM
+VHELP --> METRICS
+VUNNEC --> METRICS
+VSTILL --> METRICS
+
+%% ─────────────────────────────────────────────────────────────
+%% HUMAN IN THE LOOP
+%% ─────────────────────────────────────────────────────────────
+subgraph ESC["9 · HUMAN IN THE LOOP — Gmail, three attempts"]
+  direction TB
+  EQUEUE[["Escalation row<br/>PENDING · next_attempt_at"]]
+  A1["Attempt 1 — initial<br/>T + 0"]
+  W1["wait 5 min"]
+  A2["Attempt 2 — reminder<br/>T + 5 min"]
+  W2["wait 10 min"]
+  A3["Attempt 3 — final failure<br/>T + 15 min"]
+  MANUAL["MANUAL_REQUIRED<br/>manual intervention"]
+  ACK{"operator acks?"}
+  APPR["RESOLVED · APPROVED<br/>run executor for the decision"]
+  REJ["RESOLVED · REJECTED<br/>never executes"]
+  EQUEUE --> A1 --> W1 --> ACK
+  ACK -->|"no"| A2
+  A2 --> W2 --> ACK
+  ACK -->|"no, last attempt"| A3
+  A3 --> MANUAL
+  ACK -->|"APPROVED"| APPR
+  ACK -->|"REJECTED"| REJ
+end
+
+HUMAN --> EQUEUE
+APPR --> EXSEL
+
+%% ─────────────────────────────────────────────────────────────
+%% PERSISTENCE
+%% ─────────────────────────────────────────────────────────────
+subgraph DATA["10 · PERSISTENCE — Postgres + Timescale"]
+  direction TB
+  DLOG[("decision_log<br/>outcome · confidence · severity<br/>context.timings · context.component1")]
+  ELOG[("execution_log<br/>status · message · executed_at")]
+  ESCR[("escalations<br/>status · attempts · response")]
+  SLOG[("shadow_records<br/>verdict · simulated · actual")]
+  AHIS[("action_history<br/>feeds risk + counter")]
+  NLOG[("notifications<br/>SENT · FAILED · SKIPPED")]
+  ASNAP[("infra_snapshots / app_snapshots<br/>raw evidence window")]
+  DLOG --> ELOG
+  DLOG --> ESCR
+  DLOG --> SLOG
+end
+
+MATRIX --> DLOG
+EXSEL --> ELOG
+EQUEUE --> ESCR
+SIM --> SLOG
+RES --> ELOG
+RES --> AHIS
+MAILA --> NLOG
+SNAP --> ASNAP
+ACK --> ESCR
+
+%% ─────────────────────────────────────────────────────────────
+%% OBSERVABILITY
+%% ─────────────────────────────────────────────────────────────
+subgraph OBS_BOX["11 · API AND DASHBOARD"]
+  direction TB
+  REST["REST API :8000<br/>decisions · escalations · shadow<br/>executions · graph · settings"]
+  WS["React dashboard :5173<br/>run graph · timings · notifications"]
+  MTR["Evaluation metrics<br/>unnecessary action rate · MTTR<br/>root-cause rate · latency"]
+  LLM["Component 4 feed<br/>decisions + counterfactuals"]
+  REST --> WS
+  REST --> MTR
+  REST --> LLM
+end
+
+DLOG --> REST
+ELOG --> REST
+ESCR --> REST
+SLOG --> REST
+NLOG --> REST
+
+%% ─────────────────────────────────────────────────────────────
+%% STYLING
+%% ─────────────────────────────────────────────────────────────
+classDef c1 fill:#eef2ff,stroke:#6366f1,color:#312e81,stroke-width:1px;
+classDef ingest fill:#eff6ff,stroke:#60a5fa,color:#1e3a8a,stroke-width:1px;
+classDef graph fill:#f0fdf4,stroke:#22c55e,color:#14532d,stroke-width:1px;
+classDef proc fill:#f8fafc,stroke:#94a3b8,color:#334155,stroke-width:1px;
+classDef valid fill:#fff7ed,stroke:#fb923c,color:#9a3412,stroke-width:1px;
+classDef auto fill:#dcfce7,stroke:#22c55e,color:#14532d,stroke-width:2px;
+classDef shadow fill:#fef9c3,stroke:#eab308,color:#713f12,stroke-width:1px;
+classDef blocked fill:#fee2e2,stroke:#ef4444,color:#991b1b,stroke-width:1px;
+classDef human fill:#ffedd5,stroke:#ea580c,color:#7c2d12,stroke-width:1px;
+classDef exec fill:#ecfeff,stroke:#06b6d4,color:#164e63,stroke-width:1px;
+classDef data fill:#f1f5f9,stroke:#64748b,color:#1e293b,stroke-width:1px;
+classDef obs fill:#f5f3ff,stroke:#a78bfa,color:#4c1d95,stroke-width:1px;
+
+class C1DET,C1MODEL,C1TOPO,C1API,C1LIVE c1;
+class POLL,HEALTH,DEDUPE,ANOM,SNAP,MAILA,CLOSE ingest;
+class TOPOLOAD,GSTORE,CENT,BLAST graph;
+class PICK,TELE,CTX,CLASS,RC,RULES,SEV,ACT,BANAL proc;
+class CONF,RISK,CONFLICT,MATRIX,GD,GC,GI,GOK valid;
+class AUTO auto;
+class SHADOW,SIM,OBS,VERD,VHELP,VUNNEC,VSTILL shadow;
+class BLOCK blocked;
+class HUMAN,EQUEUE,A1,W1,A2,W2,A3,MANUAL,ACK,APPR,REJ human;
+class EXSEL,K8S,YARP,RES exec;
+class DLOG,ELOG,ESCR,SLOG,AHIS,NLOG,ASNAP data;
+class REST,WS,MTR,LLM obs;

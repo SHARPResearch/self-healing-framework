@@ -187,6 +187,12 @@ export interface ApiDecision {
    * as "—" rather than inventing a number.
    */
   timings?: Record<string, number> | null;
+  /**
+   * Component 1 provenance, written by the pipeline: the model version and
+   * drift/quarantine phase the anomaly came from, plus which telemetry fed the
+   * context (`telemetry_source: {infra, app}`). Absent on older rows.
+   */
+  component1?: Record<string, unknown> | null;
   created_at: string;
 }
 

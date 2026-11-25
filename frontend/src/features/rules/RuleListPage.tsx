@@ -1,7 +1,9 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Plus } from "lucide-react";
 import { AppShell } from "@/shared/layout/AppShell";
 import { Button } from "@/components/ui/button";
+import { Pagination, TableToolbar, useListControls } from "@/shared/components/ListTable";
+import type { SortState } from "@/shared/components/ListTable";
 import { createCustomRule, deleteRule, patchRule, toggleRule, type ApiRule } from "@/lib/api";
 import { useRules } from "./data/useRules";
 import { RuleTable } from "./components/RuleTable";
@@ -18,6 +20,15 @@ export function RuleListPage() {
   const [editing, setEditing] = useState<ApiRule | null>(null);
   const [builderOpen, setBuilderOpen] = useState(false);
   const [builderSeed, setBuilderSeed] = useState<ApiRule | null>(null);
+  const [search, setSearch] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [sort, setSort] = useState<SortState | null>({
+    key: "priority",
+    direction: "desc",
+  });
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
 
   const counts = useMemo(() => {
     const c: Record<RuleTab, number> = {
@@ -36,14 +47,36 @@ export function RuleListPage() {
     return c;
   }, [rules]);
 
-  const visible = useMemo(() => {
+  const tabRows = useMemo(() => {
     let list = rules;
     if (tab === "templates") list = rules.filter((r) => r.is_template);
     else if (tab === "default") list = rules.filter((r) => r.is_default && !r.is_template);
     else if (tab === "custom") list = rules.filter((r) => !r.is_default && !r.is_template);
     else if (tab === "archived") list = rules.filter((r) => r.status === "ARCHIVED");
-    return [...list].sort((a, b) => b.priority - a.priority || a.id.localeCompare(b.id));
+    return list;
   }, [rules, tab]);
+
+  useEffect(() => setPage(1), [search, dateFrom, dateTo, tab]);
+
+  const table = useListControls({
+    rows: tabRows,
+    search,
+    searchValues: (row) => [
+      row.id,
+      row.description,
+      row.then.action,
+      row.status,
+      row.tags.join(" "),
+      row.applies_to.layers.join(" "),
+    ],
+    dateField: (row) => row.updated_at,
+    dateFrom,
+    dateTo,
+    sort,
+    sortValue: (row, key) => ruleSortValue(row, key),
+    page,
+    pageSize,
+  });
 
   const handleToggle = async (rule: ApiRule, next: boolean) => {
     setBusyId(rule.id);
@@ -131,15 +164,34 @@ export function RuleListPage() {
           ))}
         </div>
 
+        <TableToolbar
+          search={search}
+          onSearchChange={setSearch}
+          placeholder="Search rule id, description, action, tag..."
+          dateFrom={dateFrom}
+          dateTo={dateTo}
+          onDateFromChange={setDateFrom}
+          onDateToChange={setDateTo}
+        />
         <RuleTable
-          rules={visible}
+          rules={table.visibleRows}
           loading={loading}
           error={error}
           busyId={busyId}
+          sort={sort}
+          onSortChange={setSort}
           onToggle={handleToggle}
           onEdit={(r) => setEditing(r)}
           onClone={handleClone}
           onDelete={handleDelete}
+        />
+        <Pagination
+          page={table.safePage}
+          pageCount={table.pageCount}
+          pageSize={pageSize}
+          total={table.total}
+          onPageChange={setPage}
+          onPageSizeChange={setPageSize}
         />
 
         <p className="text-[11px] text-muted-foreground">
@@ -167,4 +219,25 @@ export function RuleListPage() {
       <ToastHost />
     </AppShell>
   );
+}
+
+function ruleSortValue(row: ApiRule, key: string): string | number | null {
+  switch (key) {
+    case "id":
+      return row.id;
+    case "priority":
+      return row.priority;
+    case "layer":
+      return row.applies_to.layers.join(", ");
+    case "action":
+      return row.then.action;
+    case "status":
+      return row.status;
+    case "type":
+      return row.is_template ? "template" : row.is_default ? "default" : "custom";
+    case "updated_at":
+      return row.updated_at ?? "";
+    default:
+      return null;
+  }
 }

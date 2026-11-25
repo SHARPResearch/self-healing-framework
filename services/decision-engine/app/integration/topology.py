@@ -25,6 +25,15 @@ from app.core.models import DependencyEdge, ServiceNode
 
 log = logging.getLogger(__name__)
 
+_HEALTH_ALIASES = {"warn": "watch", "degrade": "degraded"}
+
+
+def _normalise_health(node: dict[str, Any]) -> dict[str, Any]:
+    health = node.get("health")
+    if health in _HEALTH_ALIASES:
+        return {**node, "health": _HEALTH_ALIASES[health]}
+    return node
+
 #: Where the currently loaded graph came from: "component1" or "seed".
 TOPOLOGY_SOURCE: str = "unloaded"
 #: Component 1's content hash for the graph, for change detection.
@@ -89,7 +98,7 @@ def _apply(payload: dict[str, Any]) -> None:
     for node in payload.get("nodes", []):
         total += 1
         try:
-            store.upsert_node(ServiceNode(**node))
+            store.upsert_node(ServiceNode(**_normalise_health(node)))
             accepted += 1
         except Exception as exc:  # noqa: BLE001
             log.warning(

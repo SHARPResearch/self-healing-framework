@@ -28,6 +28,12 @@ branch of the policy matrix:
     generic_upstream_fallback → SHADOW_MODE    (0.72, MEDIUM)
     generic_high_blast_scale  → HUMAN_LOOP     (HIGH risk)
     generic_down_restart      → SHADOW_MODE    (0.78, MEDIUM)
+    generic_restarts_spike    → SHADOW_MODE    (0.92, MEDIUM)
+    generic_ready_ratio_low   → SHADOW_MODE    (0.90, MEDIUM)
+    generic_cpu_throttled     → SHADOW_MODE    (0.90, MEDIUM)
+    generic_memory_pressure   → SHADOW_MODE    (0.90, MEDIUM)
+    generic_low_score_observe → SHADOW_MODE    (0.95, LOW)
+    generic_any_anomaly_observe → SHADOW_MODE  (1.00, LOW, terminal fallback)
 """
 from __future__ import annotations
 
@@ -182,5 +188,116 @@ GENERIC_RULES: list[dict] = [
         "MEDIUM",
         ["down", "restart", "generic"],
         "generic-down:{{ service.id }}:{{ anomaly.id }}",
+    ),
+
+    _rule(
+        "generic_restarts_spike",
+        140,
+        "Repeated container restarts: restart the affected pod (any service)",
+        {
+            "all": [
+                {"metric": "infra.restarts_last_5m", "op": ">=", "value": 3},
+                {"metric": "anomaly.score", "op": ">=", "value": 0.50},
+            ]
+        },
+        "RESTART_POD",
+        _K8S_PARAMS,
+        0.92,
+        "MEDIUM",
+        ["restarts", "crash-loop", "generic"],
+        "generic-restarts:{{ service.id }}:{{ anomaly.id }}",
+    ),
+
+    _rule(
+        "generic_ready_ratio_low",
+        135,
+        "Low ready replica ratio: scale the deployment to absorb the loss (any service)",
+        {
+            "all": [
+                {"metric": "infra.ready_ratio", "op": "<=", "value": 0.60},
+                {"metric": "anomaly.score", "op": ">=", "value": 0.50},
+            ]
+        },
+        "SCALE_UP",
+        {
+            "namespace": "{{ service.namespace }}",
+            "selector": "app={{ service.id }}",
+            "replicas": 1,
+        },
+        0.90,
+        "MEDIUM",
+        ["readiness", "scale", "generic"],
+        "generic-ready:{{ service.id }}:{{ anomaly.id }}",
+    ),
+
+    _rule(
+        "generic_cpu_throttled",
+        134,
+        "CPU throttling dominates: scale the deployment (any service)",
+        {
+            "all": [
+                {"metric": "infra.cpu.throttled_pct", "op": ">=", "value": 0.20},
+                {"metric": "anomaly.score", "op": ">=", "value": 0.50},
+            ]
+        },
+        "SCALE_UP",
+        {
+            "namespace": "{{ service.namespace }}",
+            "selector": "app={{ service.id }}",
+            "replicas": 1,
+        },
+        0.90,
+        "MEDIUM",
+        ["cpu", "throttling", "scale", "generic"],
+        "generic-throttled:{{ service.id }}:{{ anomaly.id }}",
+    ),
+
+    _rule(
+        "generic_memory_pressure",
+        133,
+        "Memory pressure near the limit: restart the affected pod (any service)",
+        {
+            "all": [
+                {"metric": "infra.memory.pct", "op": ">=", "value": 0.85},
+                {"metric": "anomaly.score", "op": ">=", "value": 0.50},
+            ]
+        },
+        "RESTART_POD",
+        _K8S_PARAMS,
+        0.90,
+        "MEDIUM",
+        ["memory", "restart", "generic"],
+        "generic-memory:{{ service.id }}:{{ anomaly.id }}",
+    ),
+
+    _rule(
+        "generic_low_score_observe",
+        105,
+        "Low-score isolated anomaly: observe with a no-op before escalating",
+        {
+            "all": [
+                {"metric": "classification.is_isolated", "op": "==", "value": True},
+                {"metric": "anomaly.score", "op": ">=", "value": 0.50},
+            ]
+        },
+        "NOOP",
+        {},
+        0.95,
+        "LOW",
+        ["low-score", "observe", "generic"],
+        "generic-low-score:{{ service.id }}:{{ anomaly.id }}",
+    ),
+
+    _rule(
+        "generic_any_anomaly_observe",
+        1,
+        "Terminal fallback for any anomaly on any service: record a no-op decision",
+        {"all": [{"metric": "anomaly.id", "op": "not_in", "value": [""]}]},
+        "NOOP",
+        {},
+        1.0,
+        "LOW",
+        ["fallback", "observe", "generic"],
+        "generic-any:{{ service.id }}:{{ anomaly.id }}",
     ),
 ]

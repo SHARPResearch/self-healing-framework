@@ -16,7 +16,7 @@ const LEGEND: { severity: Severity; label: string }[] = [
 ];
 
 export function DependencyGraphPage() {
-  const { nodes, edges } = useLiveGraph();
+  const { nodes, edges, meta, loading, error } = useLiveGraph();
   const [searchParams, setSearchParams] = useSearchParams();
 
   // Deep-link entry: /dependency-graph?highlight=<service_id>. Consumed once
@@ -44,10 +44,14 @@ export function DependencyGraphPage() {
             </h2>
             <p className="text-sm text-muted-foreground">
               {nodes.length} services · {edges.length} dependencies. An arrow
-              from A to B means A calls B, built from the{" "}
-              <span className="font-mono text-xs">selfheal.io/upstreams</span>{" "}
-              annotation in the real system. Click a node to inspect it and run
-              a root-cause analysis.
+              from A to B means A calls B. Click a node to inspect it and run a
+              root-cause analysis.
+            </p>
+            <p className="mt-1 font-mono text-[10px] text-muted-foreground">
+              source={meta.source} · nodes={meta.nodeSource} · edges={meta.edgeSource}
+              {meta.version ? ` · ${meta.version}` : ""}
+              {loading ? " · refreshing" : ""}
+              {error ? ` · ${error}` : ""}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">

@@ -82,6 +82,7 @@ export interface ApiAppSnapshot {
   time: string;
   service_id: string;
   rps: number | null;
+  throughput_bps: number | null;
   latency_p50: number | null;
   latency_p90: number | null;
   latency_p95: number | null;

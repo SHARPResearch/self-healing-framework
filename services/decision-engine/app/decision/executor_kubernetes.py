@@ -21,12 +21,14 @@ Every action is idempotent — Kubernetes API is declarative, so
 re-applying the same patch twice is safe. `idempotency_keys` in the
 guardrails layer is defence-in-depth, not the sole guarantee.
 
-Auth modes:
-    in_cluster=True  → load_incluster_config() + ServiceAccount token
-    in_cluster=False → load_kube_config() + ~/.kube/config
+Auth modes (all must be supplied by the user):
+    KUBERNETES_API_SERVER + KUBERNETES_AUTH_TOKEN → bearer-token config
+    KUBERNETES_KUBECONFIG_PATH                   → explicit kubeconfig file
+    KUBERNETES_IN_CLUSTER + KUBERNETES_ALLOW_IN_CLUSTER → ServiceAccount token
 
-Dry-run mode is handled by `get_executor()` — it returns NoopExecutor
-instead of this class. So this file only runs against a real cluster.
+Dry-run or missing auth is handled by `get_executor()` — it returns
+NoopExecutor or AuthRequiredExecutor instead of this class. So this file
+only runs against a real cluster when explicit auth is present.
 
 All errors are caught and converted to ExecutionStatus.FAILED with the
 exception message in `detail`. The caller (job.py) records the outcome
@@ -66,20 +68,37 @@ class KubernetesExecutor:
     def _load(self) -> None:
         from kubernetes import client, config
 
-        if getattr(settings, "KUBERNETES_IN_CLUSTER", False):
-            try:
+        token = getattr(settings, "KUBERNETES_AUTH_TOKEN", "")
+        api_server = getattr(settings, "KUBERNETES_API_SERVER", "")
+        kubeconfig = getattr(settings, "KUBERNETES_KUBECONFIG_PATH", "")
+        in_cluster = getattr(settings, "KUBERNETES_IN_CLUSTER", False)
+        allow_in_cluster = getattr(settings, "KUBERNETES_ALLOW_IN_CLUSTER", False)
+
+        try:
+            if token and api_server:
+                configuration = client.Configuration()
+                configuration.host = api_server
+                configuration.api_key = {"authorization": f"Bearer {token}"}
+                ca_cert = getattr(settings, "KUBERNETES_CA_CERT_PATH", "")
+                if ca_cert:
+                    configuration.ssl_ca_cert = ca_cert
+                client.Configuration.set_default(configuration)
+                log.info("KubernetesExecutor: bearer-token config loaded")
+            elif kubeconfig:
+                config.load_kube_config(config_file=kubeconfig)
+                log.info("KubernetesExecutor: explicit kubeconfig loaded")
+            elif in_cluster and allow_in_cluster:
                 config.load_incluster_config()
                 log.info("KubernetesExecutor: in-cluster config loaded")
-            except Exception:
-                log.exception("KubernetesExecutor: in-cluster load failed")
-                raise
-        else:
-            try:
-                config.load_kube_config()
-                log.info("KubernetesExecutor: kubeconfig loaded")
-            except Exception:
-                log.exception("KubernetesExecutor: kubeconfig load failed")
-                raise
+            else:
+                raise RuntimeError(
+                    "Kubernetes execution auth is not configured. Set "
+                    "KUBERNETES_KUBECONFIG_PATH or KUBERNETES_API_SERVER + "
+                    "KUBERNETES_AUTH_TOKEN, or explicitly allow in-cluster auth."
+                )
+        except Exception:
+            log.exception("KubernetesExecutor: auth load failed")
+            raise
 
         self._core_api = client.CoreV1Api()
         self._apps_api = client.AppsV1Api()

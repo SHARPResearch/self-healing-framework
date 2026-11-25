@@ -86,16 +86,15 @@ class PostgresStore:
         self,
         window_sec: int = 300,
         limit: int = 100,
-        backfill_max_age_sec: int = 86400,
+        backfill_max_age_sec: int | None = 86400,
     ) -> list[dict]:
         """
         Return anomalies that do NOT already have a row in decision_log.
 
-        Ordering is oldest-first and there is deliberately NO tight upper
-        cutoff: an anomaly that was missed while the pipeline was down (or
-        that is simply older than the poll window) must still be decided on
-        the next cycle — otherwise it is silently orphaned forever ("stored
-        in the DB, never decided, never notified").
+        Ordering is newest-first so a large backlog cannot hide today's
+        anomalies; older rows are still picked up on later cycles. There is
+        deliberately NO tight upper cutoff: an anomaly that was missed while
+        the pipeline was down must still be decided eventually.
 
         `window_sec` is kept for API compatibility but only acts as the
         *recent* priority band; `backfill_max_age_sec` is a generous safety
@@ -105,19 +104,32 @@ class PostgresStore:
         anomalies.
         """
         async with self.pool.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT a.*
-                FROM anomaly_events a
-                LEFT JOIN decision_log d ON d.anomaly_id = a.id
-                WHERE d.id IS NULL
-                  AND a.detected_at >= NOW() - INTERVAL '1 second' * $1
-                ORDER BY a.detected_at ASC
-                LIMIT $2
-                """,
-                backfill_max_age_sec,
-                limit,
-            )
+            if backfill_max_age_sec is None:
+                rows = await conn.fetch(
+                    """
+                    SELECT a.*
+                    FROM anomaly_events a
+                    LEFT JOIN decision_log d ON d.anomaly_id = a.id
+                    WHERE d.id IS NULL
+                    ORDER BY a.detected_at DESC
+                    LIMIT $1
+                    """,
+                    limit,
+                )
+            else:
+                rows = await conn.fetch(
+                    """
+                    SELECT a.*
+                    FROM anomaly_events a
+                    LEFT JOIN decision_log d ON d.anomaly_id = a.id
+                    WHERE d.id IS NULL
+                      AND a.detected_at >= NOW() - INTERVAL '1 second' * $1
+                    ORDER BY a.detected_at DESC
+                    LIMIT $2
+                    """,
+                    backfill_max_age_sec,
+                    limit,
+                )
         return [dict(r) for r in rows]
     
     # ── INCIDENT LIFECYCLE ─────────────────────────────────────

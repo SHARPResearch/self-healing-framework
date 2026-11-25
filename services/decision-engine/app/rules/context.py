@@ -165,28 +165,25 @@ class AnomalyContext:
     @property
     def service_health(self) -> str:
         """
-        Normalized health, in priority order:
-        1. Mock scenario's CURRENT_SCENARIO (this is the live source of truth)
-        2. Service catalog entry (from set_services_catalog)
-        3. Graph node health
+        Normalized health. Explicit unhealthy signals from the catalog or the
+        graph win over the mock scenario, so injected incident state is honoured.
         """
-        # 1. Try the mock scenario (the live truth during demos)
+        raw = self.service.get("health") or self.service.get("status")
+        health = normalize_health(raw)
+        if health != "healthy":
+            return health
+
+        g = GraphStore().graph()
+        if self.service_id in g:
+            health = normalize_health(g.nodes[self.service_id].get("health"))
+            if health != "healthy":
+                return health
+
         try:
             from app.api.routes.mock_data import _health
             return normalize_health(_health(self.service_id))
         except Exception:
-            pass
-
-        # 2. Fall back to catalog
-        raw = self.service.get("health") or self.service.get("status")
-        if raw:
-            return normalize_health(raw)
-
-        # 3. Fall back to graph
-        g = GraphStore().graph()
-        if self.service_id in g:
-            raw = g.nodes[self.service_id].get("health")
-        return normalize_health(raw or "healthy")
+            return "healthy"
 
     # ── the metric-path resolver used by the condition evaluator ──
     def resolve(self, path: str) -> Any:
@@ -336,11 +333,20 @@ class ContextBuilder:
 
         # ── neighbor health — prefer mock scenario, fall back to graph ──
         def _health_of(nid: str) -> str:
+            entry = self._services.get(nid) or {}
+            health = normalize_health(entry.get("health") or entry.get("status"))
+            if health != "healthy":
+                return health
+
+            health = normalize_health(self._node_health(nid))
+            if health != "healthy":
+                return health
+
             try:
                 from app.api.routes.mock_data import _health
                 return normalize_health(_health(nid))
             except Exception:
-                return normalize_health(self._node_health(nid))
+                return "healthy"
 
         up_healthy = sum(1 for n in upstream if _health_of(n) == "healthy")
         down_healthy = sum(1 for n in downstream if _health_of(n) == "healthy")

@@ -18,7 +18,7 @@
   also writes its full log to .run\*.log.
 
 .PARAMETER Live
-  KUBERNETES_DRY_RUN=0 — Component 2 will actually restart/scale pods in the
+  KUBERNETES_DRY_RUN=0 - Component 2 will actually restart/scale pods in the
   cluster. Without it, every execution is recorded as NOT_IMPLEMENTED (dry run).
 
 .PARAMETER NoWeb
@@ -37,9 +37,26 @@
 .PARAMETER MinikubeProfile
   minikube profile to use (default "sharp").
 
+.PARAMETER NoBrowser
+  Do not auto-open the dashboard/docs in the default browser.
+
+.PARAMETER Showcase
+  After startup, trigger a live Component 1 fault and print the resulting
+  Component 2 decision and execution proof for the research panel.
+
+.PARAMETER ShowcaseService
+  Service used by -Showcase (default "adservice").
+
+.PARAMETER ShowcaseAction
+  Live Component 1 action used by -Showcase (default "cpu_stress").
+
+.PARAMETER ShowcaseWaitSec
+  How long -Showcase waits for a fresh decision/execution (default 60).
+
 .EXAMPLE
   pwsh -ExecutionPolicy Bypass -File scripts/run-live.ps1
   pwsh -ExecutionPolicy Bypass -File scripts/run-live.ps1 -Live
+  pwsh -ExecutionPolicy Bypass -File scripts/run-live.ps1 -Live -Showcase
 #>
 [CmdletBinding()]
 param(
@@ -48,6 +65,11 @@ param(
   [switch]$C1Only,
   [switch]$NoKill,
   [switch]$NoClusterStart,
+  [switch]$NoBrowser,
+  [switch]$Showcase,
+  [string]$ShowcaseService = "adservice",
+  [string]$ShowcaseAction = "cpu_stress",
+  [int]$ShowcaseWaitSec = 60,
   [string]$Namespace = "online-boutique",
   [string]$MinikubeProfile = "sharp",
   [int]$C1Port = 8002,
@@ -65,6 +87,16 @@ function Write-Ok($msg)   { Write-Host "    OK   $msg" -ForegroundColor Green }
 function Write-Warn2($msg){ Write-Host "    WARN $msg" -ForegroundColor Yellow }
 function Write-Bad($msg)  { Write-Host "    FAIL $msg" -ForegroundColor Red }
 
+function Open-Url([string]$Url, [string]$Label) {
+  if ($NoBrowser) { return }
+  try {
+    Start-Process $Url
+    Write-Ok "$Label opened in browser: $Url"
+  } catch {
+    Write-Warn2 "could not open $Label automatically ($Url): $($_.Exception.Message)"
+  }
+}
+
 function Resolve-Exe([string]$name) {
   foreach ($ext in @("exe", "cmd", "bat", "ps1")) {
     $c = Get-Command "$name.$ext" -ErrorAction SilentlyContinue
@@ -75,15 +107,15 @@ function Resolve-Exe([string]$name) {
   return $null
 }
 
-# ── preflight ────────────────────────────────────────────────────────
+# -- preflight --------------------------------------------------------
 Write-Step "Preflight"
 
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 
-# ── Docker check ─────────────────────────────────────────────────────
+# -- Docker check -----------------------------------------------------
 $docker = Resolve-Exe "docker"
 if (-not $docker) {
-  Write-Bad "docker not found on PATH — minikube's docker driver needs Docker Desktop."
+  Write-Bad "docker not found on PATH - minikube's docker driver needs Docker Desktop."
   Write-Host "           Install Docker Desktop and start it, then re-run." -ForegroundColor DarkGray
   exit 1
 }
@@ -94,7 +126,7 @@ if (-not $dockerInfo) {
 }
 Write-Ok "docker: $docker (daemon $dockerInfo)"
 
-# ── uv check ─────────────────────────────────────────────────────────
+# -- uv check ---------------------------------------------------------
 $uv = Resolve-Exe "uv"
 if (-not $uv) { Write-Bad "uv not found on PATH (needed for both Python services)"; exit 1 }
 Write-Ok "uv: $uv"
@@ -105,7 +137,7 @@ if (-not $NoWeb -and -not $C1Only) {
   Write-Ok "pnpm: $pnpm"
 }
 
-# ── ports check (auto-kill stale listeners unless -NoKill) ───────────
+# -- ports check (auto-kill stale listeners unless -NoKill) -----------
 $targetPorts = @($C1Port, $C2Port) + $(if ($NoWeb -or $C1Only) { @() } else { @($WebPort) })
 
 foreach ($p in $targetPorts) {
@@ -116,7 +148,7 @@ foreach ($p in $targetPorts) {
       Write-Bad "port $p is already in use (PID $($pids -join ', ')). Re-run without -NoKill or kill manually."
       exit 1
     }
-    Write-Warn2 "port $p busy (PID $($pids -join ', ')) — killing stale listener(s)"
+    Write-Warn2 "port $p busy (PID $($pids -join ', ')) - killing stale listener(s)"
     foreach ($pid_ in $pids) {
       try { Stop-Process -Id $pid_ -Force -ErrorAction Stop } catch { Write-Warn2 "could not kill PID $pid_" }
     }
@@ -129,7 +161,7 @@ foreach ($p in $targetPorts) {
 }
 Write-Ok "ports $($targetPorts -join ', ') are free"
 
-# ── Kubernetes / minikube / online-boutique check ────────────────────
+# -- Kubernetes / minikube / online-boutique check --------------------
 function Test-Namespace {
   param([string]$ns)
   if (-not (Get-Command kubectl -ErrorAction SilentlyContinue)) { return $false }
@@ -147,17 +179,17 @@ function Ensure-Cluster {
 
   # Namespace missing. If the user asked us not to start anything, warn and stop here.
   if ($SkipStart) {
-    Write-Warn2 "namespace '$ns' not found — Component 2 will record actions but nothing will run"
+    Write-Warn2 "namespace '$ns' not found - Component 2 will record actions but nothing will run"
     Write-Host "           (skipped auto-start because -NoClusterStart was passed)" -ForegroundColor DarkGray
     return $false
   }
 
-  Write-Warn2 "namespace '$ns' not found — attempting to start minikube profile '$profile'"
+  Write-Warn2 "namespace '$ns' not found - attempting to start minikube profile '$profile'"
 
   # 1. minikube must exist
   $mk = Resolve-Exe "minikube"
   if (-not $mk) {
-    Write-Bad "minikube not found on PATH — install it, or run 'up.ps1' manually, or pass -NoClusterStart"
+    Write-Bad "minikube not found on PATH - install it, or run 'up.ps1' manually, or pass -NoClusterStart"
     return $false
   }
 
@@ -198,7 +230,7 @@ function Ensure-Cluster {
     return $false
   }
 
-  Write-Step "Recreating '$ns' via $upScript (this installs Prometheus, Chaos Mesh, Online Boutique — can take several minutes)"
+  Write-Step "Recreating '$ns' via $upScript (this installs Prometheus, Chaos Mesh, Online Boutique - can take several minutes)"
   & powershell -ExecutionPolicy Bypass -File $upScript
   if ($LASTEXITCODE -ne 0) {
     Write-Bad "up.ps1 failed (exit $LASTEXITCODE)"
@@ -210,24 +242,24 @@ function Ensure-Cluster {
     Write-Ok "kubernetes namespace '$ns' exists (after up.ps1)"
     return $true
   }
-  Write-Bad "namespace '$ns' still not present after up.ps1 — aborting"
+  Write-Bad "namespace '$ns' still not present after up.ps1 - aborting"
   return $false
 }
 
 $clusterOk = Ensure-Cluster -ns $Namespace -profile $MinikubeProfile -SkipStart:$NoClusterStart
 
-# ── Prometheus check (only meaningful if cluster is up) ──────────────
+# -- Prometheus check (only meaningful if cluster is up) --------------
 if ($clusterOk) {
   try {
     $prom = Invoke-WebRequest "http://localhost:9090/-/ready" -TimeoutSec 3 -UseBasicParsing
     if ($prom.StatusCode -eq 200) { Write-Ok "Prometheus reachable on :9090" }
   } catch {
-    Write-Warn2 "Prometheus not reachable on :9090 — start the port-forward:"
+    Write-Warn2 "Prometheus not reachable on :9090 - start the port-forward:"
     Write-Host "           kubectl port-forward -n monitoring svc/prometheus-kube-prometheus-prometheus 9090:9090" -ForegroundColor DarkGray
   }
 }
 
-# ── process launcher ─────────────────────────────────────────────────
+# -- process launcher -------------------------------------------------
 $script:procs = @()
 
 function Start-Svc {
@@ -272,7 +304,90 @@ function Wait-Http {
   return $false
 }
 
-# ── start ────────────────────────────────────────────────────────────
+function Invoke-JsonGet {
+  param([string]$Url)
+  try { return Invoke-RestMethod $Url -TimeoutSec 5 -UseBasicParsing }
+  catch { return $null }
+}
+
+function Get-ApiItems {
+  param($Response, [string]$Key)
+  if ($null -eq $Response) { return @() }
+  $prop = $Response.PSObject.Properties[$Key]
+  if ($null -ne $prop) { return @($prop.Value) }
+  if ($Response -is [System.Array]) { return @($Response) }
+  return @()
+}
+
+function Show-ResearchShowcase {
+  Write-Step "Research showcase: live fault -> decision -> execution"
+  if (-not $Live) {
+    Write-Warn2 "running in dry-run mode: decisions will appear, execution will be recorded as NOT_IMPLEMENTED"
+  }
+
+  $decBase = @(Get-ApiItems (Invoke-JsonGet "http://localhost:$C2Port/api/decisions/recent?limit=100") "decisions" |
+    ForEach-Object { $_.decision_id })
+  $execBase = @(Get-ApiItems (Invoke-JsonGet "http://localhost:$C2Port/api/executions?limit=100") "executions" |
+    ForEach-Object { $_.decision_id })
+
+  try {
+    $fault = Invoke-RestMethod -Method Post `
+      -Uri "http://localhost:$C1Port/api/live/$ShowcaseService/$ShowcaseAction" `
+      -TimeoutSec 20 -UseBasicParsing
+    Write-Ok "C1 fault triggered: $ShowcaseAction on $ShowcaseService -> $($fault | ConvertTo-Json -Depth 5 -Compress)"
+  } catch {
+    Write-Bad "C1 fault trigger failed: $($_.Exception.Message)"
+    return
+  }
+
+  $deadline = (Get-Date).AddSeconds($ShowcaseWaitSec)
+  $freshDecisions = @()
+  while ((Get-Date) -lt $deadline) {
+    $allDecisions = @(Get-ApiItems (Invoke-JsonGet "http://localhost:$C2Port/api/decisions/recent?limit=100") "decisions")
+    $freshDecisions = @($allDecisions | Where-Object { $_.decision_id -and $_.decision_id -notin $decBase })
+    if ($freshDecisions.Count -gt 0) { break }
+    Start-Sleep -Seconds 2
+  }
+
+  if ($freshDecisions.Count -eq 0) {
+    Write-Bad "No fresh C2 decision appeared within ${ShowcaseWaitSec}s - check .run\C1.log and .run\C2.log"
+    return
+  }
+
+  $d = $freshDecisions[0]
+  $outcome = if ($d.policy) { $d.policy.outcome } else { "-" }
+  $reason = if ($d.policy) { $d.policy.reason } else { "-" }
+  $conf = if ($d.confidence) { $d.confidence.final } else { "-" }
+
+  Write-Host ""
+  Write-Host "  FRESH DECISION PROOF" -ForegroundColor Green
+  $d | Select-Object decision_id, anomaly_id, rule_id, action | Format-List | Out-Host
+  Write-Host "    policy_outcome : $outcome" -ForegroundColor Yellow
+  Write-Host "    policy_reason  : $reason" -ForegroundColor Yellow
+  Write-Host "    confidence     : $conf" -ForegroundColor Yellow
+
+  $deadline = (Get-Date).AddSeconds($ShowcaseWaitSec)
+  $freshExecutions = @()
+  while ((Get-Date) -lt $deadline -and $outcome -eq "AUTO_EXECUTE") {
+    $allExecutions = @(Get-ApiItems (Invoke-JsonGet "http://localhost:$C2Port/api/executions?limit=100") "executions")
+    $freshExecutions = @($allExecutions | Where-Object {
+      $_.decision_id -eq $d.decision_id -and $_.decision_id -notin $execBase
+    })
+    if ($freshExecutions.Count -gt 0) { break }
+    Start-Sleep -Seconds 2
+  }
+
+  if ($freshExecutions.Count -gt 0) {
+    Write-Host "  EXECUTION PROOF" -ForegroundColor Green
+    $freshExecutions[0] | ConvertTo-Json -Depth 6 | Write-Host
+  } elseif ($outcome -eq "AUTO_EXECUTE") {
+    Write-Warn2 "Decision was AUTO_EXECUTE but no execution row appeared yet - check .run\C2.log"
+  } else {
+    Write-Warn2 "No execution expected: policy outcome was $outcome"
+  }
+}
+
+# -- start ------------------------------------------------------------
 Write-Step "Starting Component 1 (ml-backend, live mode)"
 Start-Svc -Name "C1" -Dir (Join-Path $root "services/ml-backend") -Exe $uv `
   -ArgList @("run", "uvicorn", "app.main:app", "--port", "$C1Port") `
@@ -286,10 +401,14 @@ Start-Svc -Name "C1" -Dir (Join-Path $root "services/ml-backend") -Exe $uv `
 if (Wait-Http "http://localhost:$C1Port/api/health" 90) {
   Write-Ok "Component 1 healthy: http://localhost:$C1Port/api/health"
 } else {
-  Write-Warn2 "Component 1 did not answer yet — check $logDir\C1.log and C1.err.log"
+  Write-Warn2 "Component 1 did not answer yet - check $logDir\C1.log and C1.err.log"
 }
 
-if ($C1Only) { Write-Step "C1Only: leaving Component 1 running"; exit 0 }
+if ($C1Only) {
+  Open-Url "http://localhost:$C1Port/docs" "C1 docs"
+  Write-Step "C1Only: leaving Component 1 running"
+  exit 0
+}
 
 Write-Step "Starting Component 2 (decision engine, dry-run=$(-not $Live))"
 Start-Svc -Name "C2" -Dir (Join-Path $root "services/decision-engine") -Exe $uv `
@@ -302,10 +421,10 @@ Start-Svc -Name "C2" -Dir (Join-Path $root "services/decision-engine") -Exe $uv 
     OPEN_DOCS            = "0"
   }
 
-if (Wait-Http "http://localhost:$C2Port/api/health" 90) {
-  Write-Ok "Component 2 healthy: http://localhost:$C2Port/api/health"
+if (Wait-Http "http://localhost:$C2Port/health" 90) {
+  Write-Ok "Component 2 healthy: http://localhost:$C2Port/health"
 } else {
-  Write-Warn2 "Component 2 did not answer yet — check $logDir\C2.log and C2.err.log"
+  Write-Warn2 "Component 2 did not answer yet - check $logDir\C2.log and C2.err.log"
 }
 
 if (-not $NoWeb) {
@@ -313,15 +432,22 @@ if (-not $NoWeb) {
   $pnpmPath = Resolve-Exe "pnpm"
   Start-Svc -Name "WEB" -Dir (Join-Path $root "frontend") -Exe $pnpmPath `
     -ArgList @("dev", "--port", "$WebPort") -EnvVars @{}
+  Wait-Http "http://localhost:$WebPort" 30 | Out-Null
+  Open-Url "http://localhost:$WebPort" "dashboard"
 }
 
-# ── tail ─────────────────────────────────────────────────────────────
+Open-Url "http://localhost:$C1Port/docs" "C1 docs"
+Open-Url "http://localhost:$C2Port/docs" "C2 docs"
+
+if ($Showcase) { Show-ResearchShowcase }
+
+# -- tail -------------------------------------------------------------
 Write-Host ""
 Write-Host "===============================================================" -ForegroundColor DarkGray
 Write-Host " C1  http://localhost:$C1Port/docs   (anomaly + model lifecycle)" -ForegroundColor Cyan
 Write-Host " C2  http://localhost:$C2Port/docs   (decisions + escalations)"  -ForegroundColor Cyan
 if (-not $NoWeb) { Write-Host " WEB http://localhost:$WebPort        (dashboard)" -ForegroundColor Cyan }
-Write-Host " Execution mode: $(if ($Live) { 'LIVE — actions hit the cluster' } else { 'DRY RUN — actions recorded only' })" -ForegroundColor Yellow
+Write-Host " Execution mode: $(if ($Live) { 'LIVE - actions hit the cluster' } else { 'DRY RUN - actions recorded only' })" -ForegroundColor Yellow
 Write-Host " Press Ctrl+C to stop everything." -ForegroundColor DarkGray
 Write-Host "===============================================================" -ForegroundColor DarkGray
 

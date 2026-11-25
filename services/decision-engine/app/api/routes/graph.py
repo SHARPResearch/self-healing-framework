@@ -8,8 +8,18 @@ router = APIRouter(prefix="/api/graph", tags=["graph"])
 store = GraphStore()
 
 @router.get("/")
-def get_graph():
-    return store.snapshot()
+async def get_graph():
+    from app.integration import topology as topology_integration
+
+    source = await topology_integration.refresh_topology()
+    snapshot = store.snapshot()
+    return {
+        **snapshot.model_dump(),
+        "source": source,
+        "node_source": getattr(topology_integration, "TOPOLOGY_NODE_SOURCE", source),
+        "edge_source": getattr(topology_integration, "TOPOLOGY_EDGE_SOURCE", "seed"),
+        "version": topology_integration.TOPOLOGY_VERSION,
+    }
 
 @router.get("/centrality")
 def get_centrality():
@@ -49,6 +59,8 @@ def get_source():
     snapshot = store.snapshot()
     return {
         "source": topology_integration.TOPOLOGY_SOURCE,
+        "node_source": topology_integration.TOPOLOGY_NODE_SOURCE,
+        "edge_source": topology_integration.TOPOLOGY_EDGE_SOURCE,
         "version": topology_integration.TOPOLOGY_VERSION,
         "nodes": len(snapshot.nodes),
         "edges": len(snapshot.edges),

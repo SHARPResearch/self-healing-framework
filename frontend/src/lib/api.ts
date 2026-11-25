@@ -82,6 +82,7 @@ export interface ApiAppSnapshot {
   time: string;
   service_id: string;
   rps: number | null;
+  throughput_bps: number | null;
   latency_p50: number | null;
   latency_p90: number | null;
   latency_p95: number | null;
@@ -187,6 +188,12 @@ export interface ApiDecision {
    * as "—" rather than inventing a number.
    */
   timings?: Record<string, number> | null;
+  /**
+   * Component 1 provenance, written by the pipeline: the model version and
+   * drift/quarantine phase the anomaly came from, plus which telemetry fed the
+   * context (`telemetry_source: {infra, app}`). Absent on older rows.
+   */
+  component1?: Record<string, unknown> | null;
   created_at: string;
 }
 

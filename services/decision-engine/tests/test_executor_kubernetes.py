@@ -88,3 +88,47 @@ async def test_noop_succeeds(patched_loader):
     ex = KubernetesExecutor()
     result = await ex.execute(_decision(ActionType.NOOP))
     assert result.status == ExecutionStatus.SUCCESS
+
+
+def test_load_uses_explicit_kubeconfig_path(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    from app.config import settings
+    from app.decision import executor_kubernetes as ekm
+
+    fake_client = MagicMock()
+    fake_config = MagicMock()
+    monkeypatch.setitem(sys.modules, "kubernetes", SimpleNamespace(client=fake_client, config=fake_config))
+    monkeypatch.setattr(settings, "KUBERNETES_IN_CLUSTER", False)
+    monkeypatch.setattr(settings, "KUBERNETES_KUBECONFIG_PATH", "C:/tmp/kubeconfig")
+    monkeypatch.setattr(settings, "KUBERNETES_API_SERVER", "")
+    monkeypatch.setattr(settings, "KUBERNETES_AUTH_TOKEN", "")
+
+    ekm.KubernetesExecutor()
+
+    fake_config.load_kube_config.assert_called_once_with(config_file="C:/tmp/kubeconfig")
+
+
+def test_load_uses_bearer_token(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    from app.config import settings
+    from app.decision import executor_kubernetes as ekm
+
+    fake_configuration = MagicMock()
+    fake_client = MagicMock()
+    fake_client.Configuration.return_value = fake_configuration
+    fake_config = MagicMock()
+    monkeypatch.setitem(sys.modules, "kubernetes", SimpleNamespace(client=fake_client, config=fake_config))
+    monkeypatch.setattr(settings, "KUBERNETES_API_SERVER", "https://127.0.0.1:6443")
+    monkeypatch.setattr(settings, "KUBERNETES_AUTH_TOKEN", "secret")
+    monkeypatch.setattr(settings, "KUBERNETES_CA_CERT_PATH", "C:/tmp/ca.crt")
+
+    ekm.KubernetesExecutor()
+
+    assert fake_configuration.host == "https://127.0.0.1:6443"
+    assert fake_configuration.api_key == {"authorization": "Bearer secret"}
+    assert fake_configuration.ssl_ca_cert == "C:/tmp/ca.crt"
+    fake_client.Configuration.set_default.assert_called_once_with(fake_configuration)

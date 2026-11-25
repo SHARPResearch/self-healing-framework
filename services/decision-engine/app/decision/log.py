@@ -151,5 +151,7 @@ def row_to_decision(row: dict[str, Any]) -> dict[str, Any]:
         },
         # Present only for rows written by the instrumented pipeline job.
         "timings": ctx.get("timings"),
+        # Present only for decisions fed by Component 1.
+        "component1": ctx.get("component1"),
         "created_at": row["created_at"].isoformat() if hasattr(row["created_at"], "isoformat") else row["created_at"],
     }

@@ -188,50 +188,19 @@ Grafana is limited to 300 MiB in a 7 GB cluster. If the laptop struggles, set `g
 
 ## Layout
 
-| Path | What lives there |
-|---|---|
-| `services/ml-backend/` | FastAPI backend: telemetry (replay or Prometheus), PCA detector, CADAL lifecycle, REST + WebSocket |
-| `services/auth/` | Accounts, organizations and roles (Better Auth); in production also serves the dashboard |
-| `services/decision-engine/` | Decision engine (Python/FastAPI): policy evaluation and action dispatch |
-| `services/yarp-gateway/` | YARP traffic gateway (planned, README only) |
-| `services/llm-copilot/` | LangChain RCA and copilot service |
-| `services/shared/` | Cross-service shared code |
-| `services/target-services/` | Sample microservices for chaos-injection demos |
-| `frontend/` | React 18 + Vite + Tailwind observability dashboard |
-| `ml-pipeline/` | Research pipeline: detector, CADAL (dynamic model updating) and their evaluation, see `RESULTS.md` and `RESULTS_COMPONENT2.md` |
-| `infrastructure/` | Local compose files, the Online Boutique cluster setup, Helm and Kubernetes manifests |
-| `datasets/` | Dataset download scripts (raw data itself is gitignored) |
-| `docs/` | Architecture, decision records (`docs/adr/`), execution guide and per-topic docs |
-
-## Accounts, organizations and hosting
-
-SHARP has accounts and multi-tenancy: people sign up, create an organization (a tenant) and invite
-teammates as viewer, operator, admin or owner. Each organization gets its own fleet, models,
-decisions and logs, and cannot see another's. Accounts run on Better Auth (`services/auth`, free
-and self-hosted); ml-backend checks a short-lived JWT on every request. Decisions in
-`docs/adr/0014` to `0016`.
-
-The whole application deploys to Render's free plan from `render.yaml`: the dashboard and accounts
-in one web service, ml-backend replaying the SMD demo, PostgreSQL and Key Value. Step by step,
-with the free plan's limits: [`docs/Deployment_Render.md`](docs/Deployment_Render.md). The live
-Online Boutique mode needs Kubernetes and stays on minikube.
-
-## Setup guide (step by step)
-
-This section takes you from an empty laptop to a running SHARP. Follow the steps in order. Every
-command is for **PowerShell on Windows** (the project's development machine); on macOS or Linux the
-same commands work in a normal terminal.
-
-### Pick how you want to run it
-
-| Way | What you get | You need | First time |
-|---|---|---|---|
-| **A. Quick demo** | The dashboard with six demo services replaying real server data, and CADAL deciding when models change. No login | Docker, Python, Node | about 15 minutes |
-| **B. Demo with accounts** | Way A plus sign up, organizations, roles and invitations | Way A, plus the auth service | 5 more minutes |
-| **C. Live Kubernetes** | SHARP watching a real shop (Online Boutique) on a local Kubernetes cluster, with real faults injected | Way A, plus minikube, kubectl and Helm, and about 10 GB of free memory | about 1.5 hours (one hour of it is waiting) |
-| **D. On the internet** | A public link anyone can sign up on | GitHub and Render accounts | see [docs/Deployment_Render.md](docs/Deployment_Render.md) |
-
-New to the project? Start with **A**.
+| Path                        | What lives there                                                             |
+| --------------------------- | ---------------------------------------------------------------------------- |
+| `services/ml-backend/`      | FastAPI telemetry ingestion + streaming ML engine + MLflow client            |
+| `services/decision-engine/` | .NET 8 Worker Service — policy evaluation, dependency graph, action dispatch |
+| `services/yarp-gateway/`    | YARP reverse proxy — executes traffic-shifting recovery actions              |
+| `services/llm-copilot/`     | LangChain RCA + copilot service                                              |
+| `services/shared/`          | Cross-service shared code                                                    |
+| `services/target-services/` | Sample microservices for chaos-injection demos                               |
+| `frontend/`                 | React 18 + Vite + Tailwind observability dashboard                           |
+| `ml-pipeline/`              | Standalone HST warm-up + drift-detection research pipeline                   |
+| `infrastructure/`           | Helm charts, Kubernetes manifests, Terraform                                 |
+| `datasets/`                 | Dataset download/preprocessing scripts (raw data itself is gitignored)       |
+| `docs/`                     | Architecture, monorepo structure, execution guide, and per-topic docs        |
 
 ### Step 1. Install the tools (once per laptop)
 
@@ -445,6 +414,37 @@ backend and the demo), [services/auth/README.md](services/auth/README.md) (accou
 
 ## Docs
 
+- `docs/Doc1_Technical_Architecture.md` — architecture, data flow, ML config, decision policy
+- `docs/Doc2_GitHub_Monorepo_Structure.md` — the folder layout this repo follows
+- `docs/Doc3_Execution_Guide.md` — chronological build phases
+- `docs/Component_1_2_Technical_Guide.md` — the `ml-pipeline/` research prototype walkthrough
+
+## Run everything with one command
+
+```powershell
+# dry run: decisions are made, executions recorded as NOT_IMPLEMENTED
+powershell -ExecutionPolicy Bypass -File scripts/run-live.ps1
+
+# live: AUTO_EXECUTE really restarts pods in online-boutique
+powershell -ExecutionPolicy Bypass -File scripts/run-live.ps1 -Live
+
+## if this is not work - use this
+pwsh -ExecutionPolicy Bypass -File scripts/run-live.ps1 -Live
+
+# backends only
+powershell -ExecutionPolicy Bypass -File scripts/run-live.ps1 -NoWeb
+```
+
+It preflights (ports, kubectl namespace, Prometheus on :9090), starts the three
+processes, prefixes their logs `[C1] [C2] [WEB]`, and stops everything on Ctrl+C.
+Full logs: `.run\C1.log`, `.run\C2.log`, `.run\WEB.log`.
+
+**Prerequisites** (once per session):
+
+```powershell
+# cluster + Prometheus port-forward (the runner checks this)
+kubectl port-forward -n monitoring svc/prometheus-kube-prometheus-prometheus 9090:9090
+```
 - `docs/Doc1_Technical_Architecture.md`: architecture, data flow, ML config, decision policy
 - `docs/Doc2_GitHub_Monorepo_Structure.md`: the folder layout this repo follows
 - `docs/Doc3_Execution_Guide.md`: chronological build phases

@@ -11,7 +11,8 @@ const AUTH_SERVER = process.env.AUTH_URL ?? "http://localhost:8010";
 // A reloaded tab, a restarted backend or a sleeping laptop drops the dashboard's WebSocket; the app
 // reconnects by itself (lib/mlBackend.ts), so Vite logging each drop as an error is only noise.
 // Other proxy errors, and every HTTP one (a down backend is worth knowing about), still print.
-const EXPECTED_WS_DROP = /ws proxy (socket )?error:[\s\S]*(ECONNRESET|ECONNREFUSED|EPIPE|ended by the other party)/;
+const EXPECTED_WS_DROP =
+  /ws proxy (socket )?error:[\s\S]*(ECONNRESET|ECONNREFUSED|EPIPE|ended by the other party)/;
 const logger = createLogger();
 const logError = logger.error.bind(logger);
 logger.error = (msg, options) => {

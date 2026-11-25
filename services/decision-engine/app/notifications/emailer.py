@@ -2,10 +2,10 @@
 """
 Email notifier.
 
-Sends a plain + HTML email when (a) a new anomaly/incident opens, and
-(b) a decision is made for an anomaly. Every attempt is logged to the
-`notifications` table so "what was the user told?" has a single source
-of truth.
+Sends a plain + HTML email when (a) a new anomaly/incident opens,
+(b) a decision is made for an anomaly, and (c) that decision is executed.
+Every attempt is logged to the `notifications` table so "what was the
+user told?" has a single source of truth.
 
 Transport: aiosmtplib over STARTTLS (default) or SSL. Credentials come
 from the environment (SMTP_*). If SMTP_PASSWORD is empty the notifier
@@ -85,6 +85,15 @@ def _outcome_color(outcome: str) -> str:
     if o in ("ALLOW", "APPROVED", "OK", "PASS"):
         return _OK
     if "WARN" in o or "REVIEW" in o or "UNVALIDATED" in o:
+        return _WARN
+    return _ALERT
+
+
+def _execution_color(status: str) -> str:
+    s = (status or "").upper()
+    if s in ("SUCCESS", "DRY_RUN"):
+        return _OK
+    if s in ("SKIPPED", "NOT_IMPLEMENTED"):
         return _WARN
     return _ALERT
 
@@ -215,6 +224,62 @@ def _decision_body(decision: dict, anomaly: dict | None) -> tuple[str, str]:
             ("Decision ID", str(decision.get("decision_id", "—"))),
         ],
         footer_note="Automated decision notification from the SHARP decision engine.",
+    )
+    return text, html
+
+
+def _execution_subject(decision: dict, result: dict) -> str:
+    svc = decision.get("service_id") or "service"
+    action = decision.get("action") or "NOOP"
+    status = result.get("status") or "UNKNOWN"
+    return f"[SHARP] Execution {status}: {action} on {svc}"
+
+
+def _execution_body(decision: dict, result: dict, anomaly: dict | None) -> tuple[str, str]:
+    svc = (anomaly or {}).get("service_name") or decision.get("service_id") or "—"
+    action = decision.get("action") or "NOOP"
+    status = result.get("status") or "UNKNOWN"
+    message = result.get("message") or "—"
+    detail = result.get("detail") or {}
+    accent = _execution_color(status)
+
+    text = (
+        f"{_SYSTEM_NAME}\n"
+        f"RECOVERY EXECUTION\n"
+        f"{'-' * 46}\n\n"
+        f"The decision engine attempted the selected recovery action.\n\n"
+        f"Service           : {svc} ({decision.get('service_id', '—')})\n"
+        f"Action            : {action}\n"
+        f"Execution status  : {status}\n"
+        f"Message           : {message}\n"
+        f"Detail            : {detail}\n"
+        f"Anomaly ID        : {decision.get('anomaly_id', '—')}\n"
+        f"Decision ID       : {decision.get('decision_id', '—')}\n"
+        f"Executed at       : {_fmt_ts(result.get('executed_at'))}\n\n"
+        f"This is an automated notification from {_SYSTEM_NAME}.\n"
+        f"Please do not reply to this email."
+    )
+
+    html = _email_shell(
+        title=f"Recovery execution: {escape(str(action))}",
+        subtitle_html=(
+            f"Execution status <strong>{escape(str(status))}</strong> "
+            f"for <strong>{escape(str(svc))}</strong>"
+        ),
+        summary="The selected recovery action was sent to the execution layer.",
+        accent=accent,
+        preheader=f"{status}: {action} on {svc}.",
+        rows=[
+            ("Service", f"{svc} ({decision.get('service_id', '—')})"),
+            ("Action", action),
+            ("Execution status", status),
+            ("Message", str(message)),
+            ("Detail", str(detail)),
+            ("Anomaly ID", str(decision.get("anomaly_id", "—"))),
+            ("Decision ID", str(decision.get("decision_id", "—"))),
+            ("Executed at", _fmt_ts(result.get("executed_at"))),
+        ],
+        footer_note="Automated execution notification from the SHARP decision engine.",
     )
     return text, html
 
@@ -440,6 +505,8 @@ def _enabled(kind: str) -> bool:
         return bool(getattr(settings, "NOTIFY_ON_ANOMALY", True))
     if kind == "DECISION_MADE":
         return bool(getattr(settings, "NOTIFY_ON_DECISION", True))
+    if kind == "EXECUTION_COMPLETED":
+        return bool(getattr(settings, "NOTIFY_ON_EXECUTION", True))
     return True
 
 
@@ -478,3 +545,22 @@ async def notify_decision_made(decision: dict, anomaly: dict | None = None) -> N
         )
     except Exception:
         log.exception("notify_decision_made failed")
+
+
+async def notify_execution_result(decision: dict, result: dict, anomaly: dict | None = None) -> None:
+    """Email the operator the actual execution status of a decision."""
+    if not _enabled("EXECUTION_COMPLETED"):
+        return
+    try:
+        text, html = _execution_body(decision, result, anomaly)
+        await _deliver(
+            "EXECUTION_COMPLETED",
+            _execution_subject(decision, result),
+            text,
+            html,
+            anomaly_id=decision.get("anomaly_id"),
+            decision_id=decision.get("decision_id"),
+            service_id=decision.get("service_id"),
+        )
+    except Exception:
+        log.exception("notify_execution_result failed")

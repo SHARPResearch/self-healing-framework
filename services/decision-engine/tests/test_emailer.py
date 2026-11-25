@@ -6,6 +6,8 @@ from app.notifications.emailer import (
     _anomaly_subject,
     _decision_body,
     _decision_subject,
+    _execution_body,
+    _execution_subject,
 )
 
 
@@ -88,3 +90,53 @@ async def test_send_embeds_inline_logo_and_uses_branded_sender(monkeypatch):
     assert "cid:sharp-favicon" in html_part.get_content()
     assert logo_part["Content-ID"] == "<sharp-favicon>"
     assert logo_part["Content-Disposition"].content_disposition == "inline"
+
+
+def test_execution_email_includes_status_and_decision_ids():
+    decision = {
+        "service_id": "adservice",
+        "action": "SCALE_UP",
+        "anomaly_id": "AN-123",
+        "decision_id": "DEC-456",
+    }
+    result = {
+        "status": "SUCCESS",
+        "message": "scaled deployment/adservice to 2 replicas",
+        "detail": {"namespace": "online-boutique"},
+        "executed_at": "2026-11-25T10:00:00Z",
+    }
+
+    text, html = _execution_body(decision, result, {"service_name": "adservice"})
+
+    assert _execution_subject(decision, result) == "[SHARP] Execution SUCCESS: SCALE_UP on adservice"
+    assert "Execution status  : SUCCESS" in text
+    assert "scaled deployment/adservice to 2 replicas" in text
+    assert "cid:sharp-favicon" in html
+    assert "DEC-456" in html
+
+
+@pytest.mark.asyncio
+async def test_notify_execution_result_logs_and_honours_toggle(monkeypatch):
+    captured = []
+
+    async def capture_deliver(kind, subject, text, html, **kwargs):
+        captured.append((kind, subject, kwargs))
+
+    monkeypatch.setattr(emailer.settings, "NOTIFY_ENABLED", True)
+    monkeypatch.setattr(emailer.settings, "NOTIFY_ON_EXECUTION", True)
+    monkeypatch.setattr(emailer, "_deliver", capture_deliver)
+
+    await emailer.notify_execution_result(
+        {
+            "service_id": "adservice",
+            "action": "RESTART_POD",
+            "anomaly_id": "AN-123",
+            "decision_id": "DEC-456",
+        },
+        {"status": "SKIPPED", "message": "KUBERNETES_AUTH_REQUIRED"},
+    )
+
+    assert captured
+    assert captured[0][0] == "EXECUTION_COMPLETED"
+    assert captured[0][1] == "[SHARP] Execution SKIPPED: RESTART_POD on adservice"
+    assert captured[0][2]["decision_id"] == "DEC-456"

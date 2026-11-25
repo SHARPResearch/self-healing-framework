@@ -140,6 +140,12 @@ class Decision(BaseModel):
     # those callers look exactly as they did before.
     timings: dict[str, float] = Field(default_factory=dict)
 
+    # Component 1 provenance: the model version / drift phase the anomaly came
+    # from, plus which telemetry (snapshot vs fallback) fed the context. Empty
+    # for decisions made before the integration, and omitted from the row in
+    # that case so old rows look exactly as they did.
+    component1: dict[str, Any] = Field(default_factory=dict)
+
     # ── helpers ───────────────────────────────────────────────────
     def to_log_row(self) -> dict[str, Any]:
         """Flatten into the exact columns of decision_log."""
@@ -169,6 +175,7 @@ class Decision(BaseModel):
                 "downstream": self.downstream,
                 "blast_members": self.blast_members,
                 **({"timings": self.timings} if self.timings else {}),
+                **({"component1": self.component1} if self.component1 else {}),
             },
             "created_at": self.created_at.isoformat(),
         }

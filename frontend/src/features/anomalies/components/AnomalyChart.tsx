@@ -149,6 +149,16 @@ export function buildRpsSeries(snapshots: ApiAppSnapshot[]) {
     }));
 }
 
+export function buildThroughputSeries(snapshots: ApiAppSnapshot[]) {
+  return snapshots
+    .filter((s) => s.throughput_bps != null)
+    .map((s) => ({
+      time: s.time,
+      t: new Date(s.time).getTime(),
+      value: s.throughput_bps ?? 0,
+    }));
+}
+
 export function buildMemorySeries(snapshots: ApiInfraSnapshot[]) {
   return snapshots
     .filter((s) => s.mem_pct != null)

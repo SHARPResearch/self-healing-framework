@@ -4,12 +4,12 @@ from pydantic import BaseModel, Field
 from typing import Literal
 
 class ServiceNode(BaseModel):
-    id: str                          # e.g. "payment-svc"
+    id: str
     name: str
     namespace: str = "default"
-    kind: str = "Service"            # Service | Deployment | Pod
-    criticality: float = 1.0         # 0..1, from business rules
-    health: Literal["healthy", "degraded", "down"] = "healthy"
+    kind: str = "Service"
+    criticality: float = 1.0
+    health: Literal["healthy", "degraded", "down", "watch", "critical"] = "healthy"
     metadata: dict = Field(default_factory=dict)
 
 class DependencyEdge(BaseModel):

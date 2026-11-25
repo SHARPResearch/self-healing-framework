@@ -9,6 +9,7 @@ import {
   buildLatencySeries,
   buildMemorySeries,
   buildRpsSeries,
+  buildThroughputSeries,
 } from "./AnomalyChart";
 import type { Severity } from "@/shared/types";
 
@@ -164,6 +165,13 @@ export function AnomalyEvidenceModal({ anomalyId, onClose }: Props) {
                 unit="rps"
                 data={buildRpsSeries(data.app_snapshots)}
                 color="#22c55e"
+                markerTime={data.anomaly.detected_at}
+              />
+              <AnomalyChart
+                title="Network throughput"
+                unit="B/s"
+                data={buildThroughputSeries(data.app_snapshots)}
+                color="#06b6d4"
                 markerTime={data.anomaly.detected_at}
               />
               <AnomalyChart

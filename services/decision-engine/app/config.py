@@ -44,6 +44,11 @@ class Settings:
     # ── Internal telemetry source (mock endpoints on our own app) ──
     TELEMETRY_SOURCE_URL: str = os.getenv("TELEMETRY_SOURCE_URL", "http://localhost:8000")
 
+    # ── Component 1 (ml-backend: anomaly detector + dynamic model updating) ──
+    # Read-only. Anomaly signals and model state are pulled from here; when it is
+    # unreachable the engine falls back to its local sources instead of stalling.
+    COMPONENT1_URL: str = os.getenv("COMPONENT1_URL", "http://localhost:8002")
+
     # ── Developer convenience ──────────────────────────────────────
     # Auto-open the Swagger UI in the default browser when the server
     # boots. Set OPEN_DOCS=0 to disable (e.g. in prod/CI).
@@ -63,6 +68,7 @@ class Settings:
     NOTIFY_RECIPIENT: str = os.getenv("NOTIFY_RECIPIENT", "dinildulneth123@gmail.com")
     NOTIFY_ON_ANOMALY: bool = os.getenv("NOTIFY_ON_ANOMALY", "1").lower() not in ("0", "false", "no")
     NOTIFY_ON_DECISION: bool = os.getenv("NOTIFY_ON_DECISION", "1").lower() not in ("0", "false", "no")
+    NOTIFY_ON_EXECUTION: bool = os.getenv("NOTIFY_ON_EXECUTION", "1").lower() not in ("0", "false", "no")
 
     # ── Redis (optional — guardrails cache) ────────────────────
     # If empty, the guardrails fall back to an in-memory store.
@@ -80,11 +86,15 @@ class Settings:
     
     # ── Kubernetes executor ───────────────────────────────────
     # dry_run: log the call, don't touch the cluster (default safe).
-    # in_cluster: running inside a Pod, use ServiceAccount token.
-    # local: running on a dev machine, use ~/.kube/config.
+    # Explicit auth is required before any real cluster call is allowed.
     KUBERNETES_DRY_RUN: bool = os.getenv("KUBERNETES_DRY_RUN", "1").lower() not in ("0", "false", "no")
     KUBERNETES_NAMESPACE: str = os.getenv("KUBERNETES_NAMESPACE", "default")
     KUBERNETES_IN_CLUSTER: bool = os.getenv("KUBERNETES_IN_CLUSTER", "0").lower() in ("1", "true", "yes")
+    KUBERNETES_ALLOW_IN_CLUSTER: bool = os.getenv("KUBERNETES_ALLOW_IN_CLUSTER", "0").lower() in ("1", "true", "yes")
+    KUBERNETES_KUBECONFIG_PATH: str = os.getenv("KUBERNETES_KUBECONFIG_PATH", "")
+    KUBERNETES_API_SERVER: str = os.getenv("KUBERNETES_API_SERVER", "")
+    KUBERNETES_AUTH_TOKEN: str = os.getenv("KUBERNETES_AUTH_TOKEN", "")
+    KUBERNETES_CA_CERT_PATH: str = os.getenv("KUBERNETES_CA_CERT_PATH", "")
     KUBERNETES_REQUEST_TIMEOUT_SEC: int = int(os.getenv("KUBERNETES_REQUEST_TIMEOUT_SEC", "20"))
     KUBERNETES_DEFAULT_GRACE_SEC: int = int(os.getenv("KUBERNETES_DEFAULT_GRACE_SEC", "30"))
     

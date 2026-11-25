@@ -79,6 +79,16 @@ def test_services_match_frontend_service_health(client):
     assert len(scores) == 20 and scores[-1]["threshold"] == 0.5
 
 
+def test_metrics_endpoint_returns_raw_features_for_c2(client):
+    warm(client, 40)
+    client.portal.call(runtime.flush_rows)
+    rows = client.get(f"/api/services/{SERVICE}/metrics?limit=10").json()
+    assert rows
+    assert rows[-1]["service_id"] == SERVICE
+    assert "features" in rows[-1]
+    assert "cpu_rate" in rows[-1]["features"]
+
+
 def test_models_match_frontend_model_run(client):
     rows = client.get("/api/models").json()
     assert MODEL_RUN_KEYS <= rows[0].keys()

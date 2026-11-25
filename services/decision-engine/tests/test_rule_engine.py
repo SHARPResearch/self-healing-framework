@@ -15,9 +15,10 @@ from app.core.graph_store import GraphStore
 from app.core.blast_radius import BlastRadiusAnalyzer
 from app.core.centrality import CentralityCalculator
 from app.core.root_cause import localize_root_cause
-from app.rules.context import ContextBuilder
+from app.rules.context import AnomalyContext, ContextBuilder
 from app.rules.classifier import classify, AnomalyKind
-from app.rules.engine import rule_engine
+from app.rules.engine import _eval_condition, rule_engine
+from app.rules.generic_rules import GENERIC_RULES
 from app.topology.sources.static_source import load_static_topology
 
 
@@ -203,3 +204,36 @@ def test_blast_radius_auth_service():
     # by api-gateway, which is called by waf-proxy → at least 4
     assert size >= 4
     assert 1.0 <= analyzer.factor("auth-service") <= 1.5
+
+
+def _generic(rule_id):
+    return next(r for r in GENERIC_RULES if r["id"] == rule_id)
+
+
+def test_generic_fallback_matches_any_anomaly():
+    ctx = AnomalyContext(
+        anomaly={"id": "ANM-any", "service_id": "adservice", "anomaly_score": 0.0},
+        service={"service_id": "adservice", "layer": "domain"},
+    )
+
+    assert _eval_condition(_generic("generic_any_anomaly_observe")["when"], ctx) is True
+
+
+def test_generic_low_score_rule_matches_isolated_anomaly():
+    ctx = AnomalyContext(
+        anomaly={"id": "ANM-low", "service_id": "adservice", "anomaly_score": 0.52},
+        service={"service_id": "adservice", "layer": "domain"},
+        kind="ISOLATED",
+    )
+
+    assert _eval_condition(_generic("generic_low_score_observe")["when"], ctx) is True
+
+
+def test_generic_restarts_rule_matches_any_service():
+    ctx = AnomalyContext(
+        anomaly={"id": "ANM-restart", "service_id": "adservice", "anomaly_score": 0.70},
+        service={"service_id": "adservice", "layer": "domain"},
+        infra={"restarts_last_5m": 4},
+    )
+
+    assert _eval_condition(_generic("generic_restarts_spike")["when"], ctx) is True

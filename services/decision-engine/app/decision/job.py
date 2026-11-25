@@ -12,15 +12,17 @@ in get_anomalies_without_decisions).
 """
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timezone
 from time import perf_counter
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from app.api.routes.mock_data import _app, _infra, SERVICES
+from app.integration.catalog import resolve_catalog
 from app.config import settings
 from app.decision.log import build_decision, persist_decision
+from app.integration.telemetry import build_telemetry
 from app.persistence.postgres import postgres_store
 from app.rules.classifier import classify
 from app.rules.context import ContextBuilder
@@ -28,6 +30,16 @@ from app.rules.engine import rule_engine
 from app.decision.executor import ExecutionStatus
 
 log = logging.getLogger(__name__)
+
+
+def _decode_json(value):
+    """JSONB columns arrive as text from asyncpg."""
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except (ValueError, TypeError):
+            return {}
+    return value or {}
 
 
 def _ms(start: float) -> float:
@@ -53,7 +65,11 @@ async def poll_and_decide():
         for anomaly in anomalies:
             try:
                 sid = anomaly.get("service_id")
-                if not sid or sid not in SERVICES:
+                # The catalog is the local demo entries plus every node of the
+                # live dependency graph, so a service that only exists on the
+                # cluster is still decided on.
+                catalog = resolve_catalog()
+                if not sid or sid not in catalog:
                     log.warning("Pipeline: unknown service %s, skipping", sid)
                     continue
 
@@ -70,13 +86,21 @@ async def poll_and_decide():
                     )
 
                 # ── 1. Build context ─────────────────────────────
+                # Real captured telemetry when the anomaly has snapshots, mock
+                # only as a fallback. The `source` is recorded on the decision.
+                t0 = perf_counter()
+                infra, app_data, telemetry_source = await build_telemetry(
+                    str(anomaly.get("id")), sid
+                )
+                timings["telemetry_ms"] = _ms(t0)
+
                 t0 = perf_counter()
                 builder = ContextBuilder()
-                builder.set_services_catalog(SERVICES)
+                builder.set_services_catalog(catalog)
                 ctx = builder.build(
                     anomaly,
-                    infra=_infra(sid),
-                    app=_app(sid),
+                    infra=infra,
+                    app=app_data,
                     recent_anomalies=anomalies,
                 )
                 timings["context_ms"] = _ms(t0)
@@ -167,6 +191,16 @@ async def poll_and_decide():
 
                 decision.timings = timings
 
+                # Component 1 context: the model version / drift phase the
+                # anomaly came from, plus which telemetry actually fed the
+                # context. Stored on the decision so the dashboard can show it.
+                component1 = _decode_json(anomaly.get("features"))
+                if component1:
+                    decision.component1 = {
+                        **component1,
+                        "telemetry_source": telemetry_source,
+                    }
+
                 # ── 6. Persist decision ──────────────────────────
                 saved = await persist_decision(decision)
                 if not saved:
@@ -208,6 +242,21 @@ async def poll_and_decide():
                         )
                     except Exception:
                         log.exception("Pipeline: record_action_outcome failed")
+
+                    try:
+                        from app.notifications.emailer import notify_execution_result
+                        await notify_execution_result(
+                            {
+                                "decision_id": decision.decision_id,
+                                "anomaly_id": str(anomaly.get("id")),
+                                "service_id": sid,
+                                "action": decision.action.value,
+                            },
+                            result.to_dict(),
+                            anomaly,
+                        )
+                    except Exception:
+                        log.exception("notify_execution_result failed for %s", anomaly.get("id"))
 
                 elif decision.policy_outcome == PolicyOutcome.SHADOW_MODE:
                     if validation.shadow_payload:

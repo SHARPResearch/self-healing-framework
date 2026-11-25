@@ -6,8 +6,8 @@ Priority:
   1. the snapshots this engine captured for the anomaly — `infra_snapshots` and
      `app_snapshots` in Timescale, whose `raw` column holds the exact payload the
      puller received at capture time;
-  2. the mock generator, so an anomaly with no snapshots still gets a decision
-     instead of being silently skipped.
+  2. neutral telemetry for the live topology (or the local generator in replay
+      mode), so an anomaly with no snapshots still gets a decision.
 
 This is the honest path to real numbers: `TELEMETRY_SOURCE_URL` decides where
 `ingestion/telemetry_puller.py` reads from, so pointing it at the live scrape
@@ -86,7 +86,18 @@ def _neutral_telemetry(service_id: str) -> tuple[dict[str, Any], dict[str, Any]]
     return infra, app
 
 
+def _live_topology() -> bool:
+    try:
+        from app.integration.topology import TOPOLOGY_SOURCE
+
+        return TOPOLOGY_SOURCE == "component1"
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _fallback_telemetry(service_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    if _live_topology():
+        return _neutral_telemetry(service_id)
     try:
         return _mock_telemetry(service_id)
     except KeyError:
@@ -144,15 +155,16 @@ async def build_telemetry(
     """
     infra_snapshot, app_snapshot = await load_snapshots(anomaly_id)
 
+    fallback_source = "neutral" if _live_topology() else "mock"
     source = {
-        "infra": "snapshot" if infra_snapshot else "mock",
-        "app": "snapshot" if app_snapshot else "mock",
+        "infra": "snapshot" if infra_snapshot else fallback_source,
+        "app": "snapshot" if app_snapshot else fallback_source,
     }
 
     if not infra_snapshot:
-        log.debug("No infra snapshot for %s — falling back to generated values", anomaly_id)
+        log.debug("No infra snapshot for %s — falling back to %s values", anomaly_id, fallback_source)
     if not app_snapshot:
-        log.debug("No app snapshot for %s — falling back to generated values", anomaly_id)
+        log.debug("No app snapshot for %s — falling back to %s values", anomaly_id, fallback_source)
 
     if infra_snapshot and app_snapshot:
         return infra_snapshot, app_snapshot, source

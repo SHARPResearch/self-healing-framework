@@ -1,5 +1,5 @@
 // frontend\src\features\executions\ExecutionsPage.tsx
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   AlertTriangle,
@@ -11,6 +11,8 @@ import {
 } from "lucide-react";
 import { AppShell } from "@/shared/layout/AppShell";
 import { Button } from "@/components/ui/button";
+import { ListTable, Pagination, TableToolbar, useListControls } from "@/shared/components/ListTable";
+import type { ListColumn, SortState } from "@/shared/components/ListTable";
 import { cn } from "@/lib/utils";
 import { usePoll } from "@/hooks/usePoll";
 import {
@@ -52,6 +54,16 @@ function StatusBadge({ status }: { status: string }) {
  * never produced an execution row at all.
  */
 export function ExecutionsPage() {
+  const [search, setSearch] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [sort, setSort] = useState<SortState | null>({
+    key: "executed_at",
+    direction: "desc",
+  });
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+
   const executions = usePoll<ApiExecutionRow[]>(() => fetchExecutions(200), {
     pollMs: 20000,
     key: "executions",
@@ -63,6 +75,80 @@ export function ExecutionsPage() {
 
   const rows = executions.data ?? [];
   const allDecisions = decisions.data ?? [];
+
+  useEffect(() => setPage(1), [search, dateFrom, dateTo]);
+
+  const table = useListControls({
+    rows,
+    search,
+    searchValues: (row) => [
+      row.service_id,
+      row.action,
+      row.status,
+      row.decision_id,
+      row.message ?? "",
+    ],
+    dateField: (row) => row.executed_at,
+    dateFrom,
+    dateTo,
+    sort,
+    sortValue: (row, key) => executionSortValue(row, key),
+    page,
+    pageSize,
+  });
+
+  const columns = useMemo<ListColumn<ApiExecutionRow>[]>(
+    () => [
+      {
+        key: "executed_at",
+        header: "Time",
+        sortValue: (row) => row.executed_at,
+        className: "whitespace-nowrap font-mono text-[10px] text-muted-foreground",
+        render: (row) => formatClock(row.executed_at),
+      },
+      {
+        key: "service",
+        header: "Service",
+        sortValue: (row) => row.service_id,
+        render: (row) => (
+          <>
+            <div className="font-medium">{row.service_id}</div>
+            <Link
+              to={`/decisions/${encodeURIComponent(row.decision_id)}`}
+              className="font-mono text-[9px] text-status-warn hover:underline"
+            >
+              run →
+            </Link>
+          </>
+        ),
+      },
+      {
+        key: "action",
+        header: "Action",
+        sortValue: (row) => row.action,
+        className: "font-mono text-[10px]",
+        render: (row) => row.action,
+      },
+      {
+        key: "status",
+        header: "Status",
+        sortValue: (row) => row.status,
+        render: (row) => <StatusBadge status={row.status} />,
+      },
+      {
+        key: "message",
+        header: "Message",
+        sortValue: (row) => row.message ?? "",
+        className: "max-w-[18rem] text-[10px] text-muted-foreground",
+        render: (row) => (
+          <span className="line-clamp-2" title={row.message ?? ""}>
+            {row.message ?? "—"}
+          </span>
+        ),
+      },
+    ],
+    [],
+  );
 
   const counts = useMemo(() => {
     const acc: Record<string, number> = {};
@@ -180,67 +266,40 @@ export function ExecutionsPage() {
           </div>
         ) : (
           <div className="grid gap-3 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-            <div className="overflow-hidden rounded-xl border border-border/60">
-              <div className="flex items-center justify-between border-b border-border/40 px-3 py-2">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between px-0.5">
                 <p className="text-xs font-semibold">Execution log</p>
                 <span className="font-mono text-[10px] text-muted-foreground">
                   {rows.length} rows
                 </span>
               </div>
-              {rows.length === 0 ? (
-                <p className="px-3 py-8 text-center text-xs text-muted-foreground">
-                  No executions yet. Only an AUTO_EXECUTE decision reaches the
-                  executor — see the leaf-service scenario in
-                  validation/README.md.
-                </p>
-              ) : (
-                <div className="max-h-[32rem] overflow-y-auto">
-                  <table className="w-full text-xs">
-                    <thead className="sticky top-0 bg-muted/60 text-[9px] tracking-wider text-muted-foreground uppercase backdrop-blur">
-                      <tr>
-                        <th className="px-2.5 py-1.5 text-left">Time</th>
-                        <th className="px-2.5 py-1.5 text-left">Service</th>
-                        <th className="px-2.5 py-1.5 text-left">Action</th>
-                        <th className="px-2.5 py-1.5 text-left">Status</th>
-                        <th className="px-2.5 py-1.5 text-left">Message</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {rows.map((row) => (
-                        <tr
-                          key={`${row.id}-${row.decision_id}`}
-                          className="border-t border-border/50 align-top"
-                        >
-                          <td className="px-2.5 py-1.5 whitespace-nowrap font-mono text-[10px] text-muted-foreground">
-                            {formatClock(row.executed_at)}
-                          </td>
-                          <td className="px-2.5 py-1.5">
-                            <div className="font-medium">{row.service_id}</div>
-                            <Link
-                              to={`/decisions/${encodeURIComponent(row.decision_id)}`}
-                              className="font-mono text-[9px] text-status-warn hover:underline"
-                            >
-                              run →
-                            </Link>
-                          </td>
-                          <td className="px-2.5 py-1.5 font-mono text-[10px]">
-                            {row.action}
-                          </td>
-                          <td className="px-2.5 py-1.5">
-                            <StatusBadge status={row.status} />
-                          </td>
-                          <td
-                            className="max-w-[18rem] px-2.5 py-1.5 text-[10px] text-muted-foreground"
-                            title={row.message ?? ""}
-                          >
-                            <span className="line-clamp-2">{row.message ?? "—"}</span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+              <TableToolbar
+                search={search}
+                onSearchChange={setSearch}
+                placeholder="Search service, action, status, decision..."
+                dateFrom={dateFrom}
+                dateTo={dateTo}
+                onDateFromChange={setDateFrom}
+                onDateToChange={setDateTo}
+              />
+              <ListTable
+                columns={columns}
+                rows={table.visibleRows}
+                rowKey={(row) => `${row.id}-${row.decision_id}`}
+                error={error}
+                emptyMessage="No executions yet. Only AUTO_EXECUTE decisions reach the executor."
+                sort={sort}
+                onSortChange={setSort}
+                maxHeight="32rem"
+              />
+              <Pagination
+                page={table.safePage}
+                pageCount={table.pageCount}
+                pageSize={pageSize}
+                total={table.total}
+                onPageChange={setPage}
+                onPageSizeChange={setPageSize}
+              />
             </div>
 
             <div className="space-y-3">
@@ -318,4 +377,21 @@ export function ExecutionsPage() {
       </div>
     </AppShell>
   );
+}
+
+function executionSortValue(row: ApiExecutionRow, key: string): string | number | null {
+  switch (key) {
+    case "executed_at":
+      return row.executed_at;
+    case "service":
+      return row.service_id;
+    case "action":
+      return row.action;
+    case "status":
+      return row.status;
+    case "message":
+      return row.message ?? "";
+    default:
+      return null;
+  }
 }

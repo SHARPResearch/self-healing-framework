@@ -98,8 +98,12 @@ async def scores(service_id: str, limit: int = Query(300, le=600), runtime: Runt
 
 
 @router.get("/services/{service_id}/metrics")
-async def service_metrics(service_id: str, limit: int = Query(200, le=600)) -> list[dict]:
-    _service(service_id)
+async def service_metrics(
+    service_id: str,
+    limit: int = Query(200, le=600),
+    runtime: Runtime = Read,
+) -> list[dict]:
+    _service(runtime, service_id)
     rows = [
         row for row in runtime.store.metric_events
         if row.get("service_id") == service_id
@@ -118,7 +122,7 @@ async def service_metrics(service_id: str, limit: int = Query(200, le=600)) -> l
 
 # -- dependency topology (consumed by Component 2) -----------------------------------------------
 @router.get("/topology")
-async def topology() -> dict:
+async def topology(runtime: Runtime = Read) -> dict:
     """
     The service dependency graph. Component 2's dependency-graph manager loads
     this instead of reading a private seed file, which is what makes the rule
@@ -136,7 +140,10 @@ async def topology() -> dict:
     if runtime.live:
         from app import topology_ob
 
-        data = topology_ob.snapshot(live=set(live), health=health)
+        prom_client = getattr(getattr(runtime.fleet, "telemetry", None), "client", None)
+        data = topology_ob.snapshot(
+            live=set(live), health=health, prom_client=prom_client
+        )
     else:
         from app import topology as topo
 

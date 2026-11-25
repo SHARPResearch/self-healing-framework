@@ -122,6 +122,10 @@ export interface ApiApp {
 
 // ─── Graph ─────────────────────────────────────────────────────────
 export interface ApiGraph {
+  source: string;
+  node_source: string;
+  edge_source: string;
+  version: string | null;
   nodes: Array<{
     id: string;
     name: string;
@@ -134,6 +138,7 @@ export interface ApiGraph {
     target: string;
     strength: number;
     protocol: string;
+    metadata?: Record<string, unknown>;
   }>;
 }
 

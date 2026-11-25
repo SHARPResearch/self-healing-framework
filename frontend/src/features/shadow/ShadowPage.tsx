@@ -1,9 +1,11 @@
 // frontend\src\features\shadow\ShadowPage.tsx
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { AlertTriangle, Eye, Loader2, RefreshCw, Sparkles } from "lucide-react";
 import { AppShell } from "@/shared/layout/AppShell";
 import { Button } from "@/components/ui/button";
+import { ListTable, Pagination, TableToolbar, useListControls } from "@/shared/components/ListTable";
+import type { ListColumn, SortState } from "@/shared/components/ListTable";
 import { cn } from "@/lib/utils";
 import { usePoll } from "@/hooks/usePoll";
 import {
@@ -87,6 +89,15 @@ export function ShadowPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [sort, setSort] = useState<SortState | null>({
+    key: "created_at",
+    direction: "desc",
+  });
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
 
   const records = usePoll<ApiShadowRow[]>(() => fetchShadowRecords(200), {
     pollMs: 20000,
@@ -98,12 +109,86 @@ export function ShadowPage() {
   });
 
   const all = records.data ?? [];
-  const rows = useMemo(() => {
+  const ordered = useMemo(() => {
     const pending = all.filter((r) => !r.verdict);
     const settled = all.filter((r) => r.verdict);
     return [...pending, ...settled];
   }, [all]);
 
+  useEffect(() => setPage(1), [search, dateFrom, dateTo]);
+
+  const table = useListControls({
+    rows: ordered,
+    search,
+    searchValues: (row) => [
+      row.service_id,
+      row.candidate_action,
+      row.risk,
+      row.verdict ?? "",
+      row.id,
+      row.decision_id,
+    ],
+    dateField: (row) => row.created_at,
+    dateFrom,
+    dateTo,
+    sort,
+    sortValue: (row, key) => shadowSortValue(row, key),
+    page,
+    pageSize,
+  });
+
+  const columns = useMemo<ListColumn<ApiShadowRow>[]>(
+    () => [
+      {
+        key: "service",
+        header: "Service",
+        sortValue: (row) => row.service_id,
+        render: (row) => (
+          <>
+            <div className="font-medium">{row.service_id}</div>
+            <div className="font-mono text-[9px] text-muted-foreground">{row.id}</div>
+          </>
+        ),
+      },
+      {
+        key: "action",
+        header: "Candidate action",
+        sortValue: (row) => row.candidate_action,
+        className: "font-mono text-[10px]",
+        render: (row) => row.candidate_action,
+      },
+      {
+        key: "confidence",
+        header: "Conf",
+        sortValue: (row) => row.confidence ?? 0,
+        className: "text-right font-mono text-[10px]",
+        render: (row) => `${Math.round((row.confidence ?? 0) * 100)}%`,
+      },
+      {
+        key: "risk",
+        header: "Risk",
+        sortValue: (row) => row.risk,
+        className: "font-mono text-[10px]",
+        render: (row) => row.risk,
+      },
+      {
+        key: "verdict",
+        header: "Verdict",
+        sortValue: (row) => row.verdict ?? "",
+        render: (row) => <VerdictBadge verdict={row.verdict} />,
+      },
+      {
+        key: "created_at",
+        header: "Age",
+        sortValue: (row) => row.created_at,
+        className: "text-right font-mono text-[9px] text-muted-foreground",
+        render: (row) => ago(row.created_at),
+      },
+    ],
+    [],
+  );
+
+  const rows = table.visibleRows;
   const selected = rows.find((r) => r.id === selectedId) ?? rows[0] ?? null;
   const metricRows = flattenMetrics(metrics.data);
 
@@ -180,59 +265,38 @@ export function ShadowPage() {
             <Loader2 className="mr-2 size-4 animate-spin" />
             Loading shadow records…
           </div>
-        ) : rows.length === 0 ? (
-          <p className="rounded-xl border border-dashed border-border/60 p-6 text-center text-xs text-muted-foreground">
-            No shadow records yet. A decision lands here when its confidence sits
-            between the act and block thresholds — the scenario needs mid-band
-            confidence, e.g. <span className="font-mono">isolated_orders_slow</span>.
-          </p>
         ) : (
           <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_340px]">
-            <div className="overflow-hidden rounded-xl border border-border/60">
-              <table className="w-full text-xs">
-                <thead className="bg-muted/40 text-[9px] tracking-wider text-muted-foreground uppercase">
-                  <tr>
-                    <th className="px-2.5 py-1.5 text-left">Service</th>
-                    <th className="px-2.5 py-1.5 text-left">Candidate action</th>
-                    <th className="px-2.5 py-1.5 text-right">Conf</th>
-                    <th className="px-2.5 py-1.5 text-left">Risk</th>
-                    <th className="px-2.5 py-1.5 text-left">Verdict</th>
-                    <th className="px-2.5 py-1.5 text-right">Age</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((row) => (
-                    <tr
-                      key={row.id}
-                      onClick={() => setSelectedId(row.id)}
-                      className={cn(
-                        "cursor-pointer border-t border-border/50 hover:bg-accent/40",
-                        selected?.id === row.id && "bg-accent/60",
-                      )}
-                    >
-                      <td className="px-2.5 py-1.5">
-                        <div className="font-medium">{row.service_id}</div>
-                        <div className="font-mono text-[9px] text-muted-foreground">
-                          {row.id}
-                        </div>
-                      </td>
-                      <td className="px-2.5 py-1.5 font-mono text-[10px]">
-                        {row.candidate_action}
-                      </td>
-                      <td className="px-2.5 py-1.5 text-right font-mono text-[10px]">
-                        {Math.round((row.confidence ?? 0) * 100)}%
-                      </td>
-                      <td className="px-2.5 py-1.5 font-mono text-[10px]">{row.risk}</td>
-                      <td className="px-2.5 py-1.5">
-                        <VerdictBadge verdict={row.verdict} />
-                      </td>
-                      <td className="px-2.5 py-1.5 text-right font-mono text-[9px] text-muted-foreground">
-                        {ago(row.created_at)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="space-y-2">
+              <TableToolbar
+                search={search}
+                onSearchChange={setSearch}
+                placeholder="Search service, action, verdict..."
+                dateFrom={dateFrom}
+                dateTo={dateTo}
+                onDateFromChange={setDateFrom}
+                onDateToChange={setDateTo}
+              />
+              <ListTable
+                columns={columns}
+                rows={rows}
+                rowKey={(row) => row.id}
+                error={error ?? actionError}
+                emptyMessage="No shadow records match this filter."
+                sort={sort}
+                onSortChange={setSort}
+                onRowClick={(row) => setSelectedId(row.id)}
+                selectedKey={selected?.id ?? null}
+                maxHeight="30rem"
+              />
+              <Pagination
+                page={table.safePage}
+                pageCount={table.pageCount}
+                pageSize={pageSize}
+                total={table.total}
+                onPageChange={setPage}
+                onPageSizeChange={setPageSize}
+              />
             </div>
 
             <aside className="space-y-3">
@@ -365,4 +429,23 @@ export function ShadowPage() {
       </div>
     </AppShell>
   );
+}
+
+function shadowSortValue(row: ApiShadowRow, key: string): string | number | null {
+  switch (key) {
+    case "service":
+      return row.service_id;
+    case "action":
+      return row.candidate_action;
+    case "confidence":
+      return row.confidence ?? 0;
+    case "risk":
+      return row.risk;
+    case "verdict":
+      return row.verdict ?? "";
+    case "created_at":
+      return row.created_at;
+    default:
+      return null;
+  }
 }

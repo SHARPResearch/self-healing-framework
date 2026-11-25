@@ -248,14 +248,99 @@ function Ensure-Cluster {
 
 $clusterOk = Ensure-Cluster -ns $Namespace -profile $MinikubeProfile -SkipStart:$NoClusterStart
 
-# -- Prometheus check (only meaningful if cluster is up) --------------
+
+# -- Prometheus check and automatic port-forward -----------------------
+$script:promPortForward = $null
+
 if ($clusterOk) {
+  $promUrl = "http://localhost:9090/-/ready"
+  $promService = "kube-prom-kube-prometheus-prometheus"
+
+  # First check whether Prometheus is already accessible.
+  $promReady = $false
+
   try {
-    $prom = Invoke-WebRequest "http://localhost:9090/-/ready" -TimeoutSec 3 -UseBasicParsing
-    if ($prom.StatusCode -eq 200) { Write-Ok "Prometheus reachable on :9090" }
-  } catch {
-    Write-Warn2 "Prometheus not reachable on :9090 - start the port-forward:"
-    Write-Host "           kubectl port-forward -n monitoring svc/prometheus-kube-prometheus-prometheus 9090:9090" -ForegroundColor DarkGray
+    $r = Invoke-WebRequest $promUrl -TimeoutSec 3 -UseBasicParsing
+    $promReady = ($r.StatusCode -eq 200)
+  } catch {}
+
+  if ($promReady) {
+    Write-Ok "Prometheus already reachable on :9090"
+  } else {
+    Write-Step "Starting Prometheus port-forward"
+
+    $kubectl = Resolve-Exe "kubectl"
+
+    if (-not $kubectl) {
+      Write-Bad "kubectl not found"
+      exit 1
+    }
+
+    # Verify the actual service exists.
+    $service = & $kubectl get svc $promService -n monitoring -o name 2>$null
+
+    if (-not $service) {
+      Write-Bad "Prometheus service '$promService' not found in monitoring namespace"
+      exit 1
+    }
+
+    $pfOut = Join-Path $logDir "PROMETHEUS.log"
+    $pfErr = Join-Path $logDir "PROMETHEUS.err.log"
+
+    "" | Set-Content $pfOut
+    "" | Set-Content $pfErr
+
+    # Do not take over an unrelated listener on port 9090.
+    $listener = Get-NetTCPConnection -LocalPort 9090 -State Listen `
+      -ErrorAction SilentlyContinue
+
+    if ($listener) {
+      Write-Bad "Port 9090 is occupied, but Prometheus is not responding. Check the existing listener."
+      exit 1
+    }
+
+    $script:promPortForward = Start-Process `
+      -FilePath $kubectl `
+      -ArgumentList @(
+        "port-forward",
+        "-n", "monitoring",
+        "svc/$promService",
+        "9090:9090"
+      ) `
+      -RedirectStandardOutput $pfOut `
+      -RedirectStandardError $pfErr `
+      -PassThru `
+      -WindowStyle Hidden
+
+    # Wait for Prometheus to become ready.
+    $deadline = (Get-Date).AddSeconds(30)
+
+    while ((Get-Date) -lt $deadline) {
+      if ($script:promPortForward.HasExited) {
+        Write-Bad "Prometheus port-forward exited unexpectedly."
+        Get-Content $pfErr -ErrorAction SilentlyContinue |
+          Write-Host
+        exit 1
+      }
+
+      try {
+        $r = Invoke-WebRequest $promUrl -TimeoutSec 2 -UseBasicParsing
+        if ($r.StatusCode -eq 200) {
+          $promReady = $true
+          break
+        }
+      } catch {}
+
+      Start-Sleep -Milliseconds 700
+    }
+
+    if (-not $promReady) {
+      Write-Bad "Prometheus did not become ready within 30 seconds."
+      Write-Host "Check .run\PROMETHEUS.err.log"
+      exit 1
+    }
+
+    Write-Ok "Prometheus port-forward started and ready on :9090"
   }
 }
 
@@ -438,6 +523,7 @@ if (-not $NoWeb) {
 
 Open-Url "http://localhost:$C1Port/docs" "C1 docs"
 Open-Url "http://localhost:$C2Port/docs" "C2 docs"
+Open-Url "http://localhost:9090" "Prometheus"
 
 if ($Showcase) { Show-ResearchShowcase }
 
@@ -448,6 +534,8 @@ Write-Host " C1  http://localhost:$C1Port/docs   (anomaly + model lifecycle)" -F
 Write-Host " C2  http://localhost:$C2Port/docs   (decisions + escalations)"  -ForegroundColor Cyan
 if (-not $NoWeb) { Write-Host " WEB http://localhost:$WebPort        (dashboard)" -ForegroundColor Cyan }
 Write-Host " Execution mode: $(if ($Live) { 'LIVE - actions hit the cluster' } else { 'DRY RUN - actions recorded only' })" -ForegroundColor Yellow
+Write-Host "  Prometheus  http://localhost:9090" -ForegroundColor Cyan
+Write-Host "              (metrics + PromQL queries)" -ForegroundColor DarkGray
 Write-Host " Press Ctrl+C to stop everything." -ForegroundColor DarkGray
 Write-Host "===============================================================" -ForegroundColor DarkGray
 

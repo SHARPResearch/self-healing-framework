@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { X, ArrowRight } from "lucide-react";
+import { ArrowRight, X } from "lucide-react";
 import { AppShell } from "@/shared/layout/AppShell";
 import { SeverityBadge } from "@/shared/components/SeverityBadge";
+import { ListTable, Pagination, TableToolbar, useListControls } from "@/shared/components/ListTable";
+import type { ListColumn, SortState } from "@/shared/components/ListTable";
 import { AnomalyEvidenceModal } from "./components/AnomalyEvidenceModal";
-import { fetchDbAnomalies, type ApiDbAnomaly, type ApiDecision } from "@/lib/api";
-import { useDecisions } from "@/features/decisions/data/useDecisions";
+import {
+  fetchAnomaliesWithDecisions,
+  type ApiAnomalyDecisionRow,
+} from "@/lib/api";
 import type { Severity } from "@/shared/types";
 
 function toSeverity(sev?: string): Severity {
@@ -19,7 +23,7 @@ type Filter = "all" | "captured" | "pending" | "failed";
 const POLL_MS = 3000;
 
 export function AnomalyListPage() {
-  const [items, setItems] = useState<ApiDbAnomaly[]>([]);
+  const [items, setItems] = useState<ApiAnomalyDecisionRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
@@ -27,22 +31,17 @@ export function AnomalyListPage() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [nowTick, setNowTick] = useState(0);
   const [searchParams, setSearchParams] = useSearchParams();
+  const [search, setSearch] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [sort, setSort] = useState<SortState | null>({
+    key: "detected_at",
+    direction: "desc",
+  });
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
   const navigate = useNavigate();
 
-  // Decisions for the same anomalies, joined client-side by anomaly_id so each
-  // row can show its decision and deep-link to the decision detail modal.
-  const { items: decisions } = useDecisions(POLL_MS);
-  const decisionByAnomaly = useMemo(() => {
-    const map = new Map<string, (typeof decisions)[number]>();
-    for (const d of decisions) {
-      if (!map.has(d.anomaly_id)) map.set(d.anomaly_id, d);
-    }
-    return map;
-  }, [decisions]);
-
-  // Deep-link filter: /anomalies?service=<id>. The param is consumed once into
-  // local state and then cleared, so a later refresh (or back/forward) doesn't
-  // silently re-apply it — the chip below is the source of truth thereafter.
   const [serviceFilter, setServiceFilter] = useState<string | null>(null);
   useEffect(() => {
     const svc = searchParams.get("service");
@@ -50,21 +49,20 @@ export function AnomalyListPage() {
       setServiceFilter(svc);
       setSearchParams({}, { replace: true });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams]);
+  }, [searchParams, setSearchParams]);
 
   useEffect(() => {
     let alive = true;
     const load = async () => {
       try {
-        const list = await fetchDbAnomalies(200);
+        const list = await fetchAnomaliesWithDecisions(500);
         if (!alive) return;
         setItems(list);
         setError(null);
         setLastUpdated(new Date());
-      } catch (e: any) {
+      } catch (e) {
         if (!alive) return;
-        setError(String(e.message ?? e));
+        setError(e instanceof Error ? e.message : String(e));
       } finally {
         if (alive) setLoading(false);
       }
@@ -77,19 +75,112 @@ export function AnomalyListPage() {
     };
   }, []);
 
-  // Re-render every second so "updated Xs ago" ticks without refetching.
   useEffect(() => {
     const id = setInterval(() => setNowTick((n) => n + 1), 1000);
     return () => clearInterval(id);
   }, []);
 
-  const filtered = useMemo(() => {
+  useEffect(() => setPage(1), [search, dateFrom, dateTo, filter, serviceFilter]);
+
+  const baseRows = useMemo(() => {
     const byService = serviceFilter
       ? items.filter((i) => i.service_id === serviceFilter)
       : items;
     if (filter === "all") return byService;
     return byService.filter((i) => i.snapshot_status === filter);
   }, [items, filter, serviceFilter]);
+
+  const table = useListControls({
+    rows: baseRows,
+    search,
+    searchValues: (row) => [
+      row.id,
+      row.service_id,
+      row.service_name ?? "",
+      row.metric ?? "",
+      row.severity ?? "",
+      row.decision_id ?? "",
+      row.decision_action ?? "",
+      row.decision_policy_outcome ?? "",
+    ],
+    dateField: (row) => row.detected_at,
+    dateFrom,
+    dateTo,
+    sort,
+    sortValue: (row, key) => anomalySortValue(row, key),
+    page,
+    pageSize,
+  });
+
+  const columns = useMemo<ListColumn<ApiAnomalyDecisionRow>[]>(
+    () => [
+      {
+        key: "service",
+        header: "Service",
+        sortValue: (row) => row.service_name ?? row.service_id,
+        render: (row) => (
+          <>
+            <div className="font-medium">{row.service_name ?? row.service_id}</div>
+            <div className="font-mono text-[10px] text-muted-foreground">{row.id}</div>
+          </>
+        ),
+      },
+      {
+        key: "severity",
+        header: "Severity",
+        sortValue: (row) => row.severity ?? "",
+        render: (row) => <SeverityBadge severity={toSeverity(row.severity)} />,
+      },
+      {
+        key: "metric",
+        header: "Metric",
+        sortValue: (row) => row.metric ?? "",
+        className: "font-mono text-xs",
+        render: (row) => row.metric ?? "—",
+      },
+      {
+        key: "actual",
+        header: "Actual",
+        sortValue: (row) => row.actual_value ?? null,
+        className: "text-right font-mono text-xs",
+        render: (row) => row.actual_value?.toFixed(2) ?? "—",
+      },
+      {
+        key: "expected",
+        header: "Expected",
+        sortValue: (row) => row.expected_value ?? null,
+        className: "text-right font-mono text-xs text-muted-foreground",
+        render: (row) => row.expected_value?.toFixed(2) ?? "—",
+      },
+      {
+        key: "status",
+        header: "Status",
+        sortValue: (row) => row.snapshot_status ?? "",
+        render: (row) => <StatusPill status={row.snapshot_status} />,
+      },
+      {
+        key: "decision",
+        header: "Decision",
+        sortValue: (row) => row.decision_policy_outcome ?? "",
+        render: (row) => (
+          <DecisionCell
+            row={row}
+            onView={(decisionId) =>
+              navigate(`/decisions?focus=${encodeURIComponent(decisionId)}`)
+            }
+          />
+        ),
+      },
+      {
+        key: "detected_at",
+        header: "Detected",
+        sortValue: (row) => row.detected_at,
+        className: "font-mono text-xs text-muted-foreground",
+        render: (row) => new Date(row.detected_at).toLocaleString(),
+      },
+    ],
+    [navigate],
+  );
 
   const counts = useMemo(() => {
     const c = { all: items.length, captured: 0, pending: 0, failed: 0 };
@@ -108,14 +199,13 @@ export function AnomalyListPage() {
           <div>
             <h2 className="text-base font-semibold">Anomaly events</h2>
             <p className="text-sm text-muted-foreground">
-              Every anomaly persisted from the detection layer, with a telemetry
-              window captured around it. Click a row to see the evidence.
+              Every anomaly persisted from detection, joined server-side with
+              its decision. Click a row to see the captured evidence.
             </p>
           </div>
           <LiveIndicator lastUpdated={lastUpdated} nowTick={nowTick} />
         </div>
 
-        {/* Filter tabs */}
         <div className="flex flex-wrap items-center gap-2">
           {(["all", "captured", "pending", "failed"] as Filter[]).map((f) => (
             <button
@@ -146,99 +236,34 @@ export function AnomalyListPage() {
           )}
         </div>
 
-        {/* Table */}
-        <div className="overflow-hidden rounded-xl border border-border/60">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/40 text-xs uppercase text-muted-foreground">
-              <tr>
-                <th className="px-3 py-2 text-left">Service</th>
-                <th className="px-3 py-2 text-left">Severity</th>
-                <th className="px-3 py-2 text-left">Metric</th>
-                <th className="px-3 py-2 text-right">Actual</th>
-                <th className="px-3 py-2 text-right">Expected</th>
-                <th className="px-3 py-2 text-left">Status</th>
-                <th className="px-3 py-2 text-left">Decision</th>
-                <th className="px-3 py-2 text-left">Detected</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading && (
-                <tr>
-                  <td
-                    colSpan={8}
-                    className="px-3 py-8 text-center text-muted-foreground"
-                  >
-                    Loading…
-                  </td>
-                </tr>
-              )}
-              {error && (
-                <tr>
-                  <td
-                    colSpan={8}
-                    className="px-3 py-8 text-center text-destructive"
-                  >
-                    {error}
-                  </td>
-                </tr>
-              )}
-              {!loading && !error && filtered.length === 0 && (
-                <tr>
-                  <td
-                    colSpan={8}
-                    className="px-3 py-8 text-center text-muted-foreground"
-                  >
-                    No anomalies match this filter.
-                  </td>
-                </tr>
-              )}
-              {filtered.map((a) => (
-                <tr
-                  key={a.id}
-                  onClick={() => setOpenId(a.id)}
-                  className="cursor-pointer border-t border-border/60 transition-colors hover:bg-accent/50"
-                >
-                  <td className="px-3 py-2">
-                    <div className="font-medium">
-                      {a.service_name ?? a.service_id}
-                    </div>
-                    <div className="font-mono text-[10px] text-muted-foreground">
-                      {a.id}
-                    </div>
-                  </td>
-                  <td className="px-3 py-2">
-                    <SeverityBadge severity={toSeverity(a.severity)} />
-                  </td>
-                  <td className="px-3 py-2 font-mono text-xs">
-                    {a.metric ?? "—"}
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono text-xs">
-                    {a.actual_value?.toFixed(2) ?? "—"}
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono text-xs text-muted-foreground">
-                    {a.expected_value?.toFixed(2) ?? "—"}
-                  </td>
-                  <td className="px-3 py-2">
-                    <StatusPill status={a.snapshot_status} />
-                  </td>
-                  <td className="px-3 py-2">
-                    <DecisionCell
-                      decision={decisionByAnomaly.get(a.id)}
-                      onView={(decisionId) =>
-                        navigate(
-                          `/decisions?focus=${encodeURIComponent(decisionId)}`,
-                        )
-                      }
-                    />
-                  </td>
-                  <td className="px-3 py-2 font-mono text-xs text-muted-foreground">
-                    {new Date(a.detected_at).toLocaleTimeString()}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <TableToolbar
+          search={search}
+          onSearchChange={setSearch}
+          placeholder="Search anomaly, service, metric, decision..."
+          dateFrom={dateFrom}
+          dateTo={dateTo}
+          onDateFromChange={setDateFrom}
+          onDateToChange={setDateTo}
+        />
+        <ListTable
+          columns={columns}
+          rows={table.visibleRows}
+          rowKey={(row) => row.id}
+          loading={loading}
+          error={error}
+          emptyMessage="No anomalies match this filter."
+          sort={sort}
+          onSortChange={setSort}
+          onRowClick={(row) => setOpenId(row.id)}
+        />
+        <Pagination
+          page={table.safePage}
+          pageCount={table.pageCount}
+          pageSize={pageSize}
+          total={table.total}
+          onPageChange={setPage}
+          onPageSizeChange={setPageSize}
+        />
       </div>
 
       <AnomalyEvidenceModal
@@ -249,6 +274,29 @@ export function AnomalyListPage() {
   );
 }
 
+function anomalySortValue(row: ApiAnomalyDecisionRow, key: string): string | number | null {
+  switch (key) {
+    case "service":
+      return row.service_name ?? row.service_id;
+    case "severity":
+      return row.severity ?? "";
+    case "metric":
+      return row.metric ?? "";
+    case "actual":
+      return row.actual_value ?? null;
+    case "expected":
+      return row.expected_value ?? null;
+    case "status":
+      return row.snapshot_status ?? "";
+    case "decision":
+      return row.decision_policy_outcome ?? "";
+    case "detected_at":
+      return row.detected_at;
+    default:
+      return null;
+  }
+}
+
 function LiveIndicator({
   lastUpdated,
   nowTick,
@@ -256,7 +304,7 @@ function LiveIndicator({
   lastUpdated: Date | null;
   nowTick: number;
 }) {
-  void nowTick; // re-render trigger for the relative-time label
+  void nowTick;
   const ago = lastUpdated ? relativeTime(lastUpdated) : "—";
   return (
     <div className="flex shrink-0 items-center gap-2 rounded-full border border-green-500/30 bg-green-500/10 px-3 py-1">
@@ -307,13 +355,13 @@ const OUTCOME_STYLES: Record<string, string> = {
 };
 
 function DecisionCell({
-  decision,
+  row,
   onView,
 }: {
-  decision: ApiDecision | undefined;
+  row: ApiAnomalyDecisionRow;
   onView: (decisionId: string) => void;
 }) {
-  if (!decision) {
+  if (!row.decision_id) {
     return (
       <span className="font-mono text-[10px] text-muted-foreground/70">
         no decision
@@ -321,22 +369,21 @@ function DecisionCell({
     );
   }
 
-  const outcome = decision.policy.outcome ?? "UNVALIDATED";
+  const outcome = row.decision_policy_outcome ?? "UNVALIDATED";
 
   return (
     <button
       type="button"
       onClick={(e) => {
-        // Don't also trigger the row's evidence modal.
         e.stopPropagation();
-        onView(decision.decision_id);
+        onView(row.decision_id as string);
       }}
       className="group flex flex-col items-start gap-0.5 text-left"
-      title={`View decision ${decision.decision_id}`}
+      title={`View decision ${row.decision_id}`}
     >
       <span className="flex items-center gap-1.5">
         <span className="rounded-full bg-blue-500/10 px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wider text-blue-600">
-          {decision.action}
+          {row.decision_action ?? "NOOP"}
         </span>
         <span
           className={`rounded-full px-2 py-0.5 font-mono text-[10px] font-medium ${

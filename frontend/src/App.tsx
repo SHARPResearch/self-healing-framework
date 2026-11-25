@@ -26,6 +26,7 @@ import { EscalationsPage } from "@/features/escalations/EscalationsPage";
 import { ShadowPage } from "@/features/shadow/ShadowPage";
 import { ExecutionsPage } from "@/features/executions/ExecutionsPage";
 import { DecisionListPage } from "@/features/decisions/DecisionListPage";
+import { DecisionEnginePage } from "@/features/decisions/DecisionEnginePage";
 import { RuleListPage } from "@/features/rules/RuleListPage";
 import { RuleDetailPage } from "@/features/rules/RuleDetailPage";
 
@@ -66,6 +67,7 @@ function App() {
         <Route element={<RequireAuth />}>
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/services" element={<ServicesPage />} />
+        <Route path="/decision-engine" element={<DecisionEnginePage />} />
         <Route path="/dependency-graph" element={<DependencyGraphPage />} />
         <Route path="/anomalies" element={<AnomalyListPage />} />
         <Route path="/decisions" element={<DecisionListPage />} />

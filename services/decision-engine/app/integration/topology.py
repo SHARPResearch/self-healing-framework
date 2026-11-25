@@ -15,6 +15,7 @@ Component 1 answers. That keeps boot order irrelevant.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 import httpx
@@ -38,6 +39,8 @@ def _normalise_health(node: dict[str, Any]) -> dict[str, Any]:
 TOPOLOGY_SOURCE: str = "unloaded"
 #: Component 1's content hash for the graph, for change detection.
 TOPOLOGY_VERSION: str | None = None
+TOPOLOGY_NODE_SOURCE: str = "seed"
+TOPOLOGY_EDGE_SOURCE: str = "seed"
 
 SEED_PATH = "seeds/topology.yaml"
 
@@ -166,7 +169,7 @@ def _load_seed() -> None:
 #     return TOPOLOGY_SOURCE
 
 async def load_topology(force: bool = False) -> str:
-    global TOPOLOGY_SOURCE, TOPOLOGY_VERSION
+    global TOPOLOGY_SOURCE, TOPOLOGY_VERSION, TOPOLOGY_NODE_SOURCE, TOPOLOGY_EDGE_SOURCE
 
     payload = await fetch_topology()
     if payload:
@@ -177,9 +180,11 @@ async def load_topology(force: bool = False) -> str:
             _apply(payload)
             TOPOLOGY_SOURCE = "component1"
             TOPOLOGY_VERSION = version
+            TOPOLOGY_NODE_SOURCE = str(payload.get("node_source") or "live-deployments")
+            TOPOLOGY_EDGE_SOURCE = str(payload.get("edge_source") or "catalog")
             return TOPOLOGY_SOURCE
         except Exception as exc:
-            log.error("topology: Component 1 payload unusable (%s) — falling back to seed", exc)
+            log.error("topology: Component 1 payload unusable (%s) - falling back to seed", exc)
 
     if TOPOLOGY_SOURCE == "component1":
         log.warning("topology: refresh failed, keeping the Component 1 graph")
@@ -188,11 +193,27 @@ async def load_topology(force: bool = False) -> str:
     _load_seed()
     TOPOLOGY_SOURCE = "seed"
     TOPOLOGY_VERSION = None
+    TOPOLOGY_NODE_SOURCE = "seed"
+    TOPOLOGY_EDGE_SOURCE = "seed"
     return TOPOLOGY_SOURCE
 
 
-async def refresh_topology() -> str:
-    return await load_topology(force=True)
+_LAST_REFRESH_TS: float = 0.0
+_REFRESH_TTL_SEC: float = 10.0
+
+
+async def refresh_topology(force: bool = False) -> str:
+    global _LAST_REFRESH_TS
+    now = time.monotonic()
+    if (
+        not force
+        and TOPOLOGY_SOURCE == "component1"
+        and now - _LAST_REFRESH_TS < _REFRESH_TTL_SEC
+    ):
+        return TOPOLOGY_SOURCE
+    source = await load_topology(force=force)
+    _LAST_REFRESH_TS = now
+    return source
 
 
 def start_topology_refresh(scheduler) -> None:

@@ -18,9 +18,15 @@ from app.rules.models import ActionType, RiskLevel
 
 @pytest.fixture(autouse=True)
 def clean_graph():
-    GraphStore().graph().clear()
+    from app.core.models import DependencyEdge, ServiceNode
+
+    store = GraphStore()
+    store.graph().clear()
+    store.upsert_node(ServiceNode(id="auth-service", name="auth"))
+    store.upsert_node(ServiceNode(id="user-service", name="user"))
+    store.upsert_edge(DependencyEdge(source="auth-service", target="user-service"))
     yield
-    GraphStore().graph().clear()
+    store.graph().clear()
 
 
 class FakeStore:
@@ -45,6 +51,7 @@ def _ctx(sid="auth-service") -> AnomalyContext:
     return AnomalyContext(
         anomaly={"id": "ANM-x", "service_id": sid, "confidence": 0.92, "anomaly_score": 0.9},
         service={"service_id": sid, "layer": "domain"},
+        upstream=["user-service"],
     )
 
 

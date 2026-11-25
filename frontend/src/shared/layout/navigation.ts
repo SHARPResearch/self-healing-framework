@@ -40,6 +40,7 @@ export const navGroups: NavGroup[] = [
   {
     label: "Decision Engine",
     items: [
+      { label: "Overview", to: "/decision-engine", icon: LayoutDashboard },
       { label: "Dependency graph", to: "/dependency-graph", icon: GitBranch },
       { to: "/anomalies", label: "Anomalies", icon: AlertTriangle },
       { label: "Decisions", to: "/decisions", icon: Zap },

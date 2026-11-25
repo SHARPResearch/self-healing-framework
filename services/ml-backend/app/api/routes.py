@@ -51,6 +51,25 @@ async def scores(service_id: str, limit: int = Query(300, le=600)) -> list[dict]
     return [{"step": s, "score": v, "alarm": a, "threshold": 0.5} for s, v, a in list(rt.scores)[-limit:]]
 
 
+@router.get("/services/{service_id}/metrics")
+async def service_metrics(service_id: str, limit: int = Query(200, le=600)) -> list[dict]:
+    _service(service_id)
+    rows = [
+        row for row in runtime.store.metric_events
+        if row.get("service_id") == service_id
+    ][-limit:]
+    return [
+        {
+            "time": row["time"].isoformat() if hasattr(row["time"], "isoformat") else row["time"],
+            "service_id": row.get("service_id", service_id),
+            "features": row.get("features") or {},
+            "anomaly_score": row.get("anomaly_score"),
+            "severity": row.get("severity"),
+        }
+        for row in rows
+    ]
+
+
 # -- dependency topology (consumed by Component 2) -----------------------------------------------
 @router.get("/topology")
 async def topology() -> dict:

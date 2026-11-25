@@ -1,5 +1,5 @@
 // frontend\src\features\escalations\EscalationsPage.tsx
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   AlertTriangle,
@@ -14,6 +14,8 @@ import {
 import { AppShell } from "@/shared/layout/AppShell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ListTable, Pagination, TableToolbar, useListControls } from "@/shared/components/ListTable";
+import type { ListColumn, SortState } from "@/shared/components/ListTable";
 import { cn } from "@/lib/utils";
 import { usePoll } from "@/hooks/usePoll";
 import {
@@ -83,6 +85,15 @@ export function EscalationsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [sort, setSort] = useState<SortState | null>({
+    key: "created_at",
+    direction: "desc",
+  });
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
 
   const { data, loading, error, refresh } = usePoll<ApiEscalationRow[]>(
     () => fetchEscalations({ limit: 200 }),
@@ -101,11 +112,89 @@ export function EscalationsPage() {
     return acc;
   }, [all]);
 
-  const rows = useMemo(
+  const statusRows = useMemo(
     () => (filter === "ALL" ? all : all.filter((r) => r.status === filter)),
     [all, filter],
   );
 
+  useEffect(() => setPage(1), [search, dateFrom, dateTo, filter]);
+
+  const table = useListControls({
+    rows: statusRows,
+    search,
+    searchValues: (row) => [
+      row.id,
+      row.service_id,
+      row.status,
+      row.decision_id,
+      row.anomaly_id,
+      row.failure_report ?? "",
+    ],
+    dateField: (row) => row.created_at,
+    dateFrom,
+    dateTo,
+    sort,
+    sortValue: (row, key) => escalationSortValue(row, key),
+    page,
+    pageSize,
+  });
+
+  const columns = useMemo<ListColumn<ApiEscalationRow>[]>(
+    () => [
+      {
+        key: "service",
+        header: "Service",
+        sortValue: (row) => row.service_id,
+        render: (row) => (
+          <>
+            <div className="font-medium">{row.service_id}</div>
+            <div className="font-mono text-[9px] text-muted-foreground">{row.id}</div>
+          </>
+        ),
+      },
+      {
+        key: "status",
+        header: "Status",
+        sortValue: (row) => row.status,
+        render: (row) => <StatusBadge status={row.status} />,
+      },
+      {
+        key: "attempt",
+        header: "Attempts",
+        sortValue: (row) => row.attempt,
+        render: (row) => (
+          <div className="flex items-center gap-1.5">
+            <AttemptDots attempts={row.attempt} max={row.max_attempts} />
+            <span className="font-mono text-[9px] text-muted-foreground">
+              {row.attempt}/{row.max_attempts}
+            </span>
+          </div>
+        ),
+      },
+      {
+        key: "next_attempt_at",
+        header: "Next",
+        sortValue: (row) => row.next_attempt_at ?? "",
+        className: "font-mono text-[10px] text-muted-foreground",
+        render: (row) =>
+          terminal(row.status)
+            ? "—"
+            : row.next_attempt_at
+              ? `${formatClock(row.next_attempt_at)} (${ago(row.next_attempt_at)})`
+              : "—",
+      },
+      {
+        key: "created_at",
+        header: "Created",
+        sortValue: (row) => row.created_at,
+        className: "text-right font-mono text-[10px] text-muted-foreground",
+        render: (row) => formatClock(row.created_at),
+      },
+    ],
+    [],
+  );
+
+  const rows = table.visibleRows;
   const selected =
     rows.find((r) => r.id === selectedId) ?? rows[0] ?? null;
 
@@ -236,66 +325,38 @@ export function EscalationsPage() {
             <Loader2 className="mr-2 size-4 animate-spin" />
             Loading escalations…
           </div>
-        ) : rows.length === 0 ? (
-          <p className="rounded-xl border border-dashed border-border/60 p-6 text-center text-xs text-muted-foreground">
-            No escalations in this state. Trigger a scenario that produces a
-            HUMAN_LOOP decision to create one.
-          </p>
         ) : (
           <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_340px]">
-            {/* Queue */}
-            <div className="overflow-hidden rounded-xl border border-border/60">
-              <table className="w-full text-xs">
-                <thead className="bg-muted/40 text-[9px] tracking-wider text-muted-foreground uppercase">
-                  <tr>
-                    <th className="px-2.5 py-1.5 text-left">Service</th>
-                    <th className="px-2.5 py-1.5 text-left">Status</th>
-                    <th className="px-2.5 py-1.5 text-left">Attempts</th>
-                    <th className="px-2.5 py-1.5 text-left">Next</th>
-                    <th className="px-2.5 py-1.5 text-right">Created</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((row) => (
-                    <tr
-                      key={row.id}
-                      onClick={() => setSelectedId(row.id)}
-                      className={cn(
-                        "cursor-pointer border-t border-border/50 hover:bg-accent/40",
-                        selected?.id === row.id && "bg-accent/60",
-                      )}
-                    >
-                      <td className="px-2.5 py-1.5">
-                        <div className="font-medium">{row.service_id}</div>
-                        <div className="font-mono text-[9px] text-muted-foreground">
-                          {row.id}
-                        </div>
-                      </td>
-                      <td className="px-2.5 py-1.5">
-                        <StatusBadge status={row.status} />
-                      </td>
-                      <td className="px-2.5 py-1.5">
-                        <div className="flex items-center gap-1.5">
-                          <AttemptDots attempts={row.attempt} max={row.max_attempts} />
-                          <span className="font-mono text-[9px] text-muted-foreground">
-                            {row.attempt}/{row.max_attempts}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="px-2.5 py-1.5 font-mono text-[10px] text-muted-foreground">
-                        {terminal(row.status)
-                          ? "—"
-                          : row.next_attempt_at
-                            ? `${formatClock(row.next_attempt_at)} (${ago(row.next_attempt_at)})`
-                            : "—"}
-                      </td>
-                      <td className="px-2.5 py-1.5 text-right font-mono text-[10px] text-muted-foreground">
-                        {formatClock(row.created_at)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="space-y-2">
+              <TableToolbar
+                search={search}
+                onSearchChange={setSearch}
+                placeholder="Search service, escalation, decision, anomaly..."
+                dateFrom={dateFrom}
+                dateTo={dateTo}
+                onDateFromChange={setDateFrom}
+                onDateToChange={setDateTo}
+              />
+              <ListTable
+                columns={columns}
+                rows={rows}
+                rowKey={(row) => row.id}
+                error={error ?? actionError}
+                emptyMessage="No escalations match this filter."
+                sort={sort}
+                onSortChange={setSort}
+                onRowClick={(row) => setSelectedId(row.id)}
+                selectedKey={selected?.id ?? null}
+                maxHeight="30rem"
+              />
+              <Pagination
+                page={table.safePage}
+                pageCount={table.pageCount}
+                pageSize={pageSize}
+                total={table.total}
+                onPageChange={setPage}
+                onPageSizeChange={setPageSize}
+              />
             </div>
 
             {/* Detail */}
@@ -505,4 +566,21 @@ export function EscalationsPage() {
       </div>
     </AppShell>
   );
+}
+
+function escalationSortValue(row: ApiEscalationRow, key: string): string | number | null {
+  switch (key) {
+    case "service":
+      return row.service_id;
+    case "status":
+      return row.status;
+    case "attempt":
+      return row.attempt;
+    case "next_attempt_at":
+      return row.next_attempt_at ?? "";
+    case "created_at":
+      return row.created_at;
+    default:
+      return null;
+  }
 }

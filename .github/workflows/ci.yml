@@ -1,0 +1,159 @@
+# CI for SHARP's detection and model lifecycle components (ml-pipeline, ml-backend), the auth
+# service, the dashboard they feed, the Helm chart and the Render images. On main, the ml-backend image is also pushed to
+# GitHub Container Registry, tagged with the commit SHA (the tag the Helm chart takes).
+name: ci
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["**/*.md", "docs/**"]
+  pull_request:
+    paths-ignore: ["**/*.md", "docs/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ml-pipeline:
+    name: ml-pipeline tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/smd
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: ml-pipeline/uv.lock
+      - name: pytest
+        working-directory: ml-pipeline
+        run: uv run --frozen pytest -q
+
+  ml-backend:
+    name: ml-backend tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/smd
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: services/ml-backend/uv.lock
+      - name: pytest (in-memory store and bus, fake Prometheus; no Docker or cluster needed)
+        working-directory: services/ml-backend
+        env:
+          FOLLOW_CONTAINER_LOGS: "false"
+        run: uv run --frozen pytest -q
+
+  frontend:
+    name: frontend typecheck and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.13.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - working-directory: frontend
+        run: pnpm install --frozen-lockfile
+      - working-directory: frontend
+        run: pnpm build
+
+  helm:
+    name: helm lint and render
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.15.4
+      - name: lint
+        run: helm lint --strict infrastructure/helm/self-healing-framework
+      - name: render with the ServiceMonitor CRD available
+        run: |
+          helm template sharp infrastructure/helm/self-healing-framework -n selfheal-system \
+            --api-versions monitoring.coreos.com/v1 > rendered.yaml
+          grep -q "kind: ServiceMonitor" rendered.yaml
+          grep -q "kind: StatefulSet" rendered.yaml
+
+  auth:
+    name: auth service
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: services/auth/package-lock.json
+      - working-directory: services/auth
+        run: npm ci
+      - name: syntax and imports load
+        working-directory: services/auth
+        run: node --check src/auth.js && node --check src/server.js
+
+  render-images:
+    name: Render images build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        image:
+          - { name: sharp-web, file: services/auth/Dockerfile }
+          - { name: sharp-ml-backend-render, file: services/ml-backend/Dockerfile.render }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.image.file }}
+          push: false
+          tags: ${{ matrix.image.name }}:ci
+          cache-from: type=gha,scope=${{ matrix.image.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}
+
+  image:
+    name: ml-backend image
+    needs: [ml-backend, helm]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: log in to ghcr.io (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: image name
+        id: name
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/sharp-ml-backend" >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/ml-backend/Dockerfile
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          tags: |
+            ${{ steps.name.outputs.image }}:${{ github.sha }}
+            ${{ steps.name.outputs.image }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

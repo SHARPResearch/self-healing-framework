@@ -1,0 +1,41 @@
+{{- if and .Values.mlBackend.enabled .Values.mlBackend.rbac.create }}
+# What ml-backend does in the monitored namespace, and nothing more:
+#   - watch Deployments for rollouts (change events) and Pods for restarts (src/change_events.py)
+#   - patch a Deployment for the dashboard's Rollout and Traffic actions (app/live_actions.py)
+#   - create and clean up its own Chaos Mesh experiments for the fault actions
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: sharp-ml-backend
+  namespace: {{ .Values.targetNamespace }}
+  labels:
+    {{- include "sharp.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  {{- if .Values.mlBackend.rbac.chaosActions }}
+  - apiGroups: ["chaos-mesh.org"]
+    resources: ["stresschaos", "podchaos", "networkchaos"]
+    verbs: ["get", "list", "create", "delete"]
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: sharp-ml-backend
+  namespace: {{ .Values.targetNamespace }}
+  labels:
+    {{- include "sharp.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: sharp-ml-backend
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "sharp.mlBackend.name" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

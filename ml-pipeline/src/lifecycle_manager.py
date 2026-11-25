@@ -34,11 +34,14 @@ state (~40 ms). See src/hst_state.py.
 """
 
 import copy
+import hashlib
+import json
 import logging
 import time
+import zlib
 from concurrent.futures import ThreadPoolExecutor
 from collections import deque
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from typing import Iterable, Optional
 
 import numpy as np
@@ -52,7 +55,7 @@ from src.drift_attribution import (
 from src.drift_detectors import ScoreDriftMonitor
 from src.evaluate import pot_threshold
 from src.hst_model import build_model, classify_severity, freeze_scaler
-from src.hst_state import HSTState, apply, capture, reset
+from src.hst_state import HSTState, apply, capture, feature_names, materialize, reset
 from src.mlflow_lifecycle import InMemoryRegistry
 from src.publishers import EventPublisher, NullPublisher
 
@@ -65,6 +68,10 @@ POLICIES = ("static", "online", "naive_rollback", "periodic", "gated", "cadal")
 class LifecycleConfig:
     policy: str = "cadal"
     use_change_events: bool = True          # False = cadal ablation without the change prior
+    # Change kinds that license replacing the model. Others (a pod restart) still open a quarantine
+    # at once, but a shift they explain may only be resumed, re-baselined, held or asked about:
+    # a restarted pod returns to the old normal, so its warm-up must not be learned as a new one.
+    licensing_change_kinds: tuple[str, ...] = ("deployment", "config", "scale")
     calib_percentile: float = 97.0          # per-version threshold, see ml-pipeline/RESULTS.md
     # "percentile": threshold = calib_percentile of held-out scores. "pot": Peaks-Over-Threshold
     # extreme value fit at risk pot_q (src/evaluate.pot_threshold), selected on the SMD dev
@@ -178,6 +185,20 @@ class StepResult:
     phase: str                  # "stable" | "quarantine"
     latency_ms: float
     lifecycle: Optional[dict] = None   # set on the step a lifecycle decision was taken
+
+
+CHECKPOINT_FORMAT = 1
+
+
+def _jsonable(o):
+    """json.dumps fallback for numpy scalars and arrays inside evidence and tags."""
+    if isinstance(o, np.generic):
+        return o.item()
+    if isinstance(o, np.ndarray):
+        return o.tolist()
+    if isinstance(o, (set, tuple)):
+        return list(o)
+    raise TypeError(f"not JSON serialisable: {type(o).__name__}")
 
 
 def _clamp(x: float) -> float:
@@ -312,6 +333,8 @@ class DynamicModelManager:
         self._cooldown_until = 0
         self._last_change: Optional[ChangeEvent] = None
         self._last_change_step = -10**9
+        self._last_restart: Optional[ChangeEvent] = None   # last non-licensing change (a restart)
+        self._last_restart_step = -10**9
         self._recent_alarms: deque[bool] = deque(maxlen=cfg.scheduled_window)
         self._recent_rows: deque[dict] = deque(maxlen=cfg.periodic_window)
         self._recent_scores: deque[float] = deque(maxlen=cfg.naive_stable_every)
@@ -337,10 +360,103 @@ class DynamicModelManager:
         self._pending = None
         self._pending_kind = ""                 # "decision" (closes the quarantine) or "look" (may not)
         self._deferred_change = False
+        self._deferred_trigger = "change_event"
         # Operator queries: query_id -> record; pending candidates stay in memory only.
         self.queries: dict[str, dict] = {}
         self._query_steps: list[int] = []
         self._ask_cooldown_until = 0
+
+    # ── checkpoints (survive a restart) ───────────────────────────────────────
+    def detector_key(self) -> str:
+        """Which detector this manager runs; a checkpoint only restores onto the same one."""
+        payload = json.dumps(asdict(self.hst_cfg), sort_keys=True, default=str)
+        return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+    def export_state(self) -> bytes:
+        """
+        Everything needed to resume serving after a restart, as a compressed JSON blob: the registry
+        (every version, the production pointer, the audit trail), the serving threshold and
+        re-baselining state, the per-service null floors, cooldowns and operator queries, including
+        the validated candidate an open query is waiting on.
+
+        Not saved: an open quarantine and the drift detector's window. After a restore the service
+        is stable again, and a shift that is still there opens a new quarantine on its own.
+        """
+        queries = {}
+        for qid, q in self.queries.items():
+            rec = {k: v for k, v in q.items() if k != "_candidate"}
+            cand = q.get("_candidate")
+            if cand is not None:
+                rec["_candidate"] = {
+                    "state": cand["state"].to_bytes().hex(), "threshold": cand["threshold"],
+                    "gate": cand["gate"],
+                    "ref_stats": {k: list(v) for k, v in cand["ref_stats"].items()} if cand["ref_stats"] else None,
+                }
+            queries[qid] = rec
+        body = {
+            "format": CHECKPOINT_FORMAT,
+            "service_id": self.service_id,
+            "detector": self.detector_key(),
+            "features": feature_names(self.model),
+            "step": self.step,
+            "threshold": self.threshold,
+            "learn_gate": self.learn_gate,
+            "ref_stats": {k: list(v) for k, v in self.ref_stats.items()} if self.ref_stats else None,
+            "shifts": self.shifts,
+            "attribution_null": {str(k): v for k, v in self.attribution_null.items()},
+            "cooldown_until": self._cooldown_until,
+            "ask_cooldown_until": self._ask_cooldown_until,
+            "query_steps": self._query_steps,
+            "last_checkpoint_step": self._last_checkpoint_step,
+            "last_change": ({**asdict(self._last_change), "timestamp": None, "step_seen": self._last_change_step}
+                            if self._last_change is not None else None),
+            "queries": queries,
+            "registry": self.registry.export(),
+        }
+        return zlib.compress(json.dumps(body, default=_jsonable).encode())
+
+    def restore_state(self, blob: bytes, features: Optional[list[str]] = None) -> bool:
+        """
+        Resume from export_state() instead of warming up. Returns False, leaving the manager
+        untouched, when the checkpoint is for another detector or another set of input features
+        (the caller then warms up from scratch).
+        """
+        body = json.loads(zlib.decompress(blob))
+        if body.get("format") != CHECKPOINT_FORMAT or body.get("detector") != self.detector_key():
+            return False
+        if features is not None and sorted(features) != sorted(body["features"]):
+            return False
+        materialize(self.model, body["features"])
+        self.registry.load(body["registry"])
+        production = self.registry.production()
+        self._restore(production.state)
+        freeze_scaler(self.model)
+        self.threshold = production.threshold
+        self.learn_gate = body["learn_gate"]
+        self.ref_stats = {k: tuple(v) for k, v in body["ref_stats"].items()} if body["ref_stats"] else None
+        self.shifts = dict(body["shifts"])
+        self.attribution_null = {int(k): v for k, v in body["attribution_null"].items()}
+        self.step = body["step"]
+        self._cooldown_until = body["cooldown_until"]
+        self._ask_cooldown_until = body["ask_cooldown_until"]
+        self._query_steps = list(body["query_steps"])
+        self._last_checkpoint_step = body["last_checkpoint_step"]
+        change = body.get("last_change")
+        if change is not None:
+            seen = change.pop("step_seen")
+            self._last_change, self._last_change_step = ChangeEvent(**change), seen
+        self.queries = {}
+        for qid, rec in body["queries"].items():
+            cand = rec.pop("_candidate", None)
+            if cand is not None:
+                rec["_candidate"] = {
+                    "state": HSTState.from_bytes(bytes.fromhex(cand["state"])),
+                    "threshold": cand["threshold"], "gate": cand["gate"],
+                    "ref_stats": {k: tuple(v) for k, v in cand["ref_stats"].items()} if cand["ref_stats"] else None,
+                }
+            self.queries[qid] = rec
+        self.phase = "stable"
+        return True
 
     # ── warm-up ──────────────────────────────────────────────────────────────
     def warm_up(self, rows: list[dict], calib_frac: float = 0.2) -> dict:
@@ -538,16 +654,22 @@ class DynamicModelManager:
     def _on_change_event(self, evt: ChangeEvent) -> Optional[dict]:
         if self.cfg.policy != "cadal" or not self.cfg.use_change_events:
             return None
-        self._last_change, self._last_change_step = evt, self.step
+        licensing = evt.kind in self.cfg.licensing_change_kinds
+        if licensing:
+            self._last_change, self._last_change_step = evt, self.step
+        else:
+            self._last_restart, self._last_restart_step = evt, self.step
+        trigger = "change_event" if licensing else evt.kind
         self.publisher.publish_lifecycle({"service_id": self.service_id, "event": "change_observed",
-                                          "change_event_id": evt.event_id, "step": self.step})
+                                          "change_event_id": evt.event_id, "kind": evt.kind,
+                                          "licensing": licensing, "detail": evt.detail, "step": self.step})
         # Evidence about the post-change regime has to come from after the change, so a change
         # during an open quarantine restarts it rather than reusing the pre-change buffer. While
         # an asynchronous decision is in flight, the new quarantine opens once it is applied.
         if self.phase == "deciding":
-            self._deferred_change = True
+            self._deferred_change, self._deferred_trigger = True, trigger
             return None
-        self._open_quarantine("change_event")
+        self._open_quarantine(trigger)
         return None
 
     def _open_quarantine(self, trigger: str) -> None:
@@ -602,6 +724,9 @@ class DynamicModelManager:
             "champion_threshold": self.threshold, "champion_gate": self.learn_gate,
             "ref_stats": self.ref_stats, "null": self.attribution_null.get(n, {}),
             "may_ask": self._may_ask(), "q_start": self._q_start, "length": self._q_target_len,
+            "restart_event_id": (self._last_restart.event_id
+                                 if self._last_restart is not None and self._last_restart_step >= self._q_start
+                                 else None),
         }
 
     def quarantine_progress(self) -> Optional[dict]:
@@ -731,6 +856,7 @@ class DynamicModelManager:
             learnable_floor=ctx["null"].get("learnable"),
             moving_floor=ctx["null"].get("moving"),
             rebaseline_tail_alarm_rate=rebaseline_tail,
+            restart_event_id=ctx.get("restart_event_id"),
         )
         attribution_cfg = replace(self.cfg.attribution, ask_operator=ctx.get("may_ask", False))
         result: Attribution = attribute(evidence, attribution_cfg)
@@ -774,6 +900,8 @@ class DynamicModelManager:
         """Serve what the evaluation decided. Runs on the serving thread, in milliseconds."""
         t = time.perf_counter()
         result = out["result"]
+        if out.get("restart_event_id"):
+            result.evidence.setdefault("restart_event_id", out["restart_event_id"])
         result.evidence.setdefault("early", False)
         result.evidence.setdefault("quarantine_events", len(out["rows"]))
         result.evidence.setdefault("quarantine_length", out.get("length"))
@@ -829,7 +957,7 @@ class DynamicModelManager:
                                  "evidence": result.evidence, "query_id": query_id})
         if self._deferred_change:
             self._deferred_change = False
-            self._open_quarantine("change_event")
+            self._open_quarantine(self._deferred_trigger)
         return decision
 
     # -- operator in the loop -------------------------------------------------------------------

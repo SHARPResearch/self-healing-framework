@@ -1,9 +1,24 @@
 # kube-prometheus-stack for the SHARP live demo on minikube (namespace: monitoring).
-# Only Prometheus, kube-state-metrics, node-exporter and the cAdvisor scrape are needed: SHARP
-# queries Prometheus directly, so Grafana and Alertmanager are off to save memory on a laptop.
+# Prometheus, kube-state-metrics, node-exporter and the cAdvisor scrape feed ml-backend, which
+# queries Prometheus directly. Grafana is on for dashboards (the bundled Kubernetes dashboards plus
+# grafana-dashboard-sharp.yaml); Alertmanager stays off to save memory on a laptop.
 # The 5 s scrape matches ml-backend's LIVE_SCRAPE_SECONDS (accelerated lifecycle pacing).
 grafana:
-  enabled: false
+  enabled: true
+  # No password is set here: the chart generates one into the kube-prom-grafana secret (see README).
+  defaultDashboardsTimezone: browser
+  resources:
+    requests:
+      cpu: 50m
+      memory: 150Mi
+    limits:
+      memory: 300Mi
+  # the sidecar loads any ConfigMap labelled grafana_dashboard=1, which is how our dashboard arrives
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      searchNamespace: ALL
 alertmanager:
   enabled: false
 prometheus:

@@ -138,6 +138,35 @@ class InMemoryRegistry:
         self._production_history.append(version)
         self._record(step, transition, previous, version, reason, evidence)
 
+    # ── persistence ──────────────────────────────────────────────────────────
+    def export(self) -> dict:
+        """Everything the registry holds, JSON-serialisable (model states as hex snapshots)."""
+        return {
+            "versions": [
+                {"version": v.version, "state": v.state.to_bytes().hex(), "threshold": v.threshold,
+                 "target_rate": v.target_rate, "created_step": v.created_step, "reason": v.reason,
+                 "status": v.status, "tags": v.tags}
+                for v in self.versions
+            ],
+            "production": self._production,
+            "production_history": list(self._production_history),
+            "transitions": [asdict(t) for t in self.transitions],
+        }
+
+    def load(self, body: dict) -> None:
+        """Replace the contents with an export(). Nothing is re-recorded: the audit trail is restored as it was."""
+        self._versions = {
+            v["version"]: ModelVersion(
+                version=v["version"], state=HSTState.from_bytes(bytes.fromhex(v["state"])),
+                threshold=v["threshold"], target_rate=v["target_rate"], created_step=v["created_step"],
+                reason=v["reason"], status=v["status"], tags=dict(v.get("tags") or {}),
+            )
+            for v in body["versions"]
+        }
+        self._production = body["production"]
+        self._production_history = list(body["production_history"])
+        self.transitions = [TransitionRecord(**t) for t in body["transitions"]]
+
     def checkpoint(self, state: HSTState, threshold: float, target_rate: float, *, step: int,
                    reason: str, tags: Optional[dict] = None) -> int:
         """Register the current healthy production state as a new stable version and serve it."""

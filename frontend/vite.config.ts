@@ -3,7 +3,10 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 
-const ML_BACKEND = process.env.ML_BACKEND_URL ?? "http://127.0.0.1:8002";
+const ML_BACKEND = process.env.ML_BACKEND_URL ?? "http://localhost:8002";
+// services/auth (Better Auth). Only used when the build has VITE_AUTH=on; in production the SHARP
+// web server serves the dashboard and /api/auth from one origin, so this proxy mirrors that.
+const AUTH_SERVER = process.env.AUTH_URL ?? "http://localhost:8010";
 
 // A reloaded tab, a restarted backend or a sleeping laptop drops the dashboard's WebSocket; the app
 // reconnects by itself (lib/mlBackend.ts), so Vite logging each drop as an error is only noise.
@@ -29,6 +32,7 @@ export default defineConfig({
     // services/ml-backend (uvicorn on :8002; the decision engine keeps :8000 and is called directly
     // by lib/api.ts). The app falls back to mock data when ml-backend isn't up.
     proxy: {
+      "/api/auth": AUTH_SERVER,     // listed first: more specific than /api
       "/api": ML_BACKEND,
       "/ws": { target: ML_BACKEND.replace(/^http/, "ws"), ws: true },
     },

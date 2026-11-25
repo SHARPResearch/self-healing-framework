@@ -40,6 +40,7 @@ export const VERDICT_LABEL: Record<Verdict, string> = {
   operator: "Operator",
   unattributed: "Unattributed",
   scheduled: "Scheduled",
+  restart: "Restart",
 };
 
 export const ACTION_LABEL: Record<LifecycleAction, string> = {
@@ -62,6 +63,7 @@ export const TRIGGER_LABEL: Record<string, string> = {
   drift_up: "drift (score rising)",
   drift_down: "drift (score falling)",
   change_event: "deployment",
+  restart: "pod restart",
   scheduled: "scheduled check",
   operator: "operator check",
   operator_timeout: "query expired",

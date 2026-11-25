@@ -4,15 +4,23 @@ import { ArrowLeft, MailCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { AUTH_ENABLED, authClient } from "@/lib/auth";
 import { AuthLayout } from "./components/AuthLayout";
 
-/** Mock only -- no email is sent, the success state is local. */
+/**
+ * Asks the auth service for a reset link. It always answers the same way, so the page never
+ * reveals whether an account exists. Without an email provider (RESEND_API_KEY on the auth
+ * service) the link is written to the auth service's log for an administrator to pass on.
+ */
 export function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState(false);
 
-  const handleSubmit = (e: FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    if (AUTH_ENABLED) {
+      await authClient.requestPasswordReset({ email, redirectTo: "/reset-password" }).catch(() => undefined);
+    }
     setSent(true);
   };
 
@@ -63,9 +71,11 @@ export function ForgotPasswordPage() {
         </form>
       )}
 
-      <p className="mt-6 rounded-md border border-border/60 bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-        Demo build. No email is actually sent.
-      </p>
+      {!AUTH_ENABLED && (
+        <p className="mt-6 rounded-md border border-border/60 bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+          Local demo build: accounts are off, so no email is sent.
+        </p>
+      )}
     </AuthLayout>
   );
 }

@@ -649,3 +649,106 @@ def test_validity_check_can_restart_an_open_quarantine():
     assert mgr.request_validity_check() is False                 # already observing
     assert mgr.request_validity_check(restart=True) is True      # starts over from now
     assert mgr.quarantine_progress()["seen"] == 0 and mgr._q_trigger == "operator"
+
+
+# ── checkpoints: resume after a restart ──────────────────────────────────────────────────────────
+def _fresh_hitl_manager():
+    from src.change_events import QueueChangeEventSource
+    cfg = _cfg(operator_queries=True, query_ttl=400, query_budget=2, query_budget_window=5000,
+               query_cooldown=1000, rebaseline=False)
+    return DynamicModelManager("svc", cfg, HST, change_source=QueueChangeEventSource())
+
+
+def test_checkpoint_restores_versions_threshold_audit_trail_and_an_open_question():
+    mgr, _ = _hitl_manager(rebaseline=False)
+    deploy = _manager(_cfg(), events=[ChangeEvent("svc", "deployment", step=301)])
+    _run(deploy, _shifted_stream())                     # a manager with a promoted version
+    q = _run_until_query(mgr)
+    assert q is not None
+
+    for original, fresh in ((deploy, DynamicModelManager("svc", _cfg(), HST)), (mgr, _fresh_hitl_manager())):
+        assert fresh.restore_state(original.export_state())
+        assert [v.version for v in fresh.registry.versions] == [v.version for v in original.registry.versions]
+        assert fresh.registry.production_version == original.registry.production_version
+        assert len(fresh.registry.transitions) == len(original.registry.transitions)
+        assert fresh.threshold == original.threshold and fresh.shifts == original.shifts
+        assert fresh.step == original.step and fresh.phase == "stable"
+        rng_a, rng_b = random.Random(42), random.Random(42)
+        rows = [_normal(rng_a, 0.35) for _ in range(50)]
+        assert [fresh.process(x).score for x in rows] == [original.process(dict(x)).score for x in
+                                                          [_normal(rng_b, 0.35) for _ in range(50)]]
+
+    # The open question survives with its validated candidate, and answering it still promotes.
+    restored = _fresh_hitl_manager()
+    restored.restore_state(mgr.export_state())
+    assert [x["query_id"] for x in restored.open_queries] == [q["query_id"]]
+    before = restored.registry.production_version
+    decision = restored.answer_query(q["query_id"], "new_normal", operator="tester")
+    assert decision["action"] == "promote" and restored.registry.production_version == before + 1
+
+
+def test_checkpoint_is_refused_for_another_detector_or_other_features():
+    mgr = _manager(_cfg())
+    blob = mgr.export_state()
+    other_detector = DynamicModelManager("svc", _cfg(), HSTConfig(n_trees=10, height=6, window_size=50, seed=11))
+    assert other_detector.restore_state(blob) is False
+    assert DynamicModelManager("svc", _cfg(), HST).restore_state(blob, features=["a", "b", "x"]) is False
+    assert DynamicModelManager("svc", _cfg(), HST).restore_state(blob, features=list(FEATURES)) is True
+
+
+def test_checkpoint_round_trips_the_smoothed_pca_detector():
+    from src.hst_model import detector_config
+    pca = detector_config("pca_s5")
+    mgr = DynamicModelManager("svc", _cfg(), pca,
+                              change_source=ReplayChangeEventSource([ChangeEvent("svc", "deployment", step=301)]))
+    mgr.warm_up([_normal(random.Random(0)) for _ in range(600)])
+    _run(mgr, _shifted_stream())
+    fresh = DynamicModelManager("svc", _cfg(), pca)
+    assert fresh.restore_state(mgr.export_state())
+    assert fresh.registry.production_version == mgr.registry.production_version
+    rows = [_normal(random.Random(7), 0.35) for _ in range(60)]
+    a = [fresh.process(dict(x)).alarm for x in rows]
+    b = [mgr.process(dict(x)).alarm for x in rows]
+    assert a[20:] == b[20:]                              # after the smoothing level settles
+
+
+# -- restarts explain a shift but do not license a new model ---------------------------------------
+def _restart_dip_stream(seed=12, before=300, dip=60, after=900):
+    """A pod restart: metrics drop for a minute, then the service is back to its old normal."""
+    rng = random.Random(seed)
+    rows = [_normal(rng) for _ in range(before)]
+    rows += [_normal(rng, -0.25) for _ in range(dip)]
+    rows += [_normal(rng) for _ in range(after)]
+    return rows
+
+
+def test_a_restart_opens_a_quarantine_without_licensing_a_new_model():
+    from src.publishers import RecordingPublisher
+    pub = RecordingPublisher()
+    mgr = _manager(_cfg(rebaseline=False), events=[ChangeEvent("svc", "restart", step=301)], publisher=pub)
+    _run(mgr, _shifted_stream())                         # a lasting shift right after the restart
+    opened = [p for p in pub.payloads if p.get("event") == "quarantine_opened"]
+    seen = [p for p in pub.payloads if p.get("event") == "change_observed"]
+    assert opened[0]["trigger"] == "restart" and opened[0]["step"] == 301
+    assert seen[0]["kind"] == "restart" and seen[0]["licensing"] is False
+    # The same shift after a deployment is retrained and promoted; after a restart it never is.
+    assert not any(d["action"] == "promote" for d in mgr.decisions)
+    assert mgr.decisions[0]["evidence"]["restart_event_id"] == "svc:restart@301"
+
+
+def test_a_restart_quarantine_never_re_baselines_the_warm_up():
+    mgr = _manager(_cfg(), events=[ChangeEvent("svc", "restart", step=301)])
+    _run(mgr, _shifted_stream())                         # re-baselining would repair this shift
+    first = mgr.decisions[0]
+    assert (first["verdict"], first["action"]) == ("restart", "hold")
+    assert mgr.registry.production_version == 1 and mgr.shifts == {}
+
+
+def test_a_restart_dip_that_recovers_is_resumed_early():
+    mgr = _manager(_cfg(early_stop=True, quarantine_with_change=400, quarantine_silent=400),
+                   events=[ChangeEvent("svc", "restart", step=301)])
+    _run(mgr, _restart_dip_stream())
+    first = mgr.decisions[0]
+    assert (first["verdict"], first["action"]) == ("no_change", "resume")
+    assert first["evidence"]["early"] and first["evidence"]["restart_event_id"] == "svc:restart@301"
+    assert mgr.registry.production_version == 1

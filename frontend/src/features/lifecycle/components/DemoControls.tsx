@@ -1,5 +1,4 @@
-// frontend\src\features\lifecycle\components\DemoControls.tsx
-
+import { AUTH_ENABLED, useSession } from "@/lib/auth";
 import { useState } from "react";
 import { Pause, Play, RotateCcw, TrendingDown, TrendingUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -25,11 +24,7 @@ export function DemoControls() {
     setTraffic(null);
     try {
       await api.live("loadgenerator", action);
-      setTraffic(
-        action === "traffic_up"
-          ? "load generator x3 users"
-          : "load generator back to baseline",
-      );
+      setTraffic(action === "traffic_up" ? "load generator x3 users" : "load generator back to baseline");
     } catch (e) {
       setTraffic(e instanceof Error ? e.message : String(e));
     }
@@ -61,64 +56,36 @@ export function DemoControls() {
       </span>
       {live ? (
         <div className="flex items-center gap-1">
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-7"
-            onClick={() => setLoad("traffic_up")}
-            title="Triple the load generator's users: a real traffic shift with no deployment event"
-          >
+          <Button size="sm" variant="outline" className="h-7" onClick={() => setLoad("traffic_up")}
+            title="Triple the load generator's users: a real traffic shift with no deployment event">
             <TrendingUp className="size-3.5" />
             Traffic x3
           </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-7"
-            onClick={() => setLoad("traffic_reset")}
-          >
+          <Button size="sm" variant="outline" className="h-7" onClick={() => setLoad("traffic_reset")}>
             <TrendingDown className="size-3.5" />
             Baseline
           </Button>
         </div>
       ) : (
-        <div className="flex items-center gap-1">
-          {SPEEDS.map((eps) => (
-            <Button
-              key={eps}
-              size="sm"
-              variant="ghost"
-              className={cn(
-                "h-7 px-2 font-mono text-xs",
-                health?.eventsPerSec === eps && "bg-accent",
-              )}
-              onClick={() => speed({ eventsPerSec: eps })}
-            >
-              {eps}/s
-            </Button>
-          ))}
-        </div>
+      <div className="flex items-center gap-1">
+        {SPEEDS.map((eps) => (
+          <Button
+            key={eps}
+            size="sm"
+            variant="ghost"
+            className={cn("h-7 px-2 font-mono text-xs", health?.eventsPerSec === eps && "bg-accent")}
+            onClick={() => speed({ eventsPerSec: eps })}
+          >
+            {eps}/s
+          </Button>
+        ))}
+      </div>
       )}
-      <Button
-        size="sm"
-        variant="outline"
-        className="h-7"
-        onClick={() => speed({ paused: !health?.paused })}
-      >
-        {health?.paused ? (
-          <Play className="size-3.5" />
-        ) : (
-          <Pause className="size-3.5" />
-        )}
+      <Button size="sm" variant="outline" className="h-7" onClick={() => speed({ paused: !health?.paused })}>
+        {health?.paused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
         {health?.paused ? "Resume" : "Pause"}
       </Button>
-      <Button
-        size="sm"
-        variant="outline"
-        className="h-7"
-        disabled={resetting}
-        onClick={reset}
-      >
+      <Button size="sm" variant="outline" className="h-7" disabled={resetting} onClick={reset}>
         <RotateCcw className="size-3.5" />
         {live ? "Re-warm" : "Reset"}
       </Button>
@@ -127,15 +94,26 @@ export function DemoControls() {
           ? `Online Boutique (${health?.namespace}) · scrape every ${health?.scrapeSeconds}s · one lifecycle day = ${health?.lifecycleDayMinutes} min${traffic ? ` · ${traffic}` : ""}`
           : `One lifecycle day = 1440 events ≈ ${health ? Math.round(1440 / Math.max(health.eventsPerSec, 1)) : 24}s`}
       </span>
-      <label className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
-        Operator
-        <Input
-          value={operator}
-          onChange={(e) => setOperator(e.target.value)}
-          className="h-7 w-32 text-xs"
-          aria-label="Operator name recorded in the audit trail"
-        />
-      </label>
+      {AUTH_ENABLED ? (
+        // with accounts on, ml-backend records the signed-in user, never a typed name
+        <ActingAs />
+      ) : (
+        <label className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
+          Operator
+          <Input
+            value={operator}
+            onChange={(e) => setOperator(e.target.value)}
+            className="h-7 w-32 text-xs"
+            aria-label="Operator name recorded in the audit trail"
+          />
+        </label>
+      )}
     </div>
   );
+}
+
+/** With accounts on: whose name the audit trail records for actions taken here. */
+function ActingAs() {
+  const email = useSession().data?.user.email;
+  return <span className="ml-auto text-xs text-muted-foreground">Acting as {email ?? "…"}</span>;
 }

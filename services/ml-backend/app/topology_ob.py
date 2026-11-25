@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from typing import Any, Optional
 
 NAMESPACE = "online-boutique"
 
@@ -71,20 +72,88 @@ def _filter(live: set[str] | None) -> tuple[list[dict], list[dict]]:
     return nodes, edges
 
 
-def version(live: set[str] | None = None) -> str:
+def _istio_edges(client: Any, namespace: str, live: set[str]) -> list[dict]:
+    promql = (
+        'sum by (source_workload, destination_workload) ('
+        f'rate(istio_requests_total{{namespace="{namespace}", reporter="source", '
+        'source_workload!="unknown", destination_workload!="unknown"}}[5m]))'
+    )
+    try:
+        results = client.query(promql)
+    except Exception:
+        return []
+
+    pairs: list[tuple[str, str, float]] = []
+    for row in results:
+        metric = row.get("metric", {})
+        source = metric.get("source_workload")
+        target = metric.get("destination_workload")
+        if not source or not target or source == target:
+            continue
+        if live and (source not in live or target not in live):
+            continue
+        try:
+            value = float(row.get("value", [0, 0])[1])
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            pairs.append((source, target, value))
+
+    if not pairs:
+        return []
+
+    peak = max(value for _, _, value in pairs) or 1.0
+    edges = []
+    for source, target, value in pairs:
+        label = next((n["name"] for n in NODES if n["id"] == source), source)
+        edges.append(
+            {
+                "source": source,
+                "target": target,
+                "strength": round(min(1.0, value / peak), 3),
+                "protocol": "http/grpc",
+                "metadata": {"caller_name": label, "requests_per_sec": round(value, 3)},
+            }
+        )
+    return edges
+
+
+def version(
+    live: set[str] | None = None,
+    health: dict[str, str] | None = None,
+    edge_source: str = "catalog",
+) -> str:
     nodes, edges = _filter(live)
-    blob = json.dumps({"n": nodes, "e": edges}, sort_keys=True)
+    blob = json.dumps(
+        {"n": nodes, "e": edges, "h": health or {}, "s": edge_source},
+        sort_keys=True,
+    )
     return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:12]
 
 
-def snapshot(live: set[str] | None = None, health: dict[str, str] | None = None) -> dict:
-    """The Online Boutique graph, optionally filtered to the live deployments."""
-    nodes, edges = _filter(live)
+def snapshot(
+    live: set[str] | None = None,
+    health: dict[str, str] | None = None,
+    prom_client: Optional[Any] = None,
+) -> dict:
+    """The Online Boutique graph, filtered to the deployments actually running."""
+    nodes, catalog_edges = _filter(live)
     health = health or {}
+    live_set = set(live or [])
+    discovered = _istio_edges(prom_client, NAMESPACE, live_set) if prom_client else []
+    if discovered:
+        edges = discovered
+        edge_source = "istio"
+    else:
+        edges = catalog_edges
+        edge_source = "catalog"
+
     return {
-        "version": version(live),
+        "version": version(live_set, health, edge_source),
         "mode": "live",
         "namespace": NAMESPACE,
+        "node_source": "live-deployments",
+        "edge_source": edge_source,
         "nodes": [{**n, "health": health.get(n["id"], "healthy")} for n in nodes],
         "edges": edges,
     }

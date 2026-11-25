@@ -31,6 +31,12 @@ interface ApiNode {
   criticality: number;
   health: "healthy" | "degraded" | "down";
 }
+export interface GraphMeta {
+  source: string;
+  nodeSource: string;
+  edgeSource: string;
+  version: string | null;
+}
 interface ApiEdge {
   source: string;
   target: string;
@@ -89,6 +95,12 @@ export function useLiveGraph(pollMs = 3000) {
   >(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [meta, setMeta] = useState<GraphMeta>({
+    source: "unloaded",
+    nodeSource: "unloaded",
+    edgeSource: "unloaded",
+    version: null,
+  });
 
   useEffect(() => {
     let alive = true;
@@ -152,6 +164,12 @@ export function useLiveGraph(pollMs = 3000) {
 
         setNodes(liveNodes);
         setEdges(liveEdges);
+        setMeta({
+          source: graphData.source,
+          nodeSource: graphData.node_source,
+          edgeSource: graphData.edge_source,
+          version: graphData.version,
+        });
         setInfraByService(iMap);
         setAppByService(pMap);
         setAnomalyByService(aMap);
@@ -179,6 +197,7 @@ export function useLiveGraph(pollMs = 3000) {
     infraByService,
     appByService,
     anomalyByService,
+    meta,
     loading,
     error,
   };

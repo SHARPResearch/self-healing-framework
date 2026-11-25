@@ -712,28 +712,55 @@ def _timeseries(sid: str, points: int = 30, metric: str = "p99") -> list[dict]:
 # removed rather than renamed.
 
 
+def _latest_payload(rows) -> dict | None:
+    if not rows:
+        return None
+    try:
+        return rows[-1]["data"]
+    except (KeyError, IndexError, TypeError):
+        return None
+
+
 @router.get("/infra")
 def infra_all():
-    return [_infra(sid) for sid in SERVICE_IDS]
+    from app.ingestion.ring_buffer import ring_buffer
+
+    return [
+        payload
+        for payload in (_latest_payload(rows) for rows in ring_buffer.infra.values())
+        if payload is not None
+    ]
 
 
 @router.get("/infra/{service_id}")
 def infra_one(service_id: str):
-    if service_id not in SERVICES:
-        return {"error": f"unknown service: {service_id}"}
-    return _infra(service_id)
+    from app.ingestion.ring_buffer import ring_buffer
+
+    payload = _latest_payload(ring_buffer.infra.get(service_id))
+    if payload is None:
+        return {"error": f"no telemetry for service: {service_id}"}
+    return payload
 
 
 @router.get("/app")
 def app_all():
-    return [_app(sid) for sid in SERVICE_IDS]
+    from app.ingestion.ring_buffer import ring_buffer
+
+    return [
+        payload
+        for payload in (_latest_payload(rows) for rows in ring_buffer.app.values())
+        if payload is not None
+    ]
 
 
 @router.get("/app/{service_id}")
 def app_one(service_id: str):
-    if service_id not in SERVICES:
-        return {"error": f"unknown service: {service_id}"}
-    return _app(service_id)
+    from app.ingestion.ring_buffer import ring_buffer
+
+    payload = _latest_payload(ring_buffer.app.get(service_id))
+    if payload is None:
+        return {"error": f"no telemetry for service: {service_id}"}
+    return payload
 
 
 @router.get("/timeseries/{service_id}")
@@ -753,23 +780,28 @@ def timeseries(
 
 @router.get("/services")
 def services():
-    """Return catalog of all services with metadata."""
-    return [
-        {
-            "service_id": sid,
-            "display_name": p["display_name"],
-            "layer": p["layer"],
-            "team": p["team"],
-            "tier": p["tier"],
-            "runtime": p["runtime"],
-            "version": p["version"],
-            "region": p["region"],
-            "node_pool": p["node_pool"],
-            "replicas": p["replicas"],
-            "health": _health(sid),
-        }
-        for sid, p in SERVICES.items()
-    ]
+    """Return the live graph-derived service catalog with metadata."""
+    from app.integration.catalog import resolve_catalog
+
+    result = []
+    for sid, p in resolve_catalog().items():
+        criticality = float(p.get("criticality") or 0.5)
+        result.append(
+            {
+                "service_id": sid,
+                "display_name": p.get("display_name") or p.get("name") or sid,
+                "layer": p.get("layer") or "domain",
+                "team": p.get("team") or "platform",
+                "tier": p.get("tier") or (1 if criticality >= 0.9 else 2 if criticality >= 0.7 else 3),
+                "runtime": p.get("runtime") or "k8s",
+                "version": p.get("version") or "unknown",
+                "region": p.get("region") or "local",
+                "node_pool": p.get("node_pool") or "default",
+                "replicas": p.get("replicas") or 1,
+                "health": p.get("health") or "healthy",
+            }
+        )
+    return result
 
 
 @router.post("/mock/scenario/{name}")

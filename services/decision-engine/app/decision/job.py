@@ -19,7 +19,7 @@ from time import perf_counter
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from app.integration.catalog import resolve_catalog
+from app.integration.catalog import catalog_for_anomaly
 from app.config import settings
 from app.decision.log import build_decision, persist_decision
 from app.integration.telemetry import build_telemetry
@@ -55,7 +55,8 @@ async def poll_and_decide():
         window = getattr(settings, "DECISION_WINDOW_SEC", 300)
         anomalies = await postgres_store.get_anomalies_without_decisions(
             window_sec=window,
-            limit=100,
+            limit=30,
+            backfill_max_age_sec=None,
         )
         if not anomalies:
             return
@@ -65,13 +66,10 @@ async def poll_and_decide():
         for anomaly in anomalies:
             try:
                 sid = anomaly.get("service_id")
-                # The catalog is the local demo entries plus every node of the
-                # live dependency graph, so a service that only exists on the
-                # cluster is still decided on.
-                catalog = resolve_catalog()
-                if not sid or sid not in catalog:
-                    log.warning("Pipeline: unknown service %s, skipping", sid)
+                if not sid:
+                    log.warning("Pipeline: anomaly %s has no service_id, skipping", anomaly.get("id"))
                     continue
+                catalog = catalog_for_anomaly(anomaly)
 
                 # Per-stage wall clock, persisted into decision_log.context.timings
                 # so the UI can show measured durations instead of guessing.

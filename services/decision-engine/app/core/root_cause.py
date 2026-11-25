@@ -83,8 +83,11 @@ def localize_root_cause(
         upstream_affected = upstream & affected_sids
         downstream_affected = downstream & affected_sids
 
-        # Strong root: upstream healthy, downstream affected
-        if not upstream_affected and downstream_affected:
+        # Strong root: at least one dependency is healthy and consumers are
+        # affected. A shared upstream can be anomalous without disqualifying
+        # the service when its other dependencies are still healthy.
+        upstream_partially_healthy = len(upstream_affected) < len(upstream)
+        if upstream_partially_healthy and downstream_affected:
             score = _root_score(sid, downstream_affected, g)
             candidates.append((sid, score, 2.0, _ts(a.get("detected_at"))))
 

@@ -243,6 +243,21 @@ async def poll_and_decide():
                     except Exception:
                         log.exception("Pipeline: record_action_outcome failed")
 
+                    try:
+                        from app.notifications.emailer import notify_execution_result
+                        await notify_execution_result(
+                            {
+                                "decision_id": decision.decision_id,
+                                "anomaly_id": str(anomaly.get("id")),
+                                "service_id": sid,
+                                "action": decision.action.value,
+                            },
+                            result.to_dict(),
+                            anomaly,
+                        )
+                    except Exception:
+                        log.exception("notify_execution_result failed for %s", anomaly.get("id"))
+
                 elif decision.policy_outcome == PolicyOutcome.SHADOW_MODE:
                     if validation.shadow_payload:
                         validation.shadow_payload["DECISION_ID"] = decision.decision_id

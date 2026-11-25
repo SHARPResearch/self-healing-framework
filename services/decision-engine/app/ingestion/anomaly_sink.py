@@ -14,10 +14,9 @@ import logging
 from datetime import datetime, timezone, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.config import settings
-from app.ingestion.ring_buffer import ring_buffer
+from app.ingestion.ring_buffer import _as_utc, ring_buffer, resolve_buffer_key
 from app.persistence.postgres import postgres_store
 from app.persistence.timescale import timescale_store
-from app.api.routes.mock_data import _anomaly, SERVICES, _health
 from app.integration.component1 import (
     anomaly_from_state,
     by_service,
@@ -85,6 +84,8 @@ async def poll_anomalies(scheduler: AsyncIOScheduler):
     This is the production behavior: one anomaly per incident, regardless
     of how many polls happen during that incident.
     """
+    from app.api.routes.mock_data import SERVICES, _anomaly, _health
+
     try:
         # Component 1 owns detection. Poll its per-service state once per cycle;
         # if it is down, fall back to the local health table so the pipeline keeps
@@ -178,10 +179,11 @@ async def poll_anomalies(scheduler: AsyncIOScheduler):
                 except Exception:
                     log.exception("notify_anomaly_detected failed for %s", incident_id)
 
-                # Phase 1 — capture BEFORE window
-                await _capture_phase1(incident_id, sid, detected_at)
+                try:
+                    await _capture_phase1(incident_id, sid, detected_at)
+                except Exception:
+                    log.exception("Phase 1 crashed for %s; phase 2 will still run", incident_id)
 
-                # Schedule phase 2 at T + SNAPSHOT_AFTER_SEC
                 run_at = detected_at + timedelta(seconds=settings.SNAPSHOT_AFTER_SEC)
                 scheduler.add_job(
                     _capture_phase2,
@@ -279,7 +281,7 @@ async def _capture_phase1(anomaly_id: str, service_id: str, detected_at: datetim
     w_to = detected_at
 
     # ── Resolve the service key against what the buffer actually holds ──
-    resolved = _resolve_buffer_key(service_id)
+    resolved = resolve_buffer_key(service_id, ring_buffer)
     if resolved is None:
         log.error(
             "Phase 1 for %s: service_id %r not in ring buffer and no "
@@ -398,32 +400,59 @@ async def _capture_phase1(anomaly_id: str, service_id: str, detected_at: datetim
 # Phase 2 — AFTER window (T + AFTER_SEC)
 # ─────────────────────────────────────────────────────────────────
 async def _capture_phase2(anomaly_id: str, service_id: str, detected_at: datetime):
+    detected_at = _as_utc(detected_at)
     w_from = detected_at
     w_to = detected_at + timedelta(seconds=settings.SNAPSHOT_AFTER_SEC)
 
     try:
+        resolved = resolve_buffer_key(service_id, ring_buffer)
+        if resolved is None:
+            log.error(
+                "Phase 2 for %s: service_id %r not in ring buffer. buffer_keys=%s",
+                anomaly_id, service_id, sorted(ring_buffer.infra.keys()),
+            )
+            await postgres_store.mark_snapshot_captured(anomaly_id, w_from, w_to)
+            return
+        if resolved != service_id:
+            log.warning(
+                "Phase 2 for %s: service_id %r resolved to buffer key %r",
+                anomaly_id, service_id, resolved,
+            )
+            service_id = resolved
+
         infra_pts = ring_buffer.slice_infra(service_id, w_from, w_to)
         app_pts = ring_buffer.slice_app(service_id, w_from, w_to)
 
+        infra_written = 0
         for p in infra_pts:
-            await timescale_store.insert_infra_snapshot(
-                anomaly_id=anomaly_id,
-                time_=p["time"],
-                service_id=service_id,
-                payload=p["data"],
-            )
+            try:
+                await timescale_store.insert_infra_snapshot(
+                    anomaly_id=anomaly_id,
+                    time_=_as_utc(p["time"]),
+                    service_id=service_id,
+                    payload=p["data"],
+                )
+                infra_written += 1
+            except Exception:
+                log.exception("Phase 2 for %s: failed to insert infra point", anomaly_id)
+
+        app_written = 0
         for p in app_pts:
-            await timescale_store.insert_app_snapshot(
-                anomaly_id=anomaly_id,
-                time_=p["time"],
-                service_id=service_id,
-                payload=p["data"],
-            )
+            try:
+                await timescale_store.insert_app_snapshot(
+                    anomaly_id=anomaly_id,
+                    time_=_as_utc(p["time"]),
+                    service_id=service_id,
+                    payload=p["data"],
+                )
+                app_written += 1
+            except Exception:
+                log.exception("Phase 2 for %s: failed to insert app point", anomaly_id)
 
         await postgres_store.mark_snapshot_captured(anomaly_id, w_from, w_to)
         log.info(
-            "Phase 2 for %s: %d infra + %d app points (%s .. %s)",
-            anomaly_id, len(infra_pts), len(app_pts), w_from, w_to,
+            "Phase 2 for %s: wrote %d infra + %d app points (%s .. %s)",
+            anomaly_id, infra_written, app_written, w_from.isoformat(), w_to.isoformat(),
         )
     except Exception:
         log.exception("Phase 2 failed for %s", anomaly_id)
@@ -438,15 +467,16 @@ async def resume_pending_snapshots(scheduler: AsyncIOScheduler):
     try:
         due = await postgres_store.pending_snapshots_due()
         for anomaly in due:
+            detected_at = _as_utc(anomaly["detected_at"])
             run_at = max(
-                anomaly["detected_at"] + timedelta(seconds=settings.SNAPSHOT_AFTER_SEC),
+                detected_at + timedelta(seconds=settings.SNAPSHOT_AFTER_SEC),
                 datetime.now(timezone.utc),
             )
             scheduler.add_job(
                 _capture_phase2,
                 "date",
                 run_date=run_at,
-                args=[anomaly["id"], anomaly["service_id"], anomaly["detected_at"]],
+                args=[anomaly["id"], anomaly["service_id"], detected_at],
                 id=f"snap2-{anomaly['id']}",
                 replace_existing=True,
                 misfire_grace_time=300,

@@ -247,6 +247,7 @@ export const useLiveStore = create<LiveState>((set) => ({
               phase: d.phase as LifecyclePhase,
               quarantineTrigger: trigger,
               quarantine: (d.quarantine as QuarantineProgress | null | undefined) ?? null,
+              afterRestart: d.context === "after_restart",
               driftDetected: isDrift(trigger, services[sid]?.openQueries ?? 0),
             });
             break;
@@ -277,12 +278,19 @@ export const useLiveStore = create<LiveState>((set) => ({
             );
             break;
           }
-          case "change_observed":
+          case "change_observed": {
+            const restart = d.kind === "restart";
+            const reason = (d.detail as { reason?: string; exit_reason?: string } | undefined) ?? {};
             newFeed.push(
-              feed("change", msg, `${name(sid)}: deployment observed`,
-                `Change event ${String(d.change_event_id)} reached the lifecycle.`, "neutral"),
+              feed("change", msg, `${name(sid)}: ${restart ? "pod restart" : `${String(d.kind ?? "deployment")}`} observed`,
+                restart
+                  ? `${String(reason.reason ?? "restart").replace("_", " ")}${reason.exit_reason ? ` (${reason.exit_reason})` : ""}. ` +
+                    "Explains the shift, but the model is not replaced while the pod settles."
+                  : `Change event ${String(d.change_event_id)} reached the lifecycle.`,
+                "neutral"),
             );
             break;
+          }
           case "lifecycle_decision": {
             const dec = toDecision(d);
             decisions = [dec, ...decisions].slice(0, MAX_DECISIONS);

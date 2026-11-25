@@ -1,0 +1,17 @@
+SHARP is installed in namespace {{ .Release.Namespace }}, monitoring {{ .Values.targetNamespace }}.
+
+{{- if .Values.mlBackend.enabled }}
+
+ml-backend warms up on {{ .Values.mlBackend.warmupMinutes }} min of Prometheus history before it is Ready
+(it needs at least {{ .Values.mlBackend.minWarmupMinutes }} min). Follow it with:
+  kubectl -n {{ .Release.Namespace }} logs deploy/ml-backend -f
+  kubectl -n {{ .Release.Namespace }} get pods -w
+
+Reach the API and the dashboard's backend on localhost:8002 (the frontend dev server proxies there):
+  kubectl -n {{ .Release.Namespace }} port-forward svc/ml-backend 8002:8002
+  curl http://localhost:8002/api/ready
+{{- if .Values.grafanaDashboard.enabled }}
+
+Grafana: dashboard "SHARP ml-backend: detection and CADAL lifecycle".
+{{- end }}
+{{- end }}

@@ -91,8 +91,11 @@ class LogCapture(logging.Handler):
 
 
 class LogHub:
-    def __init__(self, http_access: bool = False):
+    def __init__(self, http_access: bool = False, capture_app: bool = True):
+        # capture_app: also collect the backend's own logging. Only the platform's runtime does;
+        # a tenant's runtime keeps its lifecycle lines and never sees platform logs (adr/0015).
         self.http_access = http_access
+        self.capture_app = capture_app
         self._incoming: deque = deque(maxlen=20000)
         self._threads: list[threading.Thread] = []
         self._procs: list[subprocess.Popen] = []
@@ -114,6 +117,8 @@ class LogHub:
         self.install()
 
     def install(self) -> None:
+        if not self.capture_app:
+            return
         for name in ("app", "uvicorn.error", "uvicorn.access"):
             lg = logging.getLogger(name)
             if self.handler not in lg.handlers:

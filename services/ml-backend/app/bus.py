@@ -10,6 +10,10 @@ envelope, also the WebSocket contract (services/ml-backend/README.md):
 
 If Redis is unreachable, messages fan out in process instead so a single backend still serves its
 own WebSocket clients.
+
+Tenancy (docs/adr/0015): each tenant's runtime has its own Bus. The default tenant keeps the
+channel above; others publish on `ws:anomaly_broadcast:<tenant>`, so a WebSocket only ever
+receives its own organization's events. Stream entries carry a `tenant_id` field.
 """
 
 import asyncio
@@ -31,8 +35,10 @@ def envelope(msg_type: str, service_id: Optional[str], data: dict) -> dict:
 
 
 class Bus:
-    def __init__(self):
+    def __init__(self, tenant: str = "default"):
         self.redis = None
+        self.tenant = tenant
+        self.channel = BROADCAST_CHANNEL if tenant == "default" else f"{BROADCAST_CHANNEL}:{tenant}"
         self._local: set[asyncio.Queue] = set()
 
     async def start(self, redis_url: Optional[str]) -> bool:
@@ -63,9 +69,10 @@ class Bus:
         if self.redis is not None:
             data = json.dumps(message, default=str)
             try:
-                await self.redis.publish(BROADCAST_CHANNEL, data)
+                await self.redis.publish(self.channel, data)
                 if message["type"] != "log":      # log lines are for the UI, not the Decision Engine
-                    await self.redis.xadd(ANOMALY_STREAM, {"type": message["type"], "payload": data},
+                    await self.redis.xadd(ANOMALY_STREAM, {"type": message["type"], "payload": data,
+                                                           "tenant_id": self.tenant},
                                           maxlen=STREAM_MAXLEN, approximate=True)
                 return
             except Exception as exc:  # noqa: BLE001
@@ -78,13 +85,13 @@ class Bus:
     async def subscribe(self) -> AsyncIterator[dict]:
         if self.redis is not None:
             pubsub = self.redis.pubsub()
-            await pubsub.subscribe(BROADCAST_CHANNEL)
+            await pubsub.subscribe(self.channel)
             try:
                 async for raw in pubsub.listen():
                     if raw.get("type") == "message":
                         yield json.loads(raw["data"])
             finally:
-                await pubsub.unsubscribe(BROADCAST_CHANNEL)
+                await pubsub.unsubscribe(self.channel)
                 await pubsub.aclose()
         else:
             q: asyncio.Queue = asyncio.Queue()

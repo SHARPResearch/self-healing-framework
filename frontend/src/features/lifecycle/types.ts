@@ -18,7 +18,8 @@ export type Verdict =
   | "ambiguous"
   | "operator"
   | "unattributed"
-  | "scheduled";
+  | "scheduled"
+  | "restart";
 
 export type LifecycleAction =
   | "hold"
@@ -56,6 +57,8 @@ export interface LiveServiceHealth extends ServiceHealth {
   quarantineTrigger: string | null;
   /** Events seen of the quarantine's length, while not stable. */
   quarantine?: QuarantineProgress | null;
+  /** A pod of this service restarted recently: alarms now are expected while it settles. */
+  afterRestart?: boolean;
   alarm: boolean;
   modelVersion: number;
   openQueries: number;
@@ -141,7 +144,12 @@ export interface BackendHealth {
   namespace?: string | null;
   scrapeSeconds?: number | null;
   lifecycleDayMinutes?: number | null;
-  store: "timescaledb" | "memory";
+  /** Live mode: where the full Grafana dashboards are (up.ps1 forwards it to :3000). */
+  grafanaUrl?: string | null;
+  store: "timescaledb" | "postgres" | "memory";
+  /** "jwt" when accounts are on (docs/adr/0014); tenant is the caller's organization id. */
+  auth?: "off" | "jwt";
+  tenant?: string;
   db: boolean;
   redis: boolean;
   services: number;
@@ -149,6 +157,31 @@ export interface BackendHealth {
   eventsPerSec: number;
   paused: boolean;
   uptimeS: number;
+}
+
+/** GET /api/live/{service}/telemetry: the raw Prometheus features behind a live service's score. */
+export interface TelemetryFeature {
+  key: string;
+  label: string;
+  unit: "cores" | "bytes" | "bytes/s" | "ratio" | "count" | "seconds" | string;
+}
+
+export interface TelemetryMarker {
+  /** unix seconds */
+  time: number;
+  event: "quarantine_opened" | "change_observed" | "lifecycle_decision";
+  label: string;
+  action: LifecycleAction | null;
+  trigger: string | null;
+}
+
+export interface TelemetryEvidence {
+  serviceId: string;
+  stepSeconds: number;
+  features: TelemetryFeature[];
+  /** one row per step: unix seconds plus one value per feature key */
+  points: Array<{ time: number } & Record<string, number | null>>;
+  markers: TelemetryMarker[];
 }
 
 /** WebSocket envelope, GET /ws/events. */

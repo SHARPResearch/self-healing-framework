@@ -1,0 +1,17 @@
+{{- if .Values.mlBackend.enabled }}
+{{- $name := include "sharp.mlBackend.name" . }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "sharp.labels" . | nindent 4 }}
+    {{- include "sharp.selector" (dict "name" $name "root" .) | nindent 4 }}
+spec:
+  selector:
+    {{- include "sharp.selector" (dict "name" $name "root" .) | nindent 4 }}
+  ports:
+    - name: http
+      port: 8002
+      targetPort: http
+{{- end }}

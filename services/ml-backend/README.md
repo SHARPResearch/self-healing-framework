@@ -76,26 +76,38 @@ minikube cluster. Nothing is simulated there: telemetry comes from Prometheus, d
 come from the Kubernetes API, and faults are real Chaos Mesh experiments.
 
 ```powershell
-# 1. cluster: minikube profile "sharp" + kube-prometheus-stack + Chaos Mesh + Online Boutique v0.10.7,
-#    Prometheus forwarded to localhost:9090 (first run pulls about 3 GB of images)
+# 1. cluster: minikube profile "sharp" + kube-prometheus-stack + blackbox exporter + Chaos Mesh +
+#    Online Boutique v0.10.7, Prometheus forwarded to localhost:9090 (first run pulls about 3 GB)
 powershell -ExecutionPolicy Bypass -File infrastructure/online-boutique/up.ps1
 
 # 2. let it run ~1 hour untouched, so the warm-up window is clean steady traffic
 
-# 3. backend in live mode (same port, the frontend needs no change)
+# 3a. deploy the backend into the cluster with its Helm chart (builds the image, port-forwards :8002)
+powershell -ExecutionPolicy Bypass -File infrastructure/online-boutique/deploy-sharp.ps1
+
+# 3b. or run it on the laptop in live mode instead (same port, the frontend needs no change)
 cd services/ml-backend
 $env:TELEMETRY_MODE = "prometheus"; uv run uvicorn app.main:app --port 8002
 
 # 4. check
+curl http://localhost:8002/api/ready              # 503 until the warm-up is done
 uv run python scripts/demo_preflight.py          # detects live mode
 ```
+
+In the cluster the backend runs in `selfheal-system` as one replica with TimescaleDB and Redis,
+a Role on `online-boutique` only, and a ServiceMonitor for `/metrics`
+(`infrastructure/helm/self-healing-framework`, decisions in `docs/adr/0009`).
 
 What happens:
 - **Services.** Every Online Boutique Deployment except the load generator becomes a service. Its
   id is the Deployment's `app` label.
-- **Features.** Each service has 7 features, defined in `app/prom.py`: cpu, memory, network rx/tx,
-  CPU throttling, restarts and ready ratio. They are scraped every 5 s.
+- **Features.** Each service has 8 features, defined in `app/prom.py`: cpu, memory, network rx/tx,
+  CPU throttling, restarts, ready ratio, and the response time of a real request the blackbox
+  exporter sends every 5 s (`probe_latency`, docs/adr/0010). They are read every 5 s.
 - **Warm-up.** Each service warms up on its own last `LIVE_WARMUP_MINUTES` of Prometheus history.
+  Until there is at least `LIVE_MIN_WARMUP_MINUTES` of it (or while Prometheus is unreachable), the
+  API is up, `/api/ready` answers 503 with the reason, and the fleet build is retried every
+  `LIVE_START_RETRY_SECONDS`.
 - **Pacing.** One lifecycle "day" is `LIVE_LIFECYCLE_DAY_MINUTES` = 30 min, so a quarantine
   closes 30 min after it opens.
 - **Rollouts.** A Kubernetes watcher turns real rollouts into deployment change events, one per
@@ -103,6 +115,9 @@ What happens:
 - **Controls.** The Model lifecycle page shows real-action buttons instead of synthetic injections:
   Rollout (a real rolling update), CPU (Chaos Mesh stress), Kill pod, and Check, plus Traffic x3 and
   Baseline for the load generator. The same actions are available as `POST /api/live/{service}/{action}`.
+- **Telemetry evidence.** Below the service cards, the page plots a service's eight raw features for
+  the last 30 min to 3 h with its quarantines, change events and decisions marked
+  (`GET /api/live/{service}/telemetry`, docs/adr/0012), and links to the Grafana dashboard.
 
 **Warm-up quality matters.** The warm-up window teaches each model what normal is.
 - If the window contains startup crash loops, a rollout or a chaos fault, that becomes "normal".
@@ -117,6 +132,26 @@ cd ../../ml-pipeline
 uv run python evaluate_live_chaos.py outputs/live_chaos/<run>   # detection, time to detect, false alarms, learned incidents
 ```
 Stop the cluster with `infrastructure/online-boutique/down.ps1`. Nothing is deleted.
+
+## Accounts and tenancy
+
+With `AUTH_MODE=jwt` every request needs a JWT from the auth service (`services/auth`, Better
+Auth), verified against its JWKS (`app/auth.py`): `Authorization: Bearer <token>` on REST, and
+`{"type": "auth", "token": ...}` as the first WebSocket message (closed with 4401 otherwise).
+The token's `org` is the tenant and its `role` decides what the caller may do:
+
+| Permission | Roles | Endpoints |
+|---|---|---|
+| read | viewer, operator, admin, owner | every GET, and the WebSocket |
+| operate | operator, admin, owner | `POST /queries/{id}/answer`, `/models/{id}/validity-check`, `/demo/{id}/{kind}`, `/demo/speed`, `/live/{id}/{action}` |
+| manage | admin, owner | `POST /models/{id}/promote`, `/models/{id}/rollback`, `/demo/reset` |
+
+Each organization has its own Runtime (`app/tenancy.py`, docs/adr/0015): fleet, store rows
+tagged with its `tenant_id`, Redis channel and metric labels. In replay mode every organization
+gets a demo fleet on its first request (at most `MAX_TENANTS`); in live mode only
+`PRIMARY_TENANT` (the organization that owns the cluster) has one. `/api/health` and `/api/ready`
+stay public for probes. Answered queries and manual transitions record the token's email as the
+operator. `AUTH_MODE=off` (the default) is the laptop demo: one tenant, `default`, no login.
 
 ## Configuration (env or `.env`)
 
@@ -133,13 +168,22 @@ Stop the cluster with `infrastructure/online-boutique/down.ps1`. Nothing is dele
 | `PROMETHEUS_URL` / `K8S_NAMESPACE` | `http://localhost:9090` / `online-boutique` |
 | `LIVE_SCRAPE_SECONDS` / `LIVE_LIFECYCLE_DAY_MINUTES` | `5` / `30` |
 | `LIVE_WARMUP_MINUTES` / `LIVE_MIN_WARMUP_MINUTES` | `60` / `10` |
+| `LIVE_START_RETRY_SECONDS` | `30` (live start: retry until Prometheus has enough history) |
+| `GRAFANA_URL` | `http://localhost:3000` (the dashboard's link to Grafana) |
+| `AUTH_MODE` | `off` (or `jwt`: accounts and tenancy, see above) |
+| `AUTH_JWKS_URL` / `AUTH_ISSUER` / `AUTH_AUDIENCE` | `http://localhost:8010/api/auth/jwks` / `http://localhost:5173` / `sharp-ml-backend` |
+| `PRIMARY_TENANT` / `MAX_TENANTS` | unset / `3` (the organization owning the live cluster; replay fleets per instance) |
 | `START_REPLAY` / `USE_BACKING_SERVICES` | `true` / `true` (tests set both false) |
+| `MODEL_CHECKPOINTS` | `auto` (live only), `on`, `off` |
+| `CHECKPOINT_EVERY_S` / `CHECKPOINT_ALL_EVERY_S` | `30` / `300` |
 
 ## REST API (`/api`)
 
 | Method | Path | Returns |
 |---|---|---|
-| GET | `/health` | store kind, db/redis status, tick, speed |
+| GET | `/health` | store kind, db/redis status, tick, speed, `ready` and `startError` (liveness) |
+| GET | `/ready` | 200 once the fleet is scoring, else 503 with the reason (readiness) |
+| GET | `/live/{id}/telemetry?minutes=` | live only: the raw Prometheus features of one service and its lifecycle markers |
 | GET | `/services` | `ServiceHealth[]`, plus `phase, alarm, modelVersion, openQueries, smdEntity` |
 | GET | `/services/{id}/scores?limit=` | `[{step, score, alarm, threshold}]` |
 | GET | `/dashboard/summary` | stat counts, a 30 min `anomalyTrend` from TimescaleDB, table row counts |
@@ -214,14 +258,39 @@ Tables:
 - `operator_queries`
 - `change_events`
 - `service_logs` (hypertable: the log stream above, kept 7 days)
+- `model_checkpoints` (one row per service: its whole lifecycle state, about 8 KB, so a restarted
+  backend resumes instead of warming up again; docs/adr/0005 and 0006)
+
+Checkpoints are on in live mode and off in replay by default (`MODEL_CHECKPOINTS=auto`; `on` or
+`off` to force). A service is saved within 30 s of any lifecycle change, all of them every 5 minutes
+and on shutdown. A checkpoint is only restored onto the same service, source, detector and
+features. `POST /api/demo/reset` clears them.
 
 ```powershell
 docker exec selfheal-demo-timescaledb-1 psql -U postgres -d selfheal -c "select * from lifecycle_decisions order by time desc limit 5"
 docker exec selfheal-demo-redis-1 redis-cli XREVRANGE anomaly_events + - COUNT 3
 ```
 
+## Metrics (`GET /metrics`)
+
+Prometheus exposition of the backend itself (`app/metrics.py`, docs/adr/0011), scraped through the
+chart's ServiceMonitor and shown in the Grafana dashboard "SHARP ml-backend":
+
+| Metric | What |
+|---|---|
+| `sharp_score_seconds` | histogram: time to score one event and step its lifecycle (proposal FR6: at most 5 ms) |
+| `sharp_events_scored_total`, `sharp_alarm_events_total` | per service |
+| `sharp_anomaly_score`, `sharp_alarm`, `sharp_alarm_after_restart` | per service, latest event |
+| `sharp_model_version`, `sharp_lifecycle_phase`, `sharp_quarantine_progress_ratio` | per service |
+| `sharp_quarantines_opened_total{trigger}` | drift_up, drift_down, change_event, scheduled, operator |
+| `sharp_lifecycle_decisions_total{verdict, action}` | every closed quarantine |
+| `sharp_model_transitions_total{transition}` | register, promote, rollback, checkpoint |
+| `sharp_change_events_total{kind}`, `sharp_operator_queries_total{outcome}` | per service |
+| `sharp_prometheus_scrape_seconds`, `sharp_prometheus_scrape_failures_total` | live mode reads |
+| `sharp_ready`, `sharp_services` | the fleet |
+
 ## Tests
 
 ```powershell
-uv run pytest      # in-memory fallbacks, two services on the demo's calm windows, no Docker needed
+uv run pytest      # in-memory fallbacks, two services on the demo's calm windows, a fake Prometheus; no Docker needed
 ```

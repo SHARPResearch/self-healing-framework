@@ -1,0 +1,22 @@
+{{- if and .Values.mlBackend.enabled .Values.mlBackend.serviceMonitor.enabled (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1") }}
+{{- $name := include "sharp.mlBackend.name" . }}
+# Prometheus (kube-prometheus-stack, which selects every ServiceMonitor) scrapes ml-backend's
+# own /metrics: scoring latency, alarms, lifecycle decisions and transitions (app/metrics.py).
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "sharp.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "sharp.selector" (dict "name" $name "root" .) | nindent 6 }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.mlBackend.serviceMonitor.interval }}
+      # our metrics carry a `service` label (the monitored Deployment); keep it rather than have
+      # Prometheus rename it to exported_service in favour of the scrape target's own service label
+      honorLabels: true
+{{- end }}

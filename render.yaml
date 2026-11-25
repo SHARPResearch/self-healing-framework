@@ -1,0 +1,64 @@
+# Render Blueprint for SHARP on Render's free plan (docs/Deployment_Render.md).
+#
+#   sharp-web         the dashboard + the auth service (Better Auth), one origin
+#   sharp-ml-backend  anomaly detection and the CADAL lifecycle, SMD replay, one demo fleet per
+#                     organization (Render has no Kubernetes, so no live Online Boutique here)
+#   sharp-db          PostgreSQL 16 (accounts, organizations, every tenant's lifecycle data)
+#   sharp-redis       Key Value (Redis): the event fan-out and the anomaly_events stream
+#
+# Render's free web services cannot receive private network traffic, so the two services reach
+# each other on their public URLs. Those are only known after the first deploy: the three
+# `sync: false` variables are filled in then (guide, step 4).
+databases:
+  - name: sharp-db
+    plan: free
+    region: singapore
+    databaseName: sharp
+    user: sharp
+    postgresMajorVersion: "16"
+
+services:
+  - type: keyvalue
+    name: sharp-redis
+    plan: free
+    region: singapore
+    ipAllowList: []                 # no outside access; only this account's services
+    maxmemoryPolicy: allkeys-lru
+
+  - type: web
+    name: sharp-ml-backend
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./services/ml-backend/Dockerfile.render
+    dockerContext: .
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase: { name: sharp-db, property: connectionString }
+      - key: REDIS_URL
+        fromService: { type: keyvalue, name: sharp-redis, property: connectionString }
+      - key: AUTH_ISSUER             # https://<sharp-web's URL>
+        sync: false
+      - key: AUTH_JWKS_URL           # https://<sharp-web's URL>/api/auth/jwks
+        sync: false
+      - key: MAX_TENANTS             # demo fleets in 512 MB: ~260 MB for the first, ~40 MB each after
+        value: "3"
+
+  - type: web
+    name: sharp-web
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./services/auth/Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz
+    envVars:
+      - key: BETTER_AUTH_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase: { name: sharp-db, property: connectionString }
+      - key: ML_BACKEND_URL          # https://<sharp-ml-backend's URL>
+        sync: false
+      - key: RESEND_API_KEY          # optional: send invitation and reset emails (Resend free tier)
+        sync: false

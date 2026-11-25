@@ -182,3 +182,15 @@ def test_inconclusive_looks_wait_for_the_full_quarantine():
     assert early_attribute(_look(trigger="drift_down", recent_alarms=0)) is None
     # Some recent alarms: not quiet enough to resume, and nothing to re-baseline.
     assert early_attribute(_look(recent_alarms=20, rebaseline_tail_alarms=None)) is None
+
+
+def test_a_shift_after_a_restart_is_held_and_never_repaired():
+    after_restart = _ev(trigger="restart", restart_event_id="svc:restart@301", rebaseline_tail_alarm_rate=0.01)
+    a = attribute(after_restart)
+    assert a.verdict is Verdict.RESTART and a.action is Action.HOLD and "svc:restart@301" in a.reason
+    # The pod settled back: no change, as for any shift that did not persist.
+    settled = attribute(_ev(trigger="restart", restart_event_id="svc:restart@301", champion_tail_alarm_rate=0.0))
+    assert settled.verdict is Verdict.NO_CHANGE
+    # A deployment in the same window still licenses the normal rules.
+    rollout = attribute(_ev(trigger="restart", restart_event_id="svc:restart@301", change_event_id="svc:deployment@300"))
+    assert rollout.verdict is Verdict.CONCEPT_DRIFT

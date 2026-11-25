@@ -1,0 +1,14 @@
+{{- if and .Values.mlBackend.enabled .Values.grafanaDashboard.enabled }}
+# Grafana dashboard "SHARP ml-backend": ml-backend's own /metrics (scoring latency, alarms, quarantines,
+# decisions, model versions). The kube-prometheus-stack sidecar loads it by its label.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sharp-ml-backend-dashboard
+  labels:
+    {{- include "sharp.labels" . | nindent 4 }}
+    {{ .Values.grafanaDashboard.label }}: "1"
+data:
+  sharp-ml-backend.json: |-
+{{ .Files.Get "files/grafana-sharp-ml-backend.json" | indent 4 }}
+{{- end }}

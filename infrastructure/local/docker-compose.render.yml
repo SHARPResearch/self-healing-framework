@@ -1,0 +1,43 @@
+# The Render deployment, rehearsed on the laptop (docs/Deployment_Render.md): the same two images,
+# plain PostgreSQL 16 without TimescaleDB like Render's managed database, and Redis. Open
+# http://localhost:18080, create an account and an organization.
+#
+#   docker compose -f infrastructure/local/docker-compose.render.yml up -d --build
+#   docker compose -f infrastructure/local/docker-compose.render.yml down -v
+name: sharp-render
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sharp
+      POSTGRES_PASSWORD: sharp
+      POSTGRES_DB: sharp
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sharp -d sharp"]
+      interval: 3s
+      retries: 20
+  redis:
+    image: redis:7-alpine
+  ml-backend:
+    build: { context: ../.., dockerfile: services/ml-backend/Dockerfile.render }
+    environment:
+      DATABASE_URL: postgresql://sharp:sharp@postgres:5432/sharp
+      REDIS_URL: redis://redis:6379
+      AUTH_ISSUER: http://localhost:18080
+      AUTH_JWKS_URL: http://web:10000/api/auth/jwks
+      PORT: "10000"
+    mem_limit: 512m                  # Render's free instance
+    depends_on:
+      postgres: { condition: service_healthy }
+  web:
+    build: { context: ../.., dockerfile: services/auth/Dockerfile }
+    environment:
+      DATABASE_URL: postgresql://sharp:sharp@postgres:5432/sharp
+      BETTER_AUTH_SECRET: local-rehearsal-secret-not-for-production-0123456789
+      BETTER_AUTH_URL: http://localhost:18080
+      ML_BACKEND_URL: http://ml-backend:10000
+      PORT: "10000"
+    mem_limit: 512m
+    ports: ["18080:10000"]
+    depends_on:
+      postgres: { condition: service_healthy }

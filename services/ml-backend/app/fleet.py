@@ -40,7 +40,7 @@ DEMO_SERVICES = [
     # (service_id, display name, SMD entity it replays, first test row of its replay window)
     # Orders, Inventory and Payments are the quiet ones the demo injects into (no drift check of
     # their own for minutes); Auth, Shipping and Search have a drift check about every 3 minutes,
-    # which is realistic background activity. Chosen by tools in docs/Component_2_Demo_Script.md.
+    # which is realistic background activity. How they were chosen: services/ml-backend/README.md.
     ("service-a-auth", "Auth Service", "machine-3-8", 3000),
     ("service-b-orders", "Orders Service", "machine-3-10", 15000),
     ("service-c-inventory", "Inventory Service", "machine-1-2", 12000),
@@ -105,7 +105,10 @@ class ServiceRuntime:
     manager: DynamicModelManager
     changes: QueueChangeEventSource
     outbox: Outbox
-    test_rows: list
+    # the replay window as one float array (a list of row dicts cost ~15 MB per service; this is
+    # ~2 MB); next_row builds the dict for the current row only
+    test_values: np.ndarray
+    test_columns: list
     test_df: pd.DataFrame
     medians: dict
     cursor: int = 0
@@ -118,6 +121,11 @@ class ServiceRuntime:
     last_action_at: Optional[str] = None
     drift_flag: bool = False
     rng: random.Random = field(default_factory=random.Random)
+    restored: bool = False               # resumed from a checkpoint instead of warmed up
+    restart_until_step: int = -1         # alarms up to this manager step follow a pod restart
+    # wall-clock lifecycle events (quarantine opened, change observed, decision) for the dashboard's
+    # telemetry evidence chart, which plots Prometheus time series and so needs times, not steps
+    markers: deque = field(default_factory=lambda: deque(maxlen=200))
 
 
 def lifecycle_config() -> LifecycleConfig:
@@ -149,6 +157,9 @@ class ServiceFleet:
         self.warm_up_rows = warm_up_rows or settings.warm_up_rows
         self.hst_cfg = detector_config(settings.detector)
         self.cfg = lifecycle_config()
+        # Checkpoints to resume from instead of warming up (service_id -> {source, blob, ...}), set by
+        # the runtime before build(); see DynamicModelManager.export_state and docs/adr/0006.
+        self.checkpoints: dict[str, dict] = {}
 
     # -- set-up ------------------------------------------------------------------------------------
     def fresh(self) -> "ServiceFleet":
@@ -169,21 +180,47 @@ class ServiceFleet:
         mgr = DynamicModelManager(service_id, self.cfg, self.hst_cfg,
                                   registry=MirroredRegistry(service_id, outbox),
                                   change_source=changes, publisher=outbox)
-        mgr.warm_up(train.tail(self.warm_up_rows).to_dict(orient="records"))
+        restored = self.restore(mgr, list(train.columns), source=entity)
+        if not restored:
+            mgr.warm_up(train.tail(self.warm_up_rows).to_dict(orient="records"))
         rt = ServiceRuntime(service_id=service_id, display_name=name, entity=entity, manager=mgr,
                             changes=changes, outbox=outbox,
-                            test_rows=test.to_dict(orient="records"), test_df=test, window_start=start,
+                            test_values=test.to_numpy(dtype=float), test_columns=list(test.columns),
+                            test_df=test, window_start=start,
                             medians=train.median().to_dict())
         rt.rng.seed(service_id)
+        rt.restored = restored
         return rt
+
+    def restore(self, mgr: DynamicModelManager, features: list[str], source: str) -> bool:
+        """Resume `mgr` from its checkpoint if there is one for the same source, detector and features."""
+        saved = self.checkpoints.get(mgr.service_id)
+        if saved is None:
+            return False
+        if saved["source"] != source:
+            logger.warning("fleet: checkpoint for %s was made on %s, not %s; warming up",
+                           mgr.service_id, saved["source"], source)
+            return False
+        try:
+            ok = mgr.restore_state(saved["blob"], features=features)
+        except Exception:  # noqa: BLE001 - a damaged checkpoint must not stop the service warming up
+            logger.exception("fleet: checkpoint for %s could not be read; warming up instead", mgr.service_id)
+            return False
+        if ok:
+            logger.info("fleet: %s resumed from its checkpoint at step %d, model v%s",
+                        mgr.service_id, mgr.step, mgr.registry.production_version)
+        else:
+            logger.warning("fleet: checkpoint for %s is for another detector or feature set; warming up",
+                           mgr.service_id)
+        return ok
 
     # -- one replay step ---------------------------------------------------------------------------
     def next_row(self, rt: ServiceRuntime) -> dict:
         # Ping-pong through the replay window (forward, then backward) so an endless replay has
         # no wrap-around jump that would itself look like a regime change.
-        n = len(rt.test_rows)
+        n = len(rt.test_values)
         i = rt.cursor % max(1, 2 * n - 2)
-        x = dict(rt.test_rows[i if i < n else 2 * n - 2 - i])
+        x = dict(zip(rt.test_columns, rt.test_values[i if i < n else 2 * n - 2 - i].tolist()))
         rt.cursor += 1
         step = rt.manager.step + 1
         rt.injections = [i for i in rt.injections if i.until_step is None or step <= i.until_step]
@@ -247,17 +284,18 @@ class ServiceFleet:
                                            until_step=step + length))
             return {"kind": kind, "features": list(feats), "events": length}
         if kind == "restart":
-            # A rollout restart: a deployment event, a short disturbance, then the old normal again.
-            # The change event opens a quarantine at once; once the blip is over, the early look
+            # A pod restart: a restart event, a short disturbance, then the old normal again. The
+            # event opens a quarantine at once (docs/adr/0007); once the blip is over, the early look
             # finds the champion quiet and resumes without waiting the full quarantine.
             varying = [c for c in rt.test_df.columns if float(rt.test_df[c].std()) > 1e-6]
             feats = tuple(rt.rng.sample(varying, max(2, len(varying) // 8)))
             length = settings.demo_restart_events
             rt.injections.append(Injection("restart", feats, tuple(0.45 for _ in feats),
                                            until_step=step + length))
-            event = ChangeEvent(service_id, "deployment", step=step,
-                                detail={"source": "demo", "restart": True, "features": list(feats)})
+            event = ChangeEvent(service_id, "restart", step=step,
+                                detail={"source": "demo", "reason": "pod_replaced", "features": list(feats)})
             rt.changes.push(event)
+            rt.restart_until_step = step + 2 * length
             return {"kind": kind, "change_event_id": event.event_id, "features": list(feats),
                     "events": length}
         raise ValueError(f"unknown injection {kind!r}")

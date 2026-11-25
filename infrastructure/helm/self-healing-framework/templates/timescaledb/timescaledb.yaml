@@ -1,0 +1,89 @@
+{{- if .Values.timescaledb.enabled }}
+{{- $name := include "sharp.timescaledb.name" . }}
+{{- $v := .Values.timescaledb }}
+# TimescaleDB for ml-backend: metric_events and service_logs hypertables, the model registry
+# tables and the lifecycle checkpoints (docs/adr/0006). ml-backend applies the schema itself
+# (infrastructure/local/init.sql) on startup, so the database only needs to exist.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "sharp.labels" . | nindent 4 }}
+type: Opaque
+data:
+  password: {{ include "sharp.timescaledb.password" . | b64enc | quote }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "sharp.labels" . | nindent 4 }}
+    {{- include "sharp.selector" (dict "name" $name "root" .) | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "sharp.selector" (dict "name" $name "root" .) | nindent 4 }}
+  ports:
+    - name: postgres
+      port: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "sharp.labels" . | nindent 4 }}
+    {{- include "sharp.selector" (dict "name" $name "root" .) | nindent 4 }}
+spec:
+  serviceName: {{ $name }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "sharp.selector" (dict "name" $name "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "sharp.labels" . | nindent 8 }}
+        {{- include "sharp.selector" (dict "name" $name "root" .) | nindent 8 }}
+    spec:
+      securityContext:
+        fsGroup: 70                      # the postgres user of the alpine based image
+      containers:
+        - name: timescaledb
+          image: "{{ $v.image.repository }}:{{ $v.image.tag }}"
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: {{ $v.database | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: {{ $name }}, key: password }
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            - name: TIMESCALEDB_TELEMETRY
+              value: "off"
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", "postgres", "-d", {{ $v.database | quote }}] }
+            periodSeconds: 5
+          livenessProbe:
+            exec: { command: ["pg_isready", "-U", "postgres"] }
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            {{- toYaml $v.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ $v.storage }}
+{{- end }}

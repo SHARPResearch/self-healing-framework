@@ -126,8 +126,8 @@ def _anomaly_body(anomaly: dict) -> tuple[str, str]:
         f"Service        : {svc} ({sid})\n"
         f"Severity       : {sev}\n"
         f"Metric         : {metric}\n"
-        f"Observed value : {actual}\n"
-        f"Expected value : {expected}\n"
+        f"Observed value: {actual}\n"
+        f"Expected value: {expected}\n"
         f"Anomaly score  : {score}\n"
         f"Anomaly ID     : {anomaly.get('id', '—')}\n"
         f"Detected at    : {detected}\n\n"
@@ -192,7 +192,7 @@ def _decision_body(decision: dict, anomaly: dict | None) -> tuple[str, str]:
         f"Service           : {svc} ({decision.get('service_id', '—')})\n"
         f"Action            : {action}\n"
         f"Action parameters : {params}\n"
-        f"Policy outcome    : {outcome} ({reason})\n"
+        f"Policy outcome: {outcome} ({reason})\n"
         f"Final confidence  : {final_conf}\n"
         f"Effective severity: {eff_sev}\n"
         f"Blast factor      : {blast}\n"
@@ -223,7 +223,7 @@ def _decision_body(decision: dict, anomaly: dict | None) -> tuple[str, str]:
             ("Anomaly ID", str(decision.get("anomaly_id", "—"))),
             ("Decision ID", str(decision.get("decision_id", "—"))),
         ],
-        footer_note="Automated decision notification from the SHARP decision engine.",
+        footer_note="Automated recovery notifications from the SHARP decision engine.",
     )
     return text, html
 
@@ -413,7 +413,7 @@ async def _send(recipient: str, subject: str, text: str, html: str) -> tuple[boo
         return False, "aiosmtplib_missing"
 
     msg = EmailMessage()
-    msg["From"] = formataddr((_SYSTEM_SHORT, settings.SMTP_FROM or settings.SMTP_USER))
+    msg["From"] = formataddr((_SYSTEM_NAME, settings.SMTP_FROM or settings.SMTP_USER))
     msg["To"] = recipient
     msg["Subject"] = subject
     msg["Message-ID"] = make_msgid(domain="sharp.local")
@@ -431,7 +431,7 @@ async def _send(recipient: str, subject: str, text: str, html: str) -> tuple[boo
             logo,
             maintype="image",
             subtype="png",
-            cid=_LOGO_CID,          # no angle brackets — add_related adds them
+            cid=f"<{_LOGO_CID}>",
             filename="sharp-favicon.png",
             disposition="inline",
         )

@@ -114,6 +114,29 @@ class NoopExecutor:
             },
         )
 
+
+class AuthRequiredExecutor:
+    async def execute(self, decision: Decision) -> ExecutionResult:
+        log.warning(
+            "AuthRequiredExecutor: refusing %s on %s; no user-supplied Kubernetes auth",
+            decision.action.value,
+            decision.service_id,
+        )
+        return ExecutionResult(
+            decision_id=decision.decision_id,
+            service_id=decision.service_id,
+            action=decision.action,
+            status=ExecutionStatus.SKIPPED,
+            message="Kubernetes execution skipped: no user-supplied auth configured.",
+            detail={
+                "reason": "KUBERNETES_AUTH_REQUIRED",
+                "action_params": decision.action_params,
+                "policy_outcome": (
+                    decision.policy_outcome.value if decision.policy_outcome else None
+                ),
+            },
+        )
+
 # Old One -----------------------------------------------------------
 # # Module-level singleton — swap this out in `main.py` when the real
 # # executor lands.
@@ -125,9 +148,21 @@ class NoopExecutor:
 # ─────────────────────────────────────────────────────────────────────
 # Factory — main.py calls this once at startup
 # ─────────────────────────────────────────────────────────────────────
+def kubernetes_auth_configured() -> bool:
+    from app.config import settings
+
+    if getattr(settings, "KUBERNETES_AUTH_TOKEN", "") and getattr(settings, "KUBERNETES_API_SERVER", ""):
+        return True
+    if getattr(settings, "KUBERNETES_KUBECONFIG_PATH", ""):
+        return True
+    if getattr(settings, "KUBERNETES_IN_CLUSTER", False) and getattr(settings, "KUBERNETES_ALLOW_IN_CLUSTER", False):
+        return True
+    return False
+
+
 def get_executor() -> Executor:
     """
-    Pick the executor based on settings.KUBERNETES_DRY_RUN.
+    Pick the executor based on dry-run and explicit Kubernetes auth.
 
     The import is lazy so tests that never touch Kubernetes don't pay
     the `kubernetes` package import cost.
@@ -138,14 +173,21 @@ def get_executor() -> Executor:
         log.info("Executor: NoopExecutor (KUBERNETES_DRY_RUN=true)")
         return NoopExecutor()
 
+    if not kubernetes_auth_configured():
+        log.warning(
+            "Executor: AuthRequiredExecutor (set KUBERNETES_KUBECONFIG_PATH or "
+            "KUBERNETES_API_SERVER + KUBERNETES_AUTH_TOKEN)"
+        )
+        return AuthRequiredExecutor()
+
     try:
         from app.decision.executor_kubernetes import KubernetesExecutor
         return KubernetesExecutor()
     except Exception:
         log.exception(
-            "Executor: KubernetesExecutor unavailable — falling back to Noop"
+            "Executor: KubernetesExecutor unavailable — refusing execution"
         )
-        return NoopExecutor()
+        return AuthRequiredExecutor()
 
 
 # Kept for backwards compat with anything still importing the singleton.

@@ -9,5 +9,6 @@ class Settings(BaseSettings):
     dqn_learning_rate: float = 0.001
     dqn_gamma: float = 0.95
     arbitration_mode: str = "hybrid"  # rule_only | hybrid | rl_preferred | rule_preferred
+    topology_path: str = "services/decision-engine/seeds/topology.yaml"  # ← ADD THIS
 
 settings = Settings()

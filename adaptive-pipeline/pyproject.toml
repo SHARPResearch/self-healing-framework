@@ -15,4 +15,7 @@ dependencies = [
     "torch>=2.0.0",           #   (needed for DQN)
     "pytest>=8.0.0",          #  (for testing)
     "psycopg[binary]",
+    "torch",
+    "torch-geometric",
+    "pyyaml",
 ]

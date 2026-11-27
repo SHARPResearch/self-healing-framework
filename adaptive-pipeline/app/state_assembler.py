@@ -34,6 +34,7 @@ class StateAssembler:
                 1.0 if event.get('model_version') else 0.0,
                 1.0 
             ])
+            
         except Exception as e:
             log.error(f"Failed to fetch anomaly features: {e}")
             return np.zeros(6)

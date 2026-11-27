@@ -14,4 +14,5 @@ dependencies = [
     "pydantic>=2.0.0",         
     "torch>=2.0.0",           #   (needed for DQN)
     "pytest>=8.0.0",          #  (for testing)
+    "psycopg[binary]",
 ]

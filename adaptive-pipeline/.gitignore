@@ -7,3 +7,4 @@ mlartifacts/
 mlruns/
 mlflow.db
 *.zip
+.env

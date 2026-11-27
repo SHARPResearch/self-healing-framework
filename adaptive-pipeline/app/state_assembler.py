@@ -56,6 +56,7 @@ class StateAssembler:
         # Concatenate all ingredients
         state_vector = np.concatenate([anomaly_feats, gcn_emb, history_telem])
         
+        
         # Normalize to [0, 1] range (Min-Max scaling)
         state_vector = np.clip(state_vector, 0, 1)
         

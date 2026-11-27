@@ -16,3 +16,16 @@ def test_gcn_handles_unknown_service():
     embedding = embedder.get_embedding("fake-service-xyz")
     assert embedding.shape[0] == 32
     assert embedding.sum().item() == 0.0, "Fallback should be all zeros"
+
+def test_gcn_embedding_cache():
+    """The embedder should cache results to prevent redundant graph computation."""
+    embedder = GCNEmbedder()
+    
+    # First call: Computes the embedding and puts it in the cache
+    emb1 = embedder.get_embedding("payment-service")
+    assert len(embedder.embedding_cache) == 1, "Cache should have 1 item after first call"
+    
+    # Second call: Should use the cache, not recompute
+    emb2 = embedder.get_embedding("payment-service")
+    assert len(embedder.embedding_cache) == 1, "Cache size should not grow for duplicate requests"
+    assert torch.equal(emb1, emb2), "Cached embedding should match the original"

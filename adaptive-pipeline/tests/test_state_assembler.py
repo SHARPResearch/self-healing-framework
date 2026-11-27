@@ -1,6 +1,6 @@
 """
 test_state_assembler.py
-Tests to prove can cook the 55-dim state vector.
+Tests to prove our Master the 55-dim state vector.
 """
 import numpy as np
 from app.state_assembler import StateAssembler

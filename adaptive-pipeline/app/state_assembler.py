@@ -7,6 +7,8 @@ import numpy as np
 from typing import Optional
 from .db_reader import fetch_anomaly_events, fetch_action_history
 from .gcn_embedder import GCNEmbedder
+from .feature_scaler import MinMaxFeatureScaler
+
 
 # Configure logger for this module
 log = logging.getLogger(__name__)
@@ -15,6 +17,7 @@ class StateAssembler:
     def __init__(self, topology_path: Optional[str] = None):
         # Initialize the GCN Whisper Network
         self.gcn_embedder = GCNEmbedder(topology_path)
+        self.scaler = MinMaxFeatureScaler()
         log.info("StateAssembler initialized with GCN Embedder.")
         
     def _get_anomaly_features(self, anomaly_id: str) -> np.ndarray:
@@ -68,8 +71,7 @@ class StateAssembler:
 
     def assemble(self, service_id: str, anomaly_id: str) -> np.ndarray:
         """
-        The Master Chef's main recipe.
-        Combines 6 (anomaly) + 32 (GCN) + 17 (telemetry/history) = 55 dimensions.
+         Combines 6 (anomaly) + 32 (GCN) + 17 (telemetry/history) = 55 dimensions.
         """
         anomaly_feats = self._get_anomaly_features(anomaly_id)
         gcn_emb = self._get_gcn_embedding(service_id)
@@ -78,7 +80,7 @@ class StateAssembler:
         state_vector = np.concatenate([anomaly_feats, gcn_emb, history_telem])
         
         # Normalize to [0, 1] range (Min-Max scaling)
-        state_vector = np.clip(state_vector, 0, 1)
+        state_vector = self.scaler.scale(state_vector)
         
         log.debug(f"Assembled 55-dim state vector for service {service_id}.")
         return state_vector

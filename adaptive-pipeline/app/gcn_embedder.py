@@ -47,6 +47,7 @@ class GCNEmbedder:
         self.model = None
         self.node_map = {}  # Maps service_id to index (0 to 15)
         self.data = None
+        self.embedding_cache = {}  # The Prep Station (Cache)
         
         # Build the graph from Liyana's topology.yaml
         self._build_graph(topology_path)
@@ -105,19 +106,22 @@ class GCNEmbedder:
         self.model.eval() # Set to evaluation mode
 
     def get_embedding(self, service_id: str) -> torch.Tensor:
-        """
-        Returns the 32-dim whisper summary for a specific service.
-        """
+        """Returns the 32-dim whisper summary for a specific service."""
+        # 1. Check the Prep Station first!
+        if service_id in self.embedding_cache:
+            return self.embedding_cache[service_id]
+            
         if service_id not in self.node_map:
-            # Fallback if service is not in topology (e.g., a new service)
             return torch.zeros(self.embedding_dim)
             
         with torch.no_grad():
-            # Run the whisper network
             embeddings = self.model(self.data.x, self.data.edge_index)
-            # Get the specific row for our service
             node_idx = self.node_map[service_id]
-            return embeddings[node_idx]
+            result = embeddings[node_idx]
+            
+            # 2. Put the fresh spice in the jar for next time!
+            self.embedding_cache[service_id] = result
+            return result
 
 # Quick test if run directly
 if __name__ == "__main__":

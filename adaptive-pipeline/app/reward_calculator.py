@@ -28,6 +28,7 @@ BETA = 0.3    # Cost: action intrinsic risk
 GAMMA = 0.5   # Penalty: conflicting actions
 DELTA = 5.0   # Penalty: harmful action (regression)
 
+
 class RewardCalculator:
     def calculate_reward(
         self, 

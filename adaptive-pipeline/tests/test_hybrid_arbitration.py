@@ -1,6 +1,6 @@
 """
 test_hybrid_arbitration.py
-Tests to prove our Traffic Cop correctly enforces the Decision Policy Matrix.
+Tests to prove Traffic Cop correctly enforces the Decision Policy Matrix.
 """
 from app.hybrid_arbitration import HybridArbitrator, PolicyOutcome, SeverityLevel
 

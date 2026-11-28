@@ -1,7 +1,7 @@
 """
 hybrid_arbitration.py
 The "Traffic Cop" for Component 3. 
-Implements the Hybrid Arbitration logic defined in Component 3 §8.2.
+Implements the Hybrid     Arbitration logic defined in Component 3 §8.2.
 Decides whether the Rule Engine or the RL Engine gets to execute an action.
 """
 from enum import Enum

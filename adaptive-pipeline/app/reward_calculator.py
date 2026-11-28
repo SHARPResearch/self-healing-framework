@@ -60,3 +60,49 @@ class RewardCalculator:
         reward = (ALPHA * anomaly_delta) - (BETA * action_cost) - conflict_penalty - regression_penalty
         
         return float(reward)
+
+    def calculate_counterfactual_reward(
+        self, 
+        simulated_anomaly_drop: float, 
+        action: RecoveryAction, 
+        simulated_is_regression: bool = False
+    ) -> float:
+        """
+        Calculates the hypothetical reward for Shadow Mode actions.
+        Used when the RL action was NOT executed, but we have simulation data.
+        Formula: R_cf = α·Δ_simulated - β·cost(a) - δ·1[regression_simulated]
+        """
+        action_cost = ACTION_COSTS.get(action, 0.5)
+        regression_penalty = DELTA if simulated_is_regression else 0.0
+        
+        reward = (ALPHA * simulated_anomaly_drop) - (BETA * action_cost) - regression_penalty
+        return float(reward)
+
+    # def get_reward_breakdown(
+    #     self, 
+    #     anomaly_score_before: float, 
+    #     anomaly_score_after: float, 
+    #     action: RecoveryAction, 
+    #     is_conflict: bool = False
+    # ) -> dict:
+    #     """
+    #     Returns a detailed JSON-serializable breakdown of the reward calculation.
+    #     Used for LLM Copilot explainability and dashboard telemetry.
+    #     """
+    #     anomaly_delta = anomaly_score_before - anomaly_score_after
+    #     action_cost = ACTION_COSTS.get(action, 0.5)
+    #     is_regression = anomaly_score_after > anomaly_score_before
+    #     regression_penalty = DELTA if is_regression else 0.0
+    #     conflict_penalty = GAMMA if is_conflict else 0.0
+        
+    #     final_reward = (ALPHA * anomaly_delta) - (BETA * action_cost) - conflict_penalty - regression_penalty
+        
+    #     return {
+    #         "action": action.value,
+    #         "anomaly_delta": float(anomaly_delta),
+    #         "action_cost": float(action_cost),
+    #         "conflict_penalty": float(conflict_penalty),
+    #         "regression_penalty": float(regression_penalty),
+    #         "final_reward": float(final_reward)
+    #     }
+    

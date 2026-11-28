@@ -27,6 +27,8 @@ class DQNTrainer:
         
         self.steps_done = 0
 
+        
+
     def update(self, states, actions, rewards, next_states, dones):
         """
         Calculates the TD Error and updates the Main Brain.

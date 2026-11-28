@@ -5,7 +5,7 @@ Saves reward breakdowns to JSON for the LLM Copilot (Component 4) to read.
 """
 import json
 import os
-from datetime import datetime
+from datetime import datetime , timezone
 
 class RewardLogger:
     def __init__(self, log_dir: str = "outputs"):
@@ -16,7 +16,7 @@ class RewardLogger:
     def log_reward(self, breakdown: dict, service_id: str):
         """Appends a new reward breakdown to the JSON log file."""
         entry = {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "service_id": service_id,
             "breakdown": breakdown
         }

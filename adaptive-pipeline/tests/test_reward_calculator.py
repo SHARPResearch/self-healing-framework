@@ -64,14 +64,14 @@ def test_counterfactual_reward_for_simulated_regression():
     # Should be heavily negative due to the 5.0 delta penalty
     assert reward < -4.0, "Simulated regression should trigger massive counterfactual penalty"
 
-# def test_reward_breakdown_returns_valid_json_structure():
-#     """The breakdown method should return a dictionary with all required keys for the LLM Copilot."""
-#     calculator = RewardCalculator()
-#     breakdown = calculator.get_reward_breakdown(0.8, 0.2, RecoveryAction.RESTART_POD)
+def test_reward_breakdown_returns_valid_json_structure():
+    """The breakdown method should return a dictionary with all required keys for the LLM Copilot."""
+    calculator = RewardCalculator()
+    breakdown = calculator.get_reward_breakdown(0.8, 0.2, RecoveryAction.RESTART_POD)
     
-#     required_keys = ["action", "anomaly_delta", "action_cost", "conflict_penalty", "regression_penalty", "final_reward"]
-#     for key in required_keys:
-#         assert key in breakdown, f"Missing key {key} in reward breakdown"
+    required_keys = ["action", "anomaly_delta", "action_cost", "conflict_penalty", "regression_penalty", "final_reward"]
+    for key in required_keys:
+        assert key in breakdown, f"Missing key {key} in reward breakdown"
         
-#     assert breakdown["action"] == "RESTART_POD"
-#     assert breakdown["final_reward"] > 0
+    assert breakdown["action"] == "RESTART_POD"
+    assert breakdown["final_reward"] > 0
